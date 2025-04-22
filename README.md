@@ -8,8 +8,8 @@ Through Omega Networks, Pulse serves as a **Platform for Unified Leadership in S
 
 ---
 
-**Contributing**: See CONTRIBUTING.md for guidelines. Contributors must sign a Contributor License Agreement to support dual licensing.
+**Contributing**: See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Contributors must sign a Contributor License Agreement to support dual licensing.
 
-**Documentation**: docs.thepulse.nz (coming soon).
+**Documentation**: [docs.thepulse.nz](https://docs.thepulse.nz) (coming soon).
 
-**License**: AGPL-3.0 (see LICENSE).
+**License**: AGPL-3.0 (see [LICENSE](LICENSE)).
