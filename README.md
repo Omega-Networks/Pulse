@@ -1,7 +1,5 @@
 <div align="center">
-  <div style="margin-bottom: 20px;">
-    <img src="docs/media/pulse_logo.png" width="370" alt="Pulse logo" />
-  </div>
+  <img src="docs/media/pulse_logo.png" width="370" alt="Pulse logo" />
   <p><strong>The Platform for Unified Leadership in Smart Environments</strong></p>
   <a href="https://github.com/omega-networks/pulse/releases"><img src="https://img.shields.io/github/v/release/omega-networks/pulse" alt="Latest release" /></a>
   <a href="https://github.com/omega-networks/pulse/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL_3.0-blue.svg" alt="License" /></a>
