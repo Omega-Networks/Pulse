@@ -1,5 +1,5 @@
 <div align="center">
-  <div style="padding: 15px;">
+  <div style="margin-bottom: 20px;">
     <img src="docs/media/pulse_logo.png" width="370" alt="Pulse logo" />
   </div>
   <p><strong>The Platform for Unified Leadership in Smart Environments</strong></p>
