@@ -15,7 +15,6 @@
 Pulse unifies your infrastructure into a single, real-time digital twin. See every network device, monitor critical systems, and analyze historical patterns - all from one native Apple application. Pulse transforms siloed infrastructure data into actionable intelligence while maintaining complete local control.
 
 <p align="center">
-  <a href="#what-pulse-does">What Pulse Does</a> |
   <a href="#capabilities">Capabilities</a> |
   <a href="#requirements">Requirements</a> |
   <a href="#getting-started">Getting Started</a> |
