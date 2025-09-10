@@ -1,0 +1,8 @@
+// Apple Developer Team ID - find this in your Apple Developer account
+DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
+
+// CloudKit container identifier - create this in your Apple Developer portal
+CLOUDKIT_CONTAINER_ID = iCloud.com.yourorg.yourapp
+
+// Base bundle identifier for your app
+BUNDLE_IDENTIFIER = com.yourorg.pulse

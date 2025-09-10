@@ -50,10 +50,40 @@ All data processing happens on your hardware. No cloud dependencies, no external
 - **Infrastructure**: NetBox instance (for asset management) and/or Zabbix (for monitoring)
 
 ## Getting Started
-1. Clone the repository
-2. Open in Xcode 15+
-3. Build and run
-4. Configure your NetBox/Zabbix endpoints
+
+### Prerequisites
+- **Xcode**: Version 26+ required
+- **Apple Developer Account**: For code signing and CloudKit setup
+- **Infrastructure**: NetBox instance and Zabbix (optional) monitoring system
+
+### Setup Instructions
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/omega-networks/pulse.git
+   cd pulse
+   ```
+
+2. **Configure build settings**
+   ```bash
+   cp Development.xcconfig.template Development.xcconfig
+   ```
+
+3. **Edit `Development.xcconfig`** with your team-specific values:
+   ```
+   DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
+   CLOUDKIT_CONTAINER_ID = iCloud.com.yourorg.pulse
+   BUNDLE_IDENTIFIER = com.yourorg.pulse
+   ```
+
+4. **Open and build**
+   - Open `Pulse.xcodeproj` in Xcode 26+
+   - Select your development team in project settings
+   - Build and run (⌘+R)
+
+5. **Configure data sources**
+   - Add your NetBox endpoint URL
+   - Configure Zabbix monitoring credentials
+   - Set up CloudKit container (if using sync features)
 
 Detailed setup instructions to be developed in our [Wiki](https://github.com/omega-networks/pulse/wiki/Installation).
 
