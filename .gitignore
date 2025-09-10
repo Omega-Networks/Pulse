@@ -1,1 +1,37 @@
 .DS_Store
+
+# Xcode
+*.xcuserstate
+*.xcuserdatad/
+*.xcscheme
+xcuserdata/
+DerivedData/
+.swiftpm/xcode
+
+# User-specific Xcode files
+**/*.xcodeproj/xcuserdata/
+**/*.xcodeproj/project.xcworkspace/xcuserdata/
+**/*.xcworkspace/xcuserdata/
+
+# Breakpoints and user interface state
+*.xcbkptlist
+**/**/UserInterfaceState.xcuserstate
+**/IDEWorkspaceChecks.plist
+**/WorkspaceSettings.xcsettings
+**/IDEFindNavigatorScopes.plist
+
+# Scheme management (keep shared schemes, ignore user schemes)
+**/*.xcodeproj/xcshareddata/xcschemes/*.xcscheme
+!**/*.xcodeproj/xcshareddata/xcschemes/*Shared*.xcscheme
+
+# Build products
+build/
+Build/
+*.dSYM.zip
+*.dSYM
+
+# Configuration files with sensitive data
+Config.xcconfig
+Development.xcconfig
+Production.xcconfig
+*.plist.local
