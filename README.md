@@ -26,8 +26,18 @@ Pulse unifies your infrastructure into a single, real-time digital twin. See eve
 ### Unified Infrastructure Visualization
 Pulse connects to your existing NetBox instance to create an interactive digital twin of your infrastructure. See all devices, connections, and dependencies in real-time 2D visualizations and 3D maps. During outages or emergencies, instantly understand impact, scope and affected systems.
 
+<div align="center">
+  <img src="docs/media/pulse_macos_mapview_example_1.png" width="600" alt="Geographic infrastructure view" />
+  <p><em>Geographic visualization of infrastructure sites across New Zealand</em></p>
+</div>
+
 ### Real-Time Monitoring Integration
 Through Zabbix integration, Pulse displays live status for every device, with automatic alerting and historical analysis. Track patterns, identify recurring issues, and predict failures before they impact services.
+
+<div align="center">
+  <img src="docs/media/pulse_macos_siteview_example_1.png" width="600" alt="Network topology view" />
+  <p><em>Detailed network topology with real-time device monitoring and performance metrics</em></p>
+</div>
 
 ### Cross-Boundary Coordination
 When disasters strike, jurisdictional boundaries become irrelevant. Pulse enables secure, controlled information sharing between organizations - councils can coordinate with utilities, emergency services can see critical infrastructure status, and communities can work together while maintaining data sovereignty.
@@ -43,6 +53,19 @@ All data processing happens on your hardware. No cloud dependencies, no external
 - ✅ 2D/3D topology visualization
 - ✅ macOS native application
 - ✅ iOS/iPadOS support
+
+### Advanced Site Management
+Drill down from geographic overview to detailed site topology, including network diagrams, device configurations, live camera feeds, and comprehensive monitoring data.
+
+<div align="center">
+  <img src="docs/media/pulse_macos_mapview_example_2.png" width="600" alt="Site selection and details" />
+  <p><em>Site selection with detailed information and topology access</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/media/pulse_macos_siteview_example_2.png" width="600" alt="Device monitoring with live feeds" />
+  <p><em>Individual device monitoring with live camera feeds and network interface details</em></p>
+</div>
 
 ## Requirements
 - **Hardware**: Apple Silicon Mac mini (M1 or later) OR iPhone/iPad

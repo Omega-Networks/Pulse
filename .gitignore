@@ -31,7 +31,15 @@ Build/
 *.dSYM
 
 # Configuration files with sensitive data
-Config.xcconfig
+*.xcconfig
+!*.xcconfig.template
 Development.xcconfig
 Production.xcconfig
-*.plist.local
+
+# Xcode project user data
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+project.xcworkspace/xcuserdata/
