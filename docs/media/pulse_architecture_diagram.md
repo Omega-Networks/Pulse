@@ -1,54 +1,38 @@
 # Pulse: Unified Infrastructure Platform Architecture
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ffffff", "primaryTextColor": "#000000", "primaryBorderColor": "#cccccc", "lineColor": "#666666", "sectionBkColor": "#ffffff", "altSectionBkColor": "#f8f9fa", "gridColor": "#e0e0e0", "secondaryColor": "#ffffff", "tertiaryColor": "#ffffff", "clusterBkg": "transparent", "clusterBorder": "#cccccc", "edgeLabelBackground": "#ffffff"}}}%%
-graph LR
-    %% Infrastructure Sources
-    subgraph Sources["📡 Infrastructure Sources"]
-        NetBox["🏢 NetBox<br/><b>Asset Management</b>"]
-        Zabbix["📊 Zabbix<br/><b>Monitoring & Alerts</b>"]
-        Cameras["📹 Cameras<br/><b>Live Feeds</b>"]
-        IoT["🌡️ IoT Sensors<br/><b>Environmental Data</b>"]
-    end
+architecture-beta
+    group sources(cloud)[Infrastructure Sources]
+    group pulse(server)[Pulse Platform]
+    group interfaces(internet)[User Interfaces]
 
-    %% Pulse Core Platform  
-    subgraph PulseCore["🔥 Pulse Platform<br/><b>100% Local Processing • No Cloud Dependencies</b>"]
-        direction TB
-        API["🔌 <b>API Layer</b><br/>Data ingestion"]
-        Cache["💾 <b>Local Cache</b><br/>SwiftData store"] 
-        Engine["⚙️ <b>Processing</b><br/>Analytics & AI"]
-        Viz["🎨 <b>Visualization</b><br/>MapKit & SwiftUI"]
-        
-        API --> Cache
-        Cache --> Engine  
-        Engine --> Viz
-    end
+    service netbox(database)[NetBox] in sources
+    service zabbix(server)[Zabbix] in sources
+    service cameras(disk)[Cameras] in sources
+    service iot(cloud)[IoT Sensors] in sources
 
-    %% User Interfaces
-    subgraph UIs["👥 User Interfaces"]
-        macOS["🖥️ <b>macOS</b><br/>Desktop & Multi-monitor"]
-        iOS["📱 <b>iOS/iPadOS</b><br/>Mobile & Field Ops"]
-    end
+    service api(server)[API Layer] in pulse
+    service cache(database)[Local Cache] in pulse
+    service engine(server)[Processing Engine] in pulse
+    service viz(cloud)[Visualization] in pulse
 
-    %% Data Flow Connections
-    NetBox --> API
-    Zabbix --> API
-    Cameras --> API
-    IoT --> API
+    service macos(internet)[macOS App] in interfaces
+    service ios(cloud)[iOS/iPadOS] in interfaces
 
-    %% Output to Interfaces
-    Viz --> macOS
-    Viz --> iOS
+    %% Data flow from sources to Pulse API
+    netbox:R --> L:api{group}
+    zabbix:R --> L:api{group}
+    cameras:R --> L:api{group}
+    iot:R --> L:api{group}
 
-    %% Styling with darker text and rounded corners (Apple/SwiftUI style)
-    classDef default fill:#ffffff,stroke:#cccccc,stroke-width:2px,color:#000000,rx:12,ry:12
-    classDef sourceBox fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000000,rx:12,ry:12
-    classDef pulseBox fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000000,rx:12,ry:12
-    classDef uiBox fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000000,rx:12,ry:12
+    %% Internal Pulse processing flow
+    api:B --> T:cache
+    cache:B --> T:engine
+    engine:B --> T:viz
 
-    class NetBox,Zabbix,Cameras,IoT sourceBox
-    class API,Cache,Engine,Viz pulseBox
-    class macOS,iOS uiBox
+    %% Output from Pulse to interfaces
+    viz{group}:R --> L:macos{group}
+    viz{group}:R --> L:ios{group}
 ```
 
 ## Architecture Principles
