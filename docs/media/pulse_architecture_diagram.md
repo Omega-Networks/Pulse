@@ -1,6 +1,7 @@
 # Pulse: Unified Infrastructure Platform Architecture
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ffffff", "primaryTextColor": "#000000", "primaryBorderColor": "#cccccc", "lineColor": "#666666", "sectionBkColor": "#ffffff", "altSectionBkColor": "#f8f9fa", "gridColor": "#e0e0e0", "secondaryColor": "#ffffff", "tertiaryColor": "#ffffff", "clusterBkg": "transparent", "clusterBorder": "#cccccc", "edgeLabelBackground": "#ffffff"}}}%%
 graph LR
     %% Infrastructure Sources
     subgraph Sources["📡 Infrastructure Sources"]
@@ -40,6 +41,7 @@ graph LR
     Viz --> iOS
 
     %% Styling with darker text and rounded corners (Apple/SwiftUI style)
+    classDef default fill:#ffffff,stroke:#cccccc,stroke-width:2px,color:#000000,rx:12,ry:12
     classDef sourceBox fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000000,rx:12,ry:12
     classDef pulseBox fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000000,rx:12,ry:12
     classDef uiBox fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000000,rx:12,ry:12
