@@ -44,11 +44,12 @@ graph LR
 
 ### How to Read This Diagram
 
-This diagram shows the three key layers of the Pulse platform and how data flows between them:
+This diagram shows the three key layers of the Pulse platform and how data flows bidirectionally between them:
 
-**Left to Right Data Flow:**
-1. **Infrastructure Sources** (left) → **Pulse Platform** (center) → **User Interfaces** (right)
-2. Data is collected from your existing systems, processed and unified, then presented through native Apple interfaces
+**Bidirectional Data Flow:**
+1. **Infrastructure Sources** ↔ **Pulse Platform** ↔ **User Interfaces**
+2. **Inbound**: Data is collected from your existing systems, processed and unified, then presented through native Apple interfaces
+3. **Outbound**: User commands and configurations flow back through Pulse to control and configure your infrastructure systems
 
 ### Component Details
 
