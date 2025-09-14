@@ -18,6 +18,7 @@ Pulse unifies your infrastructure into a single, real-time digital twin. See eve
   <a href="#capabilities">Capabilities</a> |
   <a href="#requirements">Requirements</a> |
   <a href="#getting-started">Getting Started</a> |
+  <a href="docs/media/pulse_architecture_diagram.md">Architecture</a> |
   <a href="#contributing">Contributing</a>
 </p>
 

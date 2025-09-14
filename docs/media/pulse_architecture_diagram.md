@@ -1,4 +1,4 @@
-# Pulse: Unified Infrastructure Platform Architecture
+# Pulse: Architecture
 
 ```mermaid
 graph LR
@@ -104,3 +104,7 @@ Native Apple applications optimized for different use cases:
 | **🧠 Local Intelligence** | **Self-Sufficiency** | Independent analytics without external dependencies |
 | **📱 Native Ecosystem** | **Unified Experience** | Seamless operations across all devices and contexts |
 | **🔄 Extensible Design** | **Future-Thinking** | Adaptable platform serving current and future generations |
+
+---
+
+**License**: GNU Affero General Public License (AGPL-3.0) - see [LICENSE](../../LICENSE)
