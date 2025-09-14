@@ -1,50 +1,45 @@
 # Pulse: Unified Infrastructure Platform Architecture
 
-## Attempt 1: Basic Architecture-Beta Structure ✅
-
 ```mermaid
-architecture-beta
-    group sources(cloud)[Sources]
-    group pulse(server)[Pulse]
-    group ui(internet)[Interfaces]
+graph LR
+    subgraph Sources["Infrastructure Sources"]
+        NetBox("<b>NetBox</b><br/>Asset Management")
+        Zabbix("<b>Zabbix</b><br/>Monitoring & Alerts")
+        Cameras("<b>Cameras</b><br/>Live Feeds")
+        IoT("<b>IoT Sensors</b><br/>Environmental Data")
+    end
 
-    service netbox(database)[NetBox] in sources
-    service api(server)[API] in pulse
-    service macos(internet)[macOS] in ui
+    subgraph PulseCore["Pulse Platform"]
+        API("<b>API Layer</b><br/>Data ingestion")
+        Cache("<b>Local Cache</b><br/>SwiftData store")
+        Memory("<b>Memory</b><br/>Unified Memory")
+        Engine("<b>Processing</b><br/>Analytics & AI")
+        Viz("<b>Visualization</b><br/>MapKit & SwiftUI")
+    end
 
-    netbox:R -- L:api
-    api:R -- L:macos
+    subgraph UIs["User Interfaces"]
+        macOS("<b>macOS</b><br/>Desktop & Laptop")
+        iOS("<b>iOS & iPadOS</b><br/>Mobile & Field Ops")
+        tvOS("<b>tvOS</b><br/><i>xOC roadmap</i>")
+        visionOS("<b>visionOS</b><br/><i>roadmap</i>")
+    end
+
+
+    NetBox & Zabbix & Cameras & IoT --- PulseCore
+    API & Cache --- Memory --- Engine & Viz
+    PulseCore --- macOS & iOS & tvOS & visionOS
+
+    classDef subGraphBox fill:#1A3140,opacity:1,stroke-width:0px,color:#FFFFFF,font-size:20px
+    classDef nodeBox fill:#348ABF,stroke:#73B1BF,stroke-width:1px,color:#FFFFFF
+
+    class Sources,PulseCore,UIs subGraphBox
+
+    class NetBox,Zabbix,Cameras,IoT nodeBox
+    class API,Cache,Memory,Engine,AI,Viz nodeBox
+    class macOS,iOS,tvOS,visionOS nodeBox
+
 ```
 
-## Attempt 2: Multiple Services and Directional Arrows (Testing)
-
-```mermaid
-architecture-beta
-    group sources(cloud)[Infrastructure Sources]
-    group pulse(server)[Pulse Platform]
-    group interfaces(internet)[User Interfaces]
-
-    service netbox(database)[NetBox] in sources
-    service zabbix(server)[Zabbix] in sources
-    service cameras(disk)[Cameras] in sources
-
-    service api(server)[API Layer] in pulse
-    service cache(database)[Local Cache] in pulse
-    service viz(cloud)[Visualization] in pulse
-
-    service macos(internet)[macOS] in interfaces
-    service ios(cloud)[iOS] in interfaces
-
-    netbox:R --> L:api
-    zabbix:R --> L:api
-    cameras:R --> L:api
-    
-    api:B --> T:cache
-    cache:B --> T:viz
-    
-    viz:R --> L:macos
-    viz:R --> L:ios
-```
 
 ## Architecture Principles
 
