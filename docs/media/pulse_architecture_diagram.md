@@ -1,40 +1,32 @@
 # Pulse: Unified Infrastructure Platform Architecture
 
 ```mermaid
-graph TB
+graph LR
     %% Infrastructure Sources
     subgraph Sources["📡 Infrastructure Sources"]
-        NetBox["🏢 NetBox<br/>Asset Management<br/>Source of Truth"]
-        Zabbix["📊 Zabbix<br/>Real-time Monitoring<br/>Status & Alerts"]
-        Cameras["📹 Camera Systems<br/>Live Feeds<br/>Visual Verification"]
-        IoT["🌡️ IoT Sensors<br/>Environmental Data<br/>Temperature, Power, etc."]
-        Future["⚡ Future Sources<br/>SCADA, Building Mgmt<br/>Plugin Architecture"]
+        NetBox["🏢 NetBox<br/><b>Asset Management</b>"]
+        Zabbix["📊 Zabbix<br/><b>Monitoring & Alerts</b>"]
+        Cameras["📹 Cameras<br/><b>Live Feeds</b>"]
+        IoT["🌡️ IoT Sensors<br/><b>Environmental Data</b>"]
     end
 
-    %% Pulse Core Platform
-    subgraph PulseCore["🔥 Pulse Platform<br/>100% Local Processing • No Cloud Dependencies"]
-        API["🔌 API Integration Layer<br/>Unified data ingestion & normalization"]
-        Cache["💾 Local Data Cache<br/>SwiftData persistence & offline capability"]
-        Engine["⚙️ Processing Engine<br/>Pattern recognition & anomaly detection"]
-        AI["🧠 Local AI (MLX)<br/>On-device intelligence & predictions"]
-        Viz["🎨 Visualization Engine<br/>MapKit, SceneKit, SwiftUI rendering"]
+    %% Pulse Core Platform  
+    subgraph PulseCore["🔥 Pulse Platform<br/><b>100% Local Processing • No Cloud Dependencies</b>"]
+        direction TB
+        API["🔌 <b>API Layer</b><br/>Data ingestion"]
+        Cache["💾 <b>Local Cache</b><br/>SwiftData store"] 
+        Engine["⚙️ <b>Processing</b><br/>Analytics & AI"]
+        Viz["🎨 <b>Visualization</b><br/>MapKit & SwiftUI"]
+        
+        API --> Cache
+        Cache --> Engine  
+        Engine --> Viz
     end
 
     %% User Interfaces
     subgraph UIs["👥 User Interfaces"]
-        macOS["🖥️ macOS App<br/>• Full featured desktop<br/>• 2D/3D visualization<br/>• Multi-monitor support"]
-        iOS["📱 iOS/iPadOS<br/>• Mobile operations<br/>• Field response<br/>• Touch interface"]
-        
-        subgraph Capabilities["✨ Key Capabilities"]
-            Cap1["✓ Geographic mapping"]
-            Cap2["✓ Network topology"]
-            Cap3["✓ Real-time alerts"]
-            Cap4["✓ Historical analysis"]
-            Cap5["✓ Cross-org sharing"]
-            Cap6["✓ Emergency response"]
-        end
-        
-        Future2["🥽 Coming Soon<br/>visionOS • tvOS"]
+        macOS["🖥️ <b>macOS</b><br/>Desktop & Multi-monitor"]
+        iOS["📱 <b>iOS/iPadOS</b><br/>Mobile & Field Ops"]
     end
 
     %% Data Flow Connections
@@ -42,39 +34,27 @@ graph TB
     Zabbix --> API
     Cameras --> API
     IoT --> API
-    Future -.-> API
-
-    %% Pulse Internal Flow
-    API --> Cache
-    Cache --> Engine
-    Engine --> AI
-    AI --> Viz
 
     %% Output to Interfaces
     Viz --> macOS
     Viz --> iOS
-    Viz -.-> Future2
 
-    %% Styling
-    classDef sourceBox fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    classDef pulseBox fill:#fff3e0,stroke:#f57c00,stroke-width:3px
-    classDef uiBox fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    classDef futureBox fill:#f5f5f5,stroke:#bdbdbd,stroke-width:2px,stroke-dasharray: 5 5
-    classDef capBox fill:#f1f8e9,stroke:#689f38,stroke-width:1px
+    %% Styling with darker text and rounded corners (Apple/SwiftUI style)
+    classDef sourceBox fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000000,rx:12,ry:12
+    classDef pulseBox fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000000,rx:12,ry:12
+    classDef uiBox fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000000,rx:12,ry:12
 
     class NetBox,Zabbix,Cameras,IoT sourceBox
-    class API,Cache,Engine,AI,Viz pulseBox
+    class API,Cache,Engine,Viz pulseBox
     class macOS,iOS uiBox
-    class Future,Future2 futureBox
-    class Cap1,Cap2,Cap3,Cap4,Cap5,Cap6 capBox
 ```
 
 ## Architecture Principles
 
-### 🔒 Zero Cloud Dependencies
+### 🔒 No Cloud Dependencies
 - All processing happens locally on your hardware
-- No external vulnerabilities or vendor lock-in
-- Complete data sovereignty and control
+- No external cloud services or third-party data processing
+- Complete data sovereignty and control over your infrastructure data
 
 ### 🌐 Unified Data Ingestion
 - Single platform for multiple infrastructure sources
@@ -86,10 +66,10 @@ graph TB
 - Pattern recognition and anomaly detection
 - Predictive analytics without data leaving your environment
 
-### 📱 Native Apple Experience
-- Built with SwiftUI for optimal performance
-- Leverages platform capabilities (MapKit, SceneKit)
-- Consistent experience across all Apple devices
+### 📱 Native Apple Platform
+- Optimized for Apple Silicon and Apple ecosystem
+- Leverages platform capabilities (MapKit, SceneKit, SwiftUI)
+- Consistent experience across macOS, iOS, and iPadOS
 
 ### 🔄 Extensible Architecture
 - Plugin system for future data sources
