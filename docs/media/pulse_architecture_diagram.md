@@ -1,47 +1,91 @@
 # Pulse: Unified Infrastructure Platform Architecture
 
+## Attempt 1: Basic Architecture-Beta Structure ✅
+
 ```mermaid
-flowchart LR
-    subgraph Sources["📡 Infrastructure Sources"]
-        NetBox["🏢 NetBox<br/><b>Asset Management</b>"]
-        Zabbix["📊 Zabbix<br/><b>Monitoring & Alerts</b>"]
-        Cameras["📹 Cameras<br/><b>Live Feeds</b>"]
-        IoT["🌡️ IoT Sensors<br/><b>Environmental Data</b>"]
-    end
+architecture-beta
+    group sources(cloud)[Sources]
+    group pulse(server)[Pulse]
+    group ui(internet)[Interfaces]
 
-    subgraph PulseCore["🔥 Pulse Platform<br/><b>100% Local Processing • No Cloud Dependencies</b>"]
-        direction TB
-        API["🔌 <b>API Layer</b><br/>Data ingestion"]
-        Cache["💾 <b>Local Cache</b><br/>SwiftData store"] 
-        Engine["⚙️ <b>Processing</b><br/>Analytics & AI"]
-        Viz["🎨 <b>Visualization</b><br/>MapKit & SwiftUI"]
-        
-        API --> Cache
-        Cache --> Engine  
-        Engine --> Viz
-    end
+    service netbox(database)[NetBox] in sources
+    service api(server)[API] in pulse
+    service macos(internet)[macOS] in ui
 
-    subgraph UIs["👥 User Interfaces"]
-        macOS["🖥️ <b>macOS</b><br/>Desktop & Multi-monitor"]
-        iOS["📱 <b>iOS & iPadOS</b><br/>Mobile & Field Ops"]
-    end
+    netbox:R -- L:api
+    api:R -- L:macos
+```
 
-    NetBox --> API
-    Zabbix --> API
-    Cameras --> API
-    IoT --> API
+## Attempt 2: Adding Multiple Services and Directional Arrows ✅
 
-    Viz --> macOS
-    Viz --> iOS
+```mermaid
+architecture-beta
+    group sources(cloud)[Infrastructure Sources]
+    group pulse(server)[Pulse Platform]
+    group interfaces(internet)[User Interfaces]
 
-    classDef default fill:#ffffff,stroke:#666666,stroke-width:2px,color:#000000,rx:12,ry:12
-    classDef sourceBox fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000000,rx:12,ry:12
-    classDef pulseBox fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000000,rx:12,ry:12
-    classDef uiBox fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000000,rx:12,ry:12
+    service netbox(database)[NetBox] in sources
+    service zabbix(server)[Zabbix] in sources
+    service cameras(disk)[Cameras] in sources
 
-    class NetBox,Zabbix,Cameras,IoT sourceBox
-    class API,Cache,Engine,Viz pulseBox
-    class macOS,iOS uiBox
+    service api(server)[API Layer] in pulse
+    service cache(database)[Local Cache] in pulse
+    service viz(cloud)[Visualization] in pulse
+
+    service macos(internet)[macOS] in interfaces
+    service ios(cloud)[iOS] in interfaces
+
+    netbox:R --> L:api
+    zabbix:R --> L:api
+    cameras:R --> L:api
+    
+    api:B --> T:cache
+    cache:B --> T:viz
+    
+    viz:R --> L:macos
+    viz:R --> L:ios
+```
+
+## Attempt 3: Full Implementation with Group Connections and All Services
+
+```mermaid
+architecture-beta
+    group sources(cloud)[Infrastructure Sources]
+    group pulse(server)[Pulse Platform - 100% Local Processing]
+    group interfaces(internet)[User Interfaces]
+
+    service netbox(database)[NetBox Asset Management] in sources
+    service zabbix(server)[Zabbix Monitoring] in sources
+    service cameras(disk)[Camera Systems] in sources
+    service iot(cloud)[IoT Sensors] in sources
+
+    service api(server)[API Integration Layer] in pulse
+    service cache(database)[Local Data Cache] in pulse
+    service engine(server)[Processing Engine] in pulse
+    service ai(cloud)[Local AI MLX] in pulse
+    service viz(internet)[Visualization Engine] in pulse
+
+    service macos(internet)[macOS Desktop App] in interfaces
+    service ios(cloud)[iOS iPadOS Mobile] in interfaces
+
+    junction dataflow
+    junction processing
+
+    netbox:R --> L:api{group}
+    zabbix:R --> L:api{group}
+    cameras:R --> L:api{group}
+    iot:R --> L:api{group}
+
+    api:B --> T:cache
+    cache:R --> L:dataflow
+    dataflow:R --> L:engine
+    dataflow:B --> T:processing
+    processing:R --> L:ai
+    engine:B --> T:viz
+    ai:B --> T:viz
+
+    viz{group}:R --> L:macos{group}
+    viz{group}:R --> L:ios{group}
 ```
 
 ## Architecture Principles
