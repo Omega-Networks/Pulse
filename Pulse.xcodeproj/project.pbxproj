@@ -374,7 +374,6 @@
 			children = (
 				C926516F2E71AFA2004564DD /* Development.xcconfig */,
 				C96191602ACA552F000198DB /* Pulse */,
-				C96191742ACA5530000198DB /* PulseTests */,
 				C961917E2ACA5530000198DB /* PulseUITests */,
 				C961915F2ACA552F000198DB /* Products */,
 			);
@@ -423,13 +422,6 @@
 				C97C4F3D2ACB7CEC009F3795 /* PreviewTrait.swift */,
 			);
 			path = "Preview Content";
-			sourceTree = "<group>";
-		};
-		C96191742ACA5530000198DB /* PulseTests */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = PulseTests;
 			sourceTree = "<group>";
 		};
 		C961917E2ACA5530000198DB /* PulseUITests */ = {
