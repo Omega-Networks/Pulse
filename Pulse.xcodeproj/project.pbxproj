@@ -108,6 +108,9 @@
 		C96192112ACA5D3D000198DB /* UpdateModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96192102ACA5D3D000198DB /* UpdateModal.swift */; };
 		C962F8EE2E606BBE00B182AE /* AddSiteWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */; };
 		C96F2F952E719BC2007BADE5 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96F2F942E719BBC007BADE5 /* AppConfiguration.swift */; };
+		C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97136DA2E7966A90017CBF7 /* PowerSenseDevice.swift */; };
+		C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97136DB2E7966A90017CBF7 /* PowerSenseEvent.swift */; };
+		C97136DF2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97136DE2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift */; };
 		C97C4F3C2ACB7270009F3795 /* PreviewSampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97C4F3B2ACB7270009F3795 /* PreviewSampleData.swift */; };
 		C97C4F3E2ACB7CEC009F3795 /* PreviewTrait.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97C4F3D2ACB7CEC009F3795 /* PreviewTrait.swift */; };
 		C9BF5DA22E5B223900FD1AC3 /* PulseAppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */; };
@@ -238,6 +241,9 @@
 		C96192102ACA5D3D000198DB /* UpdateModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateModal.swift; sourceTree = "<group>"; };
 		C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddSiteWindow.swift; sourceTree = "<group>"; };
 		C96F2F942E719BBC007BADE5 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
+		C97136DA2E7966A90017CBF7 /* PowerSenseDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDevice.swift; sourceTree = "<group>"; };
+		C97136DB2E7966A90017CBF7 /* PowerSenseEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseEvent.swift; sourceTree = "<group>"; };
+		C97136DE2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseZabbixResource.swift; sourceTree = "<group>"; };
 		C97C4F3B2ACB7270009F3795 /* PreviewSampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSampleData.swift; sourceTree = "<group>"; };
 		C97C4F3D2ACB7CEC009F3795 /* PreviewTrait.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewTrait.swift; sourceTree = "<group>"; };
 		C9A2B32B2ACAA19D00C0BE08 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -460,6 +466,7 @@
 		C96191912ACA55CB000198DB /* Protocols */ = {
 			isa = PBXGroup;
 			children = (
+				C97136DE2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift */,
 				C96191B92ACA57FC000198DB /* APIRequest.swift */,
 				C96191BB2ACA5808000198DB /* NetboxResource.swift */,
 				C96191BD2ACA5813000198DB /* ZabbixResource.swift */,
@@ -556,6 +563,8 @@
 		C9EF519B2D3083F400D49DEA /* SwiftData Models */ = {
 			isa = PBXGroup;
 			children = (
+				C97136DA2E7966A90017CBF7 /* PowerSenseDevice.swift */,
+				C97136DB2E7966A90017CBF7 /* PowerSenseEvent.swift */,
 				C96191AD2ACA578C000198DB /* Region.swift */,
 				C96191A12ACA5721000198DB /* Device.swift */,
 				C96191A32ACA572E000198DB /* DeviceRole.swift */,
@@ -795,9 +804,12 @@
 				415F99462CD820B300845D15 /* SiteDataService.swift in Sources */,
 				41B467B02C3C984C00B23BA8 /* DeviceBuilder.swift in Sources */,
 				41934BAF2BC8C552007DB27A /* MemberCell.swift in Sources */,
+				C97136DF2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift in Sources */,
 				41763EDB2CB720DE005DEEFF /* StaticDevice.swift in Sources */,
 				C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */,
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
+				C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */,
+				C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */,
 				C96191D92ACA5B17000198DB /* EdgeLabel.swift in Sources */,
 				4177A5EC2CE3FF2E00A7C754 /* SyncButton.swift in Sources */,
 				C96192052ACA5D00000198DB /* EventModal.swift in Sources */,

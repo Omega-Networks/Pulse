@@ -87,7 +87,9 @@ struct PulseApp: App {
                 Site.self,
                 Device.self,
                 Event.self,
-                SyncProvider.self
+                SyncProvider.self,
+                PowerSenseDevice.self,
+                PowerSenseEvent.self
             )
         } catch {
             fatalError("Failed to initialize modelContainer: \(error)")

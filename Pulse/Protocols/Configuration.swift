@@ -48,6 +48,15 @@ final class Configuration: @unchecked Sendable {
         static let zabbixApiToken = "zabbixApiToken"
         static let problemTimeWindow = "problemTimeWindow"
         static let hasCompletedInitialSetup = "hasCompletedInitialSetup"
+
+        // PowerSense Configuration
+        static let powerSenseEnabled = "powerSenseEnabled"
+        static let powerSenseZabbixServer = "powerSenseZabbixServer"
+        static let powerSenseZabbixUser = "powerSenseZabbixUser"
+        static let powerSenseZabbixToken = "powerSenseZabbixToken"
+        static let powerSenseUpdateInterval = "powerSenseUpdateInterval"
+        static let powerSenseMinDeviceThreshold = "powerSenseMinDeviceThreshold"
+        static let powerSenseGridSize = "powerSenseGridSize"
     }
     
     /// Example values for configuration (non-functional placeholders)
@@ -55,6 +64,12 @@ final class Configuration: @unchecked Sendable {
         static let netboxServer = "https://netbox.example.com"
         static let zabbixServer = "https://zabbix.example.com"
         static let problemTimeWindow = 3600 // 1 hour in seconds
+
+        // PowerSense defaults
+        static let powerSenseZabbixServer = "https://powersense-zabbix.example.com"
+        static let powerSenseUpdateInterval = 60 // 60 seconds
+        static let powerSenseMinDeviceThreshold = 3 // Minimum devices before showing aggregation
+        static let powerSenseGridSize = 100 // Grid size in meters
     }
     
     // MARK: - Singleton
@@ -265,10 +280,140 @@ final class Configuration: @unchecked Sendable {
         markInitialSetupCompleted()
     }
     
+    // MARK: - PowerSense Configuration
+
+    /// Check if PowerSense integration is enabled
+    func isPowerSenseEnabled() -> Bool {
+        return UserDefaults.standard.bool(forKey: Keys.powerSenseEnabled)
+    }
+
+    /// Enable or disable PowerSense integration
+    func setPowerSenseEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Keys.powerSenseEnabled)
+    }
+
+    /// PowerSense Zabbix Server URL
+    func getPowerSenseZabbixServer() -> String {
+        return UserDefaults.standard.string(forKey: Keys.powerSenseZabbixServer) ?? ""
+    }
+
+    func setPowerSenseZabbixServer(_ server: String) {
+        UserDefaults.standard.set(server, forKey: Keys.powerSenseZabbixServer)
+    }
+
+    /// PowerSense Zabbix Username
+    func getPowerSenseZabbixUser() -> String {
+        return UserDefaults.standard.string(forKey: Keys.powerSenseZabbixUser) ?? ""
+    }
+
+    func setPowerSenseZabbixUser(_ user: String) {
+        UserDefaults.standard.set(user, forKey: Keys.powerSenseZabbixUser)
+    }
+
+    /// PowerSense Zabbix API Token (stored in Keychain)
+    func getPowerSenseZabbixToken() -> String {
+        if let data = loadFromKeychain(key: Keys.powerSenseZabbixToken),
+           let token = String(data: data, encoding: .utf8) {
+            return token
+        }
+        return ""
+    }
+
+    func setPowerSenseZabbixToken(_ token: String) {
+        guard !token.isEmpty else { return }
+        let status = saveToKeychain(key: Keys.powerSenseZabbixToken, data: Data(token.utf8))
+        if status != errSecSuccess {
+            print("Failed to save PowerSense Zabbix API Token to Keychain: \(status)")
+        }
+    }
+
+    /// PowerSense update interval in seconds
+    func getPowerSenseUpdateInterval() -> Int {
+        let value = UserDefaults.standard.integer(forKey: Keys.powerSenseUpdateInterval)
+        return value > 0 ? value : Examples.powerSenseUpdateInterval
+    }
+
+    func setPowerSenseUpdateInterval(_ interval: Int) {
+        UserDefaults.standard.set(interval, forKey: Keys.powerSenseUpdateInterval)
+    }
+
+    /// Minimum device threshold for privacy aggregation
+    func getPowerSenseMinDeviceThreshold() -> Int {
+        let value = UserDefaults.standard.integer(forKey: Keys.powerSenseMinDeviceThreshold)
+        return value > 0 ? value : Examples.powerSenseMinDeviceThreshold
+    }
+
+    func setPowerSenseMinDeviceThreshold(_ threshold: Int) {
+        UserDefaults.standard.set(threshold, forKey: Keys.powerSenseMinDeviceThreshold)
+    }
+
+    /// PowerSense grid size in meters for aggregation
+    func getPowerSenseGridSize() -> Int {
+        let value = UserDefaults.standard.integer(forKey: Keys.powerSenseGridSize)
+        return value > 0 ? value : Examples.powerSenseGridSize
+    }
+
+    func setPowerSenseGridSize(_ size: Int) {
+        UserDefaults.standard.set(size, forKey: Keys.powerSenseGridSize)
+    }
+
+    /// Check if PowerSense is properly configured
+    func isPowerSenseConfigured() -> Bool {
+        return isPowerSenseEnabled() &&
+               !getPowerSenseZabbixServer().isEmpty &&
+               !getPowerSenseZabbixToken().isEmpty
+    }
+
+    /// Update PowerSense settings in bulk
+    func updatePowerSenseSettings(
+        enabled: Bool,
+        zabbixServer: String,
+        zabbixUser: String,
+        zabbixToken: String,
+        updateInterval: Int? = nil,
+        minDeviceThreshold: Int? = nil,
+        gridSize: Int? = nil
+    ) {
+        setPowerSenseEnabled(enabled)
+        setPowerSenseZabbixServer(zabbixServer)
+        setPowerSenseZabbixUser(zabbixUser)
+        setPowerSenseZabbixToken(zabbixToken)
+
+        if let interval = updateInterval {
+            setPowerSenseUpdateInterval(interval)
+        }
+        if let threshold = minDeviceThreshold {
+            setPowerSenseMinDeviceThreshold(threshold)
+        }
+        if let size = gridSize {
+            setPowerSenseGridSize(size)
+        }
+    }
+
+    /// Clear PowerSense configuration
+    func clearPowerSenseConfiguration() {
+        UserDefaults.standard.removeObject(forKey: Keys.powerSenseEnabled)
+        UserDefaults.standard.removeObject(forKey: Keys.powerSenseZabbixServer)
+        UserDefaults.standard.removeObject(forKey: Keys.powerSenseZabbixUser)
+        UserDefaults.standard.removeObject(forKey: Keys.powerSenseUpdateInterval)
+        UserDefaults.standard.removeObject(forKey: Keys.powerSenseMinDeviceThreshold)
+        UserDefaults.standard.removeObject(forKey: Keys.powerSenseGridSize)
+        _ = deleteFromKeychain(key: Keys.powerSenseZabbixToken)
+    }
+
     // MARK: - Example Values (for UI placeholders only)
-    
+
     static var exampleConfiguration: (netboxServer: String, zabbixServer: String) {
         return (Examples.netboxServer, Examples.zabbixServer)
+    }
+
+    static var examplePowerSenseConfiguration: (zabbixServer: String, updateInterval: Int, minThreshold: Int, gridSize: Int) {
+        return (
+            Examples.powerSenseZabbixServer,
+            Examples.powerSenseUpdateInterval,
+            Examples.powerSenseMinDeviceThreshold,
+            Examples.powerSenseGridSize
+        )
     }
 }
 

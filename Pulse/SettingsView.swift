@@ -25,23 +25,45 @@
 
 import SwiftUI
 import TipKit
+import SwiftData
+import OSLog
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @StateObject private var tipManager = TipManager.shared
-    
+
+    private let logger = Logger(subsystem: "powersense", category: "settings")
+
     // MARK: - State Properties
-    
+
     // NetBox Settings
     @State private var netboxApiServer: String = ""
     @State private var netboxApiToken: String = ""
-    
+
     // Zabbix Settings
     @State private var zabbixApiUser: String = ""
     @State private var zabbixApiServer: String = ""
     @State private var zabbixApiToken: String = ""
     @State private var problemTimeWindow: Double = 1  // In hours
-    
+
+    // PowerSense Settings
+    @State private var powerSenseEnabled: Bool = false
+    @State private var powerSenseZabbixServer: String = ""
+    @State private var powerSenseZabbixToken: String = ""
+    @State private var powerSenseUpdateInterval: Int = 60
+    @State private var powerSenseMinDeviceThreshold: Int = 3
+    @State private var powerSenseGridSize: Int = 100
+
+    // PowerSense Testing State
+    @State private var isTestingConnection = false
+    @State private var isTestingDevices = false
+    @State private var isTestingEvents = false
+    @State private var testResults: String = ""
+    @State private var showingTestResults = false
+    @State private var powerSenseDeviceCount = 0
+    @State private var powerSenseEventCount = 0
+
     // Alert State
     @State private var showingAlert = false
     @State private var alertMessage = ""
@@ -76,8 +98,13 @@ struct SettingsView: View {
             .tabItem {
                 Label("Settings", systemImage: "gearshape.fill")
             }
-            
-            
+
+            ///PowerSense Configuration & Testing
+            powerSenseSettingsForm
+            .tabItem {
+                Label("PowerSense", systemImage: "bolt.circle")
+            }
+
             ///Sync dashboard - contains Model Object Counts
             SyncDashboardView()
                 .tabItem {
@@ -85,7 +112,6 @@ struct SettingsView: View {
                 }
         }
         .padding(20)
-        .frame(width: 700)
         
         #endif
     }
@@ -142,21 +168,207 @@ struct SettingsView: View {
             await loadSettings()
         }
     }
-    
-    
+
+    // MARK: - PowerSense Settings Form
+
+    private var powerSenseSettingsForm: some View {
+        Form {
+            Section("PowerSense Configuration") {
+                Toggle("Enable PowerSense Integration", isOn: $powerSenseEnabled)
+                    .onChange(of: powerSenseEnabled) { _, newValue in
+                        logger.debug("PowerSense enabled changed to: \(newValue)")
+                    }
+
+                TextField("PowerSense Zabbix Server", text: $powerSenseZabbixServer)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!powerSenseEnabled)
+                    .onChange(of: powerSenseZabbixServer) { _, newValue in
+                        logger.debug("PowerSense server changed to: \(newValue)")
+                    }
+
+                SecureField("PowerSense Bearer Token", text: $powerSenseZabbixToken)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!powerSenseEnabled)
+                    .onChange(of: powerSenseZabbixToken) { _, newValue in
+                        logger.debug("PowerSense bearer token changed (length: \(newValue.count))")
+                    }
+            }
+
+            Section("Privacy & Performance") {
+                LabeledContent("Update Interval (seconds)") {
+                    TextField("60", value: $powerSenseUpdateInterval, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!powerSenseEnabled)
+                        .onChange(of: powerSenseUpdateInterval) { _, newValue in
+                            logger.debug("Update interval changed to: \(newValue)")
+                        }
+                }
+
+                LabeledContent("Minimum Device Threshold") {
+                    TextField("3", value: $powerSenseMinDeviceThreshold, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!powerSenseEnabled)
+                        .onChange(of: powerSenseMinDeviceThreshold) { _, newValue in
+                            logger.debug("Min device threshold changed to: \(newValue)")
+                        }
+                }
+
+                LabeledContent("Grid Size (meters)") {
+                    TextField("100", value: $powerSenseGridSize, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!powerSenseEnabled)
+                        .onChange(of: powerSenseGridSize) { _, newValue in
+                            logger.debug("Grid size changed to: \(newValue)")
+                        }
+                }
+            }
+
+            powerSenseTestingSection
+            powerSenseDataSection
+
+            Section {
+                Button("Apply PowerSense Settings") {
+                    Task {
+                        await applyPowerSenseSettings()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || powerSenseZabbixToken.isEmpty)
+            }
+        }
+        .alert(isPresented: $showingAlert) {
+            Alert(
+                title: Text("PowerSense Settings"),
+                message: Text(alertMessage),
+                dismissButton: .default(Text("OK"))
+            )
+        }
+        .sheet(isPresented: $showingTestResults) {
+            PowerSenseTestResultsView(results: testResults)
+        }
+        .task {
+            await loadPowerSenseSettings()
+        }
+    }
+
+    private var powerSenseTestingSection: some View {
+        Section("Integration Testing") {
+            HStack {
+                Button("Test Connection") {
+                    Task {
+                        await testPowerSenseConnection()
+                    }
+                }
+                .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || isTestingConnection)
+
+                if isTestingConnection {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                }
+            }
+
+            HStack {
+                Button("Fetch Test Devices") {
+                    Task {
+                        await testFetchDevices()
+                    }
+                }
+                .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || isTestingDevices)
+
+                Spacer()
+
+                if isTestingDevices {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Text("\(powerSenseDeviceCount) devices")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            HStack {
+                Button("Fetch Test Events") {
+                    Task {
+                        await testFetchEvents()
+                    }
+                }
+                .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || isTestingEvents)
+
+                Spacer()
+
+                if isTestingEvents {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Text("\(powerSenseEventCount) events")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Button("View Test Results") {
+                showingTestResults = true
+            }
+            .disabled(testResults.isEmpty)
+        }
+        .disabled(!powerSenseEnabled)
+    }
+
+    private var powerSenseDataSection: some View {
+        Section("Data Management") {
+            HStack {
+                Button("Delete All PowerSense Data") {
+                    Task {
+                        await deletePowerSenseData()
+                    }
+                }
+                .foregroundColor(.red)
+
+                Spacer()
+
+                VStack(alignment: .trailing) {
+                    Text("\(powerSenseDeviceCount) devices")
+                    Text("\(powerSenseEventCount) events")
+                }
+                .foregroundColor(.secondary)
+                .font(.caption)
+            }
+
+            Button("Refresh Data Counts") {
+                Task {
+                    await refreshDataCounts()
+                }
+            }
+        }
+    }
+
     // MARK: - Settings Management
     
     private func loadSettings() async {
         let config = await Configuration.shared
-        
+
         netboxApiServer = await config.getNetboxApiServer()
         zabbixApiServer = await config.getZabbixApiServer()
-                
+
         netboxApiToken = await config.getNetboxApiToken()
         zabbixApiUser = await config.getZabbixApiUser()
         zabbixApiToken = await config.getZabbixApiToken()
-        
+
         problemTimeWindow = Double(await config.getProblemTimeWindow()) / 3600.0
+    }
+
+    private func loadPowerSenseSettings() async {
+        let config = await Configuration.shared
+
+        powerSenseEnabled = await config.isPowerSenseEnabled()
+        powerSenseZabbixServer = await config.getPowerSenseZabbixServer()
+        powerSenseZabbixToken = await config.getPowerSenseZabbixToken()
+        powerSenseUpdateInterval = await config.getPowerSenseUpdateInterval()
+        powerSenseMinDeviceThreshold = await config.getPowerSenseMinDeviceThreshold()
+        powerSenseGridSize = await config.getPowerSenseGridSize()
+
+        await refreshDataCounts()
+
+        logger.debug("Loaded PowerSense settings: enabled=\(powerSenseEnabled), server=\(powerSenseZabbixServer)")
     }
 
     private func applySettings() async {
@@ -186,6 +398,341 @@ struct SettingsView: View {
         // Show success message
         alertMessage = "Settings applied successfully"
         showingAlert = true
+    }
+
+    // MARK: - PowerSense Settings Management
+
+    private func applyPowerSenseSettings() async {
+        logger.debug("Applying PowerSense settings:")
+        logger.debug("  Enabled: \(powerSenseEnabled)")
+        logger.debug("  Server: \(powerSenseZabbixServer)")
+        logger.debug("  Update Interval: \(powerSenseUpdateInterval)")
+
+        let config = await Configuration.shared
+
+        await config.updatePowerSenseSettings(
+            enabled: powerSenseEnabled,
+            zabbixServer: powerSenseZabbixServer,
+            zabbixUser: "", // No username needed for bearer token auth
+            zabbixToken: powerSenseZabbixToken,
+            updateInterval: powerSenseUpdateInterval,
+            minDeviceThreshold: powerSenseMinDeviceThreshold,
+            gridSize: powerSenseGridSize
+        )
+
+        // Clear PowerSense API session to force re-authentication
+        await PowerSenseZabbixAPI.shared.clearSession()
+
+        alertMessage = "PowerSense settings applied successfully"
+        showingAlert = true
+
+        logger.debug("PowerSense settings saved successfully")
+    }
+
+    // MARK: - PowerSense Testing Functions
+
+    private func testPowerSenseConnection() async {
+        guard powerSenseEnabled else { return }
+
+        isTestingConnection = true
+        logger.debug("Testing PowerSense connection...")
+
+        do {
+            // Try to get the bearer token
+            let token = try await PowerSenseZabbixAPI.shared.getBearerToken()
+
+            // Test actual API call with a simple host.get request
+            let devices = try await fetchPowerSenseDevices(hostIds: [], groupNames: [])
+
+            testResults += "\n=== Connection Test ===\n"
+            testResults += "✅ Successfully connected to PowerSense Zabbix\n"
+            testResults += "🔑 Bearer token validated (length: \(token.count))\n"
+            testResults += "📡 API test successful - fetched \(devices.count) devices\n"
+            testResults += "🕒 Test time: \(Date().formatted())\n"
+
+            alertMessage = "PowerSense connection test successful!"
+            showingAlert = true
+            logger.debug("PowerSense connection test passed")
+
+        } catch {
+            testResults += "\n=== Connection Test ===\n"
+            testResults += "❌ Connection failed: \(error.localizedDescription)\n"
+
+            // Add more detailed error information
+            if let powerSenseError = error as? PowerSenseZabbixError {
+                testResults += "   Error type: PowerSense Zabbix Error\n"
+                testResults += "   Details: \(powerSenseError.localizedDescription)\n"
+            } else {
+                testResults += "   Error type: \(type(of: error))\n"
+                testResults += "   Full error: \(error)\n"
+            }
+
+            testResults += "🕒 Test time: \(Date().formatted())\n"
+
+            alertMessage = "PowerSense connection test failed: \(error.localizedDescription)"
+            showingAlert = true
+            logger.error("PowerSense connection test failed: \(error)")
+        }
+
+        isTestingConnection = false
+    }
+
+    private func testFetchDevices() async {
+        guard powerSenseEnabled else { return }
+
+        isTestingDevices = true
+        logger.debug("Testing PowerSense device fetching...")
+
+        do {
+            let devices = try await fetchPowerSenseDevices()
+            testResults += "\n=== Device Fetch Test ===\n"
+            testResults += "✅ Successfully fetched \(devices.count) PowerSense devices\n"
+            testResults += "🕒 Test time: \(Date().formatted())\n"
+
+            // Sample a few devices for display
+            let sampleDevices = Array(devices.prefix(3))
+            for device in sampleDevices {
+                testResults += "📍 Device: \(device.name)\n"
+                testResults += "   ID: \(device.deviceId)\n"
+                testResults += "   Status: \(device.isMonitored ? "Monitored" : "Not Monitored")\n"
+                if let lat = device.latitude, let lon = device.longitude {
+                    testResults += "   Location: \(String(format: "%.4f", lat)), \(String(format: "%.4f", lon))\n"
+                }
+                testResults += "\n"
+            }
+
+            if devices.count > 3 {
+                testResults += "... and \(devices.count - 3) more devices\n"
+            }
+
+            // Store devices in SwiftData for testing
+            for deviceProperties in devices {
+                let device = PowerSenseDevice(
+                    deviceId: deviceProperties.deviceId,
+                    latitude: deviceProperties.privacyLatitude,
+                    longitude: deviceProperties.privacyLongitude
+                )
+                device.name = deviceProperties.name
+                device.isMonitored = deviceProperties.isMonitored
+                device.tlc = deviceProperties.tlc
+                device.tui = deviceProperties.tui
+                device.lastDataReceived = Date()
+
+                modelContext.insert(device)
+            }
+
+            try? modelContext.save()
+            await refreshDataCounts()
+
+            alertMessage = "Successfully fetched and stored \(devices.count) PowerSense devices"
+            showingAlert = true
+            logger.debug("PowerSense device fetch test passed: \(devices.count) devices")
+
+        } catch {
+            testResults += "\n=== Device Fetch Test ===\n"
+            testResults += "❌ Device fetch failed: \(error.localizedDescription)\n"
+            testResults += "🕒 Test time: \(Date().formatted())\n"
+
+            alertMessage = "PowerSense device fetch failed: \(error.localizedDescription)"
+            showingAlert = true
+            logger.error("PowerSense device fetch test failed: \(error.localizedDescription)")
+        }
+
+        isTestingDevices = false
+    }
+
+    private func testFetchEvents() async {
+        guard powerSenseEnabled else { return }
+
+        isTestingEvents = true
+        logger.debug("Testing PowerSense event fetching...")
+
+        do {
+            // Fetch events from the last hour
+            let oneHourAgo = Date().addingTimeInterval(-3600)
+            let events = try await fetchPowerSenseEvents(timeFrom: oneHourAgo)
+
+            testResults += "\n=== Event Fetch Test ===\n"
+            testResults += "✅ Successfully fetched \(events.count) PowerSense events\n"
+            testResults += "📅 Time range: Last 1 hour\n"
+            testResults += "🕒 Test time: \(Date().formatted())\n"
+
+            // Sample a few events for display
+            let sampleEvents = Array(events.prefix(3))
+            for event in sampleEvents {
+                testResults += "⚡ Event: \(event.name)\n"
+                testResults += "   ID: \(event.eventId)\n"
+                testResults += "   Type: \(event.eventType.displayName)\n"
+                testResults += "   Severity: \(event.severity)\n"
+                testResults += "   Time: \(event.timestamp.formatted())\n"
+                testResults += "   Host: \(event.hostId)\n"
+                testResults += "\n"
+            }
+
+            if events.count > 3 {
+                testResults += "... and \(events.count - 3) more events\n"
+            }
+
+            // Store events in SwiftData for testing
+            for eventProperties in events {
+                let event = PowerSenseEvent(
+                    eventId: eventProperties.eventId,
+                    timestamp: eventProperties.timestamp,
+                    eventType: eventProperties.eventType
+                )
+                event.update(with: eventProperties)
+
+                // Try to link to existing device
+                let deviceId = eventProperties.hostId
+                let deviceFetch = FetchDescriptor<PowerSenseDevice>(
+                    predicate: #Predicate { $0.deviceId == deviceId }
+                )
+                if let device = try? modelContext.fetch(deviceFetch).first {
+                    event.device = device
+                }
+
+                modelContext.insert(event)
+            }
+
+            try? modelContext.save()
+            await refreshDataCounts()
+
+            alertMessage = "Successfully fetched and stored \(events.count) PowerSense events"
+            showingAlert = true
+            logger.debug("PowerSense event fetch test passed: \(events.count) events")
+
+        } catch {
+            testResults += "\n=== Event Fetch Test ===\n"
+            testResults += "❌ Event fetch failed: \(error.localizedDescription)\n"
+            testResults += "🕒 Test time: \(Date().formatted())\n"
+
+            alertMessage = "PowerSense event fetch failed: \(error.localizedDescription)"
+            showingAlert = true
+            logger.error("PowerSense event fetch test failed: \(error.localizedDescription)")
+        }
+
+        isTestingEvents = false
+    }
+
+    // MARK: - PowerSense Data Management
+
+    private func deletePowerSenseData() async {
+        logger.debug("Deleting all PowerSense data...")
+
+        do {
+            // Delete all PowerSense devices
+            let deviceFetch = FetchDescriptor<PowerSenseDevice>()
+            let devices = try modelContext.fetch(deviceFetch)
+            for device in devices {
+                modelContext.delete(device)
+            }
+
+            // Delete all PowerSense events
+            let eventFetch = FetchDescriptor<PowerSenseEvent>()
+            let events = try modelContext.fetch(eventFetch)
+            for event in events {
+                modelContext.delete(event)
+            }
+
+            try modelContext.save()
+            await refreshDataCounts()
+
+            testResults += "\n=== Data Deletion ===\n"
+            testResults += "✅ Deleted \(devices.count) devices and \(events.count) events\n"
+            testResults += "🕒 Deletion time: \(Date().formatted())\n"
+
+            alertMessage = "Successfully deleted all PowerSense data"
+            showingAlert = true
+            logger.debug("PowerSense data deletion completed")
+
+        } catch {
+            alertMessage = "Failed to delete PowerSense data: \(error.localizedDescription)"
+            showingAlert = true
+            logger.error("PowerSense data deletion failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func refreshDataCounts() async {
+        do {
+            let deviceFetch = FetchDescriptor<PowerSenseDevice>()
+            let devices = try modelContext.fetch(deviceFetch)
+            powerSenseDeviceCount = devices.count
+
+            let eventFetch = FetchDescriptor<PowerSenseEvent>()
+            let events = try modelContext.fetch(eventFetch)
+            powerSenseEventCount = events.count
+
+            logger.debug("Data counts refreshed: \(powerSenseDeviceCount) devices, \(powerSenseEventCount) events")
+        } catch {
+            logger.error("Failed to refresh data counts: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - PowerSense Test Results View
+
+struct PowerSenseTestResultsView: View {
+    let results: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        #if os(iOS)
+        NavigationView {
+            scrollContent
+                .navigationTitle("Test Results")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Close") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
+        #else
+        VStack {
+            HStack {
+                Text("PowerSense Integration Test Results")
+                    .font(.title2)
+                    .fontWeight(.bold)
+
+                Spacer()
+
+                Button("Close") {
+                    dismiss()
+                }
+            }
+            .padding()
+
+            scrollContent
+        }
+        .frame(width: 600, height: 500)
+        #endif
+    }
+
+    private var scrollContent: some View {
+        ScrollView {
+            VStack(alignment: .leading) {
+                #if os(iOS)
+                Text("PowerSense Integration Test Results")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.bottom)
+                #endif
+
+                Text(results.isEmpty ? "No test results available yet." : results)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding()
+                    #if os(macOS)
+                    .background(Color(NSColor.textBackgroundColor))
+                    #else
+                    .background(Color(UIColor.systemBackground))
+                    #endif
+                    .cornerRadius(8)
+            }
+            .padding()
+        }
     }
 }
 
