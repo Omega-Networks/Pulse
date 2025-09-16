@@ -31,7 +31,8 @@ import SwiftUI
 // MARK: - Core Data
 
 
-//TODO: Make Interface a struct
+//TODO: Make Interface a struct // Never call a struct as a coding fundamental.
+
 /// Managed object subclass for the Interface entity.
 struct Interface: Identifiable, Equatable {
     var id: Int64

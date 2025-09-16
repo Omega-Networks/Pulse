@@ -19,6 +19,16 @@
 				<string></string>
 			</array>
 			<key>UTTypeIdentifier</key>
+			<string>omega-networks.Pulse.DeviceRoleRecord</string>
+			<key>UTTypeTagSpecification</key>
+			<dict/>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string></string>
+			</array>
+			<key>UTTypeIdentifier</key>
 			<string>your-api-domain.com</string>
 			<key>UTTypeTagSpecification</key>
 			<dict/>

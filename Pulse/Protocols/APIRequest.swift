@@ -47,7 +47,7 @@ extension NetworkRequest {
 }
 
 /// API Request Class to make requestions using API Resources and Network Requests Protocols
-class APIRequest<Resource: NetboxResource> {
+final class APIRequest<Resource: NetboxResource> : Sendable {
     let resource: Resource
     let apiKey: String
     let baseURL: String

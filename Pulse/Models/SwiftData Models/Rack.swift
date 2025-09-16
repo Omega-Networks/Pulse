@@ -152,12 +152,12 @@ struct RackProperties: Codable {
         case status = "value"
     }
     
-    var id: Int64?
+    var id: Int64
     let name: String
     let display: String
     let url: String
     let created: Date?
-    let lastUpdated: Date?
+    let lastUpdated: Date
     let uHeight: Int64
     let startingUnit: Int64
     let deviceCount: Int64
@@ -247,13 +247,13 @@ struct RackProperties: Codable {
         self.formFactor = formFactor
     }
     
-    init(id: Int64? = nil, name: String, display: String, url: String, created: Date?, lastUpdated: Date?, status: String, uHeight: Int64, startingUnit: Int64, deviceCount: Int64, siteId: Int64, siteName: String, formFactor: String?) {
+    init(id: Int64, name: String, display: String, url: String, created: Date?, lastUpdated: Date?, status: String, uHeight: Int64, startingUnit: Int64, deviceCount: Int64, siteId: Int64, siteName: String, formFactor: String?) {
         self.id = id
         self.name = name
         self.display = display
         self.url = url
         self.created = created
-        self.lastUpdated = lastUpdated
+        self.lastUpdated = lastUpdated ?? Date.distantPast
         self.status = status
         self.uHeight = uHeight
         self.startingUnit = startingUnit

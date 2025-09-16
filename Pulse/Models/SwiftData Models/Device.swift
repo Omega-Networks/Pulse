@@ -346,12 +346,12 @@ struct DeviceProperties: Codable {
            case rackName = "name"
     }
         
-    var id: Int64?
+//    var id: Int64?
     let name: String
     let display: String
     let url: String
     let created: Date?
-    let lastUpdated: Date?
+    let lastUpdated: Date
     let primaryIP: String
     let serial: String
 
@@ -492,7 +492,7 @@ struct DeviceProperties: Codable {
         self.deviceRoleId = rawDeviceRoleId
         self.deviceRoleName = rawDeviceRoleName
         
-        self.id = id
+//        self.id = id
         self.name = name
         self.created = created
         self.lastUpdated = lastUpdated
@@ -519,9 +519,9 @@ struct DeviceProperties: Codable {
      Initialisation body for either creating or updating a Device, and pushing the information to NetBox.
      */
     init(id: Int64? = nil, name: String, display: String, status: String, deviceType: String, primaryIP: String, serial: String, siteId: Int64, siteName: String, x: Double, y: Double, zabbixId: Int64, zabbixInstance: Int64, deviceRoleId: Int64, deviceRoleName: String, deviceTypeId: Int64, deviceTypeModel: String, rackId: Int64?, rackName: String?, rackPosition: Float?) {
-        self.id = id
+//        self.id = id
         self.created = nil
-        self.lastUpdated = nil
+        self.lastUpdated = Date.distantPast
         self.name = name
         self.display = display
         self.status = status

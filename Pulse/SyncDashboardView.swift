@@ -483,7 +483,7 @@ extension SyncDashboardView {
                 try await modelActor.getDeviceRoles()
                 try await modelActor.getDeviceTypes()
                 try await modelActor.getTenants()
-//                try await modelActor.getRegions()
+                try await modelActor.getRegions()
                 try await modelActor.getSiteGroups()
                 try await modelActor.getSites()
                 try await modelActor.getRacks()

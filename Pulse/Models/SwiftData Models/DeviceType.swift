@@ -90,7 +90,7 @@ struct DeviceTypeProperties: Codable {
     let id: Int64
     let model: String
     let created: Date
-    let lastUpdated: Date?
+    let lastUpdated: Date
     let uHeight: Float?
     
     init(from decoder: Decoder) throws {
@@ -120,7 +120,7 @@ struct DeviceTypeProperties: Codable {
         self.id = id
         self.model = model
         self.created = created
-        self.lastUpdated = rawLastUpdated
+        self.lastUpdated = rawLastUpdated ?? Date.distantPast
         self.uHeight = rawuHeight
     }
     

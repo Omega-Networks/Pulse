@@ -28,35 +28,605 @@ import SwiftData
 import Dispatch
 import OSLog
 
-// Protocols and extensions go here
-protocol PropertiesType {
-}
-extension SiteGroupProperties: PropertiesType {}
-extension SiteProperties: PropertiesType {}
-extension DeviceProperties: PropertiesType {}
-extension EventProperties: PropertiesType {}
-//extension CableProperties: PropertiesType {}
-extension DeviceRoleProperties: PropertiesType {}
-extension DeviceTypeProperties: PropertiesType {}
+// MARK: - Protocols and Extensions
 
+// Protocol for all entity properties
+protocol EntityPropertiesProtocol {
+    var id: Int64 { get }
+    var lastUpdated: Date { get }
+//    var created: Date? { get }
+}
+
+// Protocol for entities that can be identified and updated
+protocol IdentifiableEntity: AnyObject {
+    var entityId: Int64 { get }
+    var lastUpdated: Date? { get set }
+    var created: Date? { get set }
+}
+
+// Protocol for entity-specific operations
+protocol EntityOperations {
+    associatedtype EntityType: IdentifiableEntity & PersistentModel
+    associatedtype PropertiesType: EntityPropertiesProtocol
+    
+    func createEntity(from properties: PropertiesType) -> EntityType
+    func updateEntity(_ entity: EntityType, with properties: PropertiesType)
+    func setupRelationships(for entity: EntityType, with properties: PropertiesType, in context: ModelContext) throws
+}
+
+// Protocol conformances for existing entities
+extension SiteGroupProperties: EntityPropertiesProtocol {}
+extension SiteProperties: EntityPropertiesProtocol {}
+extension DeviceProperties: EntityPropertiesProtocol {
+    var id: Int64 {
+        return Int64.random(in: Int64.min...Int64.max)
+    }
+}
+extension EventProperties: EntityPropertiesProtocol {
+    var id: Int64 {
+        return Int64.random(in: Int64.min...Int64.max)
+    }
+}
+extension RackProperties: EntityPropertiesProtocol {}
+extension DeviceRoleProperties: EntityPropertiesProtocol {}
+extension DeviceTypeProperties: EntityPropertiesProtocol {}
+extension TenantGroupProperties: EntityPropertiesProtocol {}
+extension TenantProperties: EntityPropertiesProtocol {}
+extension RegionProperties: EntityPropertiesProtocol {}
+
+// Entity conformances to IdentifiableEntity
+extension SiteGroup: IdentifiableEntity { var entityId: Int64 { id } }
+extension Site: IdentifiableEntity { var entityId: Int64 { id } }
+extension DeviceRole: IdentifiableEntity { var entityId: Int64 { id } }
+extension DeviceType: IdentifiableEntity { var entityId: Int64 { id } }
+extension TenantGroup: IdentifiableEntity { var entityId: Int64 { id } }
+extension Tenant: IdentifiableEntity { var entityId: Int64 { id } }
+extension Region: IdentifiableEntity { var entityId: Int64 { id } }
+extension Rack: IdentifiableEntity { var entityId: Int64 { id } }
+extension Device: IdentifiableEntity { var entityId: Int64 { id } }
+
+// MARK: - Error Types
+
+enum ProviderModelError: Error, LocalizedError {
+    case networkFailure(underlying: Error)
+    case dataCorruption
+    case relationshipMappingFailed(entityId: Int64)
+    case saveOperationFailed(underlying: Error)
+    case configurationMissing
+    
+    var errorDescription: String? {
+        switch self {
+        case .networkFailure(let error):
+            return "Network operation failed: \(error.localizedDescription)"
+        case .dataCorruption:
+            return "Data integrity violation detected"
+        case .relationshipMappingFailed(let entityId):
+            return "Failed to map relationships for entity ID: \(entityId)"
+        case .saveOperationFailed(let error):
+            return "Failed to save data: \(error.localizedDescription)"
+        case .configurationMissing:
+            return "Required configuration is missing"
+        }
+    }
+}
+
+// MARK: - Entity Operations Implementations
+
+struct TenantGroupOperations: EntityOperations {
+    typealias EntityType = TenantGroup
+    typealias PropertiesType = TenantGroupProperties
+    
+    func createEntity(from properties: TenantGroupProperties) -> TenantGroup {
+        return TenantGroup(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: TenantGroup, with properties: TenantGroupProperties) {
+        entity.name = properties.name
+        entity.created = properties.created
+        entity.lastUpdated = properties.lastUpdated
+    }
+    
+    //No relationship for tenant group
+    func setupRelationships(for entity: TenantGroup, with properties: TenantGroupProperties, in context: ModelContext) throws {
+    }
+}
+
+struct TenantOperations: EntityOperations {
+    typealias EntityType = Tenant
+    typealias PropertiesType = TenantProperties
+    
+    func createEntity(from properties: TenantProperties) -> Tenant {
+        return Tenant(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: Tenant, with properties: TenantProperties) {
+        entity.name = properties.name
+        entity.created = properties.created
+        entity.lastUpdated = properties.lastUpdated
+    }
+    
+    func setupRelationships(for entity: Tenant, with properties: TenantProperties, in context: ModelContext) throws {
+        if let groupId = properties.groupId, groupId != 0 {
+            let predicate = #Predicate<TenantGroup> { tenantGroup in
+                tenantGroup.id == groupId
+            }
+            let fetchDescriptor = FetchDescriptor(predicate: predicate)
+            if let tenantGroup = try? context.fetch(fetchDescriptor).first {
+                entity.group = tenantGroup
+            }
+        }
+    }
+}
+
+struct RegionOperations: EntityOperations {
+    typealias EntityType = Region
+    typealias PropertiesType = RegionProperties
+    
+    func createEntity(from properties: RegionProperties) -> Region {
+        return Region(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: Region, with properties: RegionProperties) {
+        entity.name = properties.name
+        entity.created = properties.created
+        entity.siteCount = properties.siteCount
+        entity.lastUpdated = properties.lastUpdated
+    }
+    
+    func setupRelationships(for entity: Region, with properties: RegionProperties, in context: ModelContext) throws {
+        if let parentId = properties.parentId, parentId != 0, parentId != entity.parent?.id {
+            let predicate = #Predicate<Region> { parent in
+                parent.id == parentId
+            }
+            let fetchDescriptor = FetchDescriptor(predicate: predicate)
+            if let parent = try? context.fetch(fetchDescriptor).first {
+                entity.parent = parent
+            }
+        }
+    }
+}
+
+struct DeviceRoleOperations: EntityOperations {
+    typealias EntityType = DeviceRole
+    typealias PropertiesType = DeviceRoleProperties
+    
+    func createEntity(from properties: DeviceRoleProperties) -> DeviceRole {
+        return DeviceRole(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: DeviceRole, with properties: DeviceRoleProperties) {
+        entity.name = properties.name
+        entity.created = properties.created
+        entity.lastUpdated = properties.lastUpdated
+        entity.colour = properties.colour
+    }
+    
+    func setupRelationships(for entity: DeviceRole, with properties: DeviceRoleProperties, in context: ModelContext) throws {
+        // DeviceRole relationships can be added here if needed
+    }
+}
+
+struct DeviceTypeOperations: EntityOperations {
+    typealias EntityType = DeviceType
+    typealias PropertiesType = DeviceTypeProperties
+    
+    func createEntity(from properties: DeviceTypeProperties) -> DeviceType {
+        return DeviceType(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: DeviceType, with properties: DeviceTypeProperties) {
+        entity.model = properties.model
+        entity.created = properties.created
+        entity.lastUpdated = properties.lastUpdated
+        entity.uHeight = properties.uHeight
+    }
+    
+    //No relationship for this
+    func setupRelationships(for entity: DeviceType, with properties: DeviceTypeProperties, in context: ModelContext) throws {
+    }
+}
+
+struct SiteGroupOperations: EntityOperations {
+    typealias EntityType = SiteGroup
+    typealias PropertiesType = SiteGroupProperties
+    
+    func createEntity(from properties: SiteGroupProperties) -> SiteGroup {
+        return SiteGroup(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: SiteGroup, with properties: SiteGroupProperties) {
+        entity.name = properties.name
+        entity.created = properties.created
+        entity.lastUpdated = properties.lastUpdated
+    }
+    
+    func setupRelationships(for entity: SiteGroup, with properties: SiteGroupProperties, in context: ModelContext) throws {
+        if let parentId = properties.parentId, parentId != 0, parentId != entity.parent?.id {
+            let predicate = #Predicate<SiteGroup> { parent in
+                parent.id == parentId
+            }
+            let fetchDescriptor = FetchDescriptor(predicate: predicate)
+            if let parent = try? context.fetch(fetchDescriptor).first {
+                entity.parent = parent
+            }
+        }
+    }
+}
+
+struct SiteOperations: EntityOperations {
+    typealias EntityType = Site
+    typealias PropertiesType = SiteProperties
+    
+    func createEntity(from properties: SiteProperties) -> Site {
+        return Site(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: Site, with properties: SiteProperties) {
+        entity.created = properties.created
+        entity.deviceCount = properties.deviceCount
+        entity.display = properties.display
+        entity.lastUpdated = properties.lastUpdated
+        entity.latitude = properties.latitude
+        entity.longitude = properties.longitude
+        entity.name = properties.name
+        entity.status = properties.status
+        entity.physicalAddress = properties.physicalAddress
+        entity.shippingAddress = properties.shippingAddress
+        entity.url = properties.url
+    }
+    
+    func setupRelationships(for entity: Site, with properties: SiteProperties, in context: ModelContext) throws {
+        if properties.groupId != 0 {
+            print("Establishing relationship with Site Group")
+            let groupId = properties.groupId
+            
+            let predicate = #Predicate<SiteGroup> { siteGroup in
+                siteGroup.id == groupId
+            }
+            
+            let fetchDescriptor = FetchDescriptor(predicate: predicate)
+            
+            if let siteGroup = try? context.fetch(fetchDescriptor).first {
+                entity.group = siteGroup
+            }
+        }
+    
+        if properties.tenantId != 0 {
+            print("Establishing relationship with Site Group")
+            let tenantId = properties.tenantId
+            
+            let predicate = #Predicate<Tenant> { tenant in
+                tenant.id == tenantId
+            }
+            
+            let fetchDescriptor = FetchDescriptor(predicate: predicate)
+            
+            if let tenant = try? context.fetch(fetchDescriptor).first {
+                entity.tenant = tenant
+            }
+        }
+        
+        if properties.regionId != 0 {
+            print("Establishing relationship with Site Group")
+            let regionId = properties.regionId
+            
+            let predicate = #Predicate<Region> { region in
+                region.id == regionId
+            }
+            
+            let fetchDescriptor = FetchDescriptor(predicate: predicate)
+            
+            if let region = try? context.fetch(fetchDescriptor).first {
+                entity.region = region
+            }
+        }
+    }
+    
+}
+
+struct RackOperations: EntityOperations {
+    typealias EntityType = Rack
+    typealias PropertiesType = RackProperties
+    
+    func createEntity(from properties: RackProperties) -> Rack {
+        return Rack(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: Rack, with properties: RackProperties) {
+        entity.name = properties.name
+        entity.display = properties.display
+        entity.created = properties.created
+        entity.lastUpdated = properties.lastUpdated
+        entity.url = properties.url
+        entity.uHeight = properties.uHeight
+        entity.startingUnit = properties.startingUnit
+        entity.deviceCount = properties.deviceCount
+        entity.status = properties.status
+        entity.formFactor = properties.formFactor
+    }
+    
+    func setupRelationships(for entity: Rack, with properties: RackProperties, in context: ModelContext) throws {
+        // Handle site relationship
+        if properties.siteId != 0 {
+            let predicate = #Predicate<Site> { site in
+                site.id == properties.siteId
+            }
+            let fetchDescriptor = FetchDescriptor(predicate: predicate)
+            if let site = try? context.fetch(fetchDescriptor).first {
+                entity.site = site
+            }
+
+        }
+    }
+}
+
+struct DeviceOperations: EntityOperations {
+    typealias EntityType = Device
+    typealias PropertiesType = DeviceProperties
+    
+    func createEntity(from properties: DeviceProperties) -> Device {
+        return Device(id: properties.id)
+    }
+    
+    func updateEntity(_ entity: Device, with properties: DeviceProperties) {
+        let device = Device(id: properties.id)
+        device.created = properties.created
+        device.display = properties.display
+        device.lastUpdated = properties.lastUpdated
+        device.name = properties.name
+        device.rackPosition = properties.rackPosition
+        device.primaryIP = properties.primaryIP
+        device.serial = properties.serial
+        device.url = properties.url
+        device.x = properties.x
+        device.y = properties.y
+        device.zabbixId = properties.zabbixId
+        device.zabbixInstance = properties.zabbixInstance
+    }
+    
+    func setupRelationships(for entity: Device, with properties: DeviceProperties, in context: ModelContext) throws {
+//        // Establishing relationship with Device Role
+//        if deviceProperty.deviceRoleId != 0, let deviceRole = deviceRolesDict[deviceProperty.deviceRoleId] {
+//            device.deviceRole = deviceRole
+//        }
+//        
+//        // Establishing relationship with Device Type
+//        if deviceProperty.deviceTypeId != 0, let deviceType = deviceTypesDict[deviceProperty.deviceTypeId] {
+//            device.deviceType = deviceType
+//        }
+//        
+//        // Establishing relationship with Site
+//        if deviceProperty.siteId != 0, let site = sitesDict[deviceProperty.siteId] {
+//            device.site = site
+//        }
+//        
+//        // Establishing relationship with Rack
+//        if let rackId = deviceProperty.rackId, rackId != 0, let rack = racksDict[rackId] {
+//            device.rack = rack
+//        }
+    }
+}
+
+// MARK: - Main Actor
 
 actor ProviderModelActor {
-    @Published private(set) var isLoadingZabbixEvents = false
-    @Published private(set) var isLoadingZabbixItems = false
-    @Published private(set) var isLoadingZabbixHistories = false
+    // Use custom notification instead of @Published for actor
+    private var _isLoadingZabbixEvents = false
+    private var _isLoadingZabbixItems = false
+    private var _isLoadingZabbixHistories = false
     
+    var isLoadingZabbixEvents: Bool { _isLoadingZabbixEvents }
+    var isLoadingZabbixItems: Bool { _isLoadingZabbixItems }
+    var isLoadingZabbixHistories: Bool { _isLoadingZabbixHistories }
     
     var enableMonitoring = false
-    
     var modelContainer: ModelContainer
+    
+    private let logger = Logger(subsystem: "PulseSync", category: "ProviderModelActor")
     
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
     
-
+    // MARK: - Generic CRUD Operations
     
-    // MARK: - Helper functions
+    private func processEntities<T: EntityOperations>(
+        properties: [T.PropertiesType]? = nil,
+        operations: T,
+        apiFetcher: (() async throws -> [T.PropertiesType])? = nil,
+        entityName: String
+    ) async throws {
+        let modelContext = ModelContext(modelContainer)
+        var propertiesList: [T.PropertiesType] = []
+        var shouldDeleteOld = false
+        
+        logger.debug("Starting process for \(entityName)")
+        
+        // Determine data source
+        if let properties = properties {
+            propertiesList = properties
+            logger.debug("Using provided properties for \(entityName)")
+        } else if let fetcher = apiFetcher {
+            do {
+                propertiesList = try await fetcher()
+                shouldDeleteOld = true
+                logger.debug("Fetched \(propertiesList.count) \(entityName) from API")
+            } catch {
+                logger.error("Failed to fetch \(entityName): \(error.localizedDescription)")
+                throw ProviderModelError.networkFailure(underlying: error)
+            }
+        }
+        
+        // Build map of existing entities
+        var existingEntityMap: [Int64: T.EntityType] = [:]
+        if shouldDeleteOld {
+            let descriptor = FetchDescriptor<T.EntityType>()
+            if let existingEntities = try? modelContext.fetch(descriptor) {
+                for entity in existingEntities {
+                    existingEntityMap[entity.entityId] = entity
+                }
+                logger.debug("Found \(existingEntities.count) existing \(entityName)")
+            }
+        }
+        
+        // Process entities
+        for properties in propertiesList {
+            let entityExists = existingEntityMap.keys.contains(properties.id)
+            let entity = entityExists ?
+                existingEntityMap.removeValue(forKey: properties.id) :
+                operations.createEntity(from: properties)
+            
+            if let entity = entity {
+                // Only update if lastUpdated differs or it's a new entity
+                if !entityExists || entity.lastUpdated != properties.lastUpdated {
+                    operations.updateEntity(entity, with: properties)
+                    do {
+                        try operations.setupRelationships(for: entity, with: properties, in: modelContext)
+                    } catch {
+                        logger.error("Failed to setup relationships for \(entityName) ID \(properties.id): \(error.localizedDescription)")
+                        throw ProviderModelError.relationshipMappingFailed(entityId: properties.id)
+                    }
+                }
+                
+                if !entityExists {
+                    modelContext.insert(entity)
+                    logger.debug("Inserting new \(entityName): ID \(properties.id)")
+                }
+            }
+        }
+        
+        // Delete stale entities
+        for remainingEntity in existingEntityMap.values {
+            logger.debug("Deleting stale \(entityName): ID \(remainingEntity.entityId)")
+            modelContext.delete(remainingEntity)
+        }
+        
+        // Save changes
+        do {
+            try modelContext.save()
+            logger.info("Successfully processed \(propertiesList.count) \(entityName)")
+        } catch {
+            logger.error("Failed to save \(entityName): \(error.localizedDescription)")
+            throw ProviderModelError.saveOperationFailed(underlying: error)
+        }
+    }
+    
+    // MARK: - API Fetcher Functions
+    
+    private func fetchFromNetBoxAPI<Resource: Sendable>(
+        resourceType: Resource.Type
+    ) async throws -> [Resource.ModelType]
+    where Resource: APIResourceProtocol & NetboxResource
+    {
+        let netboxApiServer = await Configuration.shared.getNetboxApiServer()
+        let netboxApiToken = await Configuration.shared.getNetboxApiToken()
+        
+        let resource = resourceType.init()
+        let request = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
+        let res = try await request.execute();
+        return res;
+    }
+    
+    // MARK: - Public Interface Methods
+    func getTenantGroups(tenantGroupProperties: [TenantGroupProperties]? = nil) async throws {
+        try await processEntities(
+            properties: tenantGroupProperties,
+            operations: TenantGroupOperations(),
+            apiFetcher: tenantGroupProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: TenantGroupResource.self)
+            } : nil,
+            entityName: "TenantGroups"
+        )
+    }
+    
+    func getTenants(tenantProperties: [TenantProperties]? = nil) async throws {
+        try await processEntities(
+            properties: tenantProperties,
+            operations: TenantOperations(),
+            apiFetcher: tenantProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: TenantResource.self)
+            } : nil,
+            entityName: "Tenants"
+        )
+    }
+    
+    func getRegions(regionProperties: [RegionProperties]? = nil) async throws {
+        try await processEntities(
+            properties: regionProperties,
+            operations: RegionOperations(),
+            apiFetcher: regionProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: RegionResource.self)
+            } : nil,
+            entityName: "Regions"
+        )
+    }
+    
+    func getDeviceRoles(deviceRoleProperties: [DeviceRoleProperties]? = nil) async throws {
+        try await processEntities(
+            properties: deviceRoleProperties,
+            operations: DeviceRoleOperations(),
+            apiFetcher: deviceRoleProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: DeviceRoleResource.self)
+            } : nil,
+            entityName: "DeviceRoles"
+        )
+    }
+    
+    func getDeviceTypes(deviceTypeProperties: [DeviceTypeProperties]? = nil) async throws {
+        try await processEntities(
+            properties: deviceTypeProperties,
+            operations: DeviceTypeOperations(),
+            apiFetcher: deviceTypeProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: DeviceTypeResource.self)
+            } : nil,
+            entityName: "DeviceTypes"
+        )
+    }
+    
+    func getSiteGroups(siteGroupProperties: [SiteGroupProperties]? = nil) async throws {
+        try await processEntities(
+            properties: siteGroupProperties,
+            operations: SiteGroupOperations(),
+            apiFetcher: siteGroupProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: SiteGroupResource.self)
+            } : nil,
+            entityName: "SiteGroups"
+        )
+    }
+    
+    func getSites(siteProperties: [SiteProperties]? = nil) async throws {
+        try await processEntities(
+            properties: siteProperties,
+            operations: SiteOperations(),
+            apiFetcher: siteProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: SiteResource.self)
+            } : nil,
+            entityName: "Sites"
+        )
+    }
+    
+    func getRacks(rackProperties: [RackProperties]? = nil) async throws {
+        try await processEntities(
+            properties: rackProperties,
+            operations: RackOperations(),
+            apiFetcher: rackProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: RackResource.self)
+            } : nil,
+            entityName: "Racks"
+        )
+    }
+    
+    func getDevices(deviceProperties: [DeviceProperties]? = nil) async throws {
+        try await processEntities(
+            properties: deviceProperties,
+            operations: DeviceOperations(),
+            apiFetcher: deviceProperties == nil ? {
+                try await self.fetchFromNetBoxAPI(resourceType: DeviceResource.self)
+            } : nil,
+            entityName: "Devices"
+        )
+    }
+    // MARK: - Helper Functions (preserved from original)
     
     func updateEvents(params: UpdateParameters, eventIds: [String]) async {
         let logger = Logger(subsystem: "zabbix", category: "eventUpdate")
@@ -75,1241 +645,27 @@ actor ProviderModelActor {
         }
     }
     
-    // TODO: Obtain and store most recent Object Change id "/api/extras/object-changes/" and check for changes prior to getting updates from Netbox
-    
-    /**
-     Fetch and process tenantGroup properties.
-     
-     This function fetches and processes tenantGroup properties, updating existing tenantGroups and inserting new ones as necessary.
-     It then deletes any remaining tenantGroupa that were not in the fetched tenantGroup properties.
-     
-     - Parameter tenantGroupProperties: An optional array of `tenantGroupProperties` to be processed. If `nil`, the function will fetch the tenantGroup properties by executing a tenantGroup API request.
-     */
-    func getTenantGroups(tenantGroupProperties: [TenantGroupProperties]? = nil) async throws {
-        let modelContext = ModelContext(modelContainer)
+    // MARK: - Batch Operations
+    func updateAllEntities() async throws {
+        logger.info("Starting batch update of all entities")
         
-        var tenantGroupPropertiesList: [TenantGroupProperties] = []
-        
-        var deleteOld = false
-        
-        // If tenantGroupPropertiesList is nil, execute tenantGroup request to populate it.
-        if let tenantGroupProperties = tenantGroupProperties {
-            print("tenantGroupProperties IF")
-            tenantGroupPropertiesList = tenantGroupProperties
-        } else {
-            print("tenantGroupProperties ELSE")
-            // Initialize resource and request objects.
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
+        // Use structured concurrency for parallel processing
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await self.getTenantGroups() }
+            group.addTask { try await self.getTenants() }
+            group.addTask { try await self.getRegions() }
+            group.addTask { try await self.getDeviceRoles() }
+            group.addTask { try await self.getDeviceTypes() }
+            group.addTask { try await self.getSiteGroups() }
+            group.addTask { try await self.getSites() }
             
-            let resource = TenantGroupResource()
-            let tenantGroupRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            // Execute tenantGroup API request.
-            do {
-                tenantGroupPropertiesList = try await tenantGroupRequest.execute()
-            } catch {
-                // TODO: Advise user of errors
-                print("Error executing tenantGroup request: \(error)")
-                throw error
-            }
-            deleteOld = true
+            // Wait for all tasks to complete
+            for try await _ in group {}
         }
         
-        // Initialize a dictionary to hold tenantGroup categorized as insert or delete.
-        var existingTenantGroupMap: [Int64: TenantGroup] = [:]
-        
-        
-        if deleteOld {
-            // Fetch existing tenantGroups.
-            let descriptor = FetchDescriptor<TenantGroup>()
-            if let existingTenantGroups = try? modelContext.fetch(descriptor) {
-                // Map existing deviceRole by their IDs
-                for tenantGroup in existingTenantGroups {
-                    existingTenantGroupMap[tenantGroup.id] = tenantGroup
-                }
-            }
-        }
-        
-        do {
-            for tenantGroupProperty in tenantGroupPropertiesList {
-                
-                print("tenantGroupProperty: \(tenantGroupProperty.name)")
-                // Determine if <tenantGroup> already exists and remove from deletion queue
-                let tenantGroupExists: Bool = existingTenantGroupMap.keys.contains(tenantGroupProperty.id)
-                print("tenantGroupExists: \(tenantGroupExists)")
-                let tenantGroupOptional = tenantGroupExists ? existingTenantGroupMap.removeValue(forKey: tenantGroupProperty.id) : TenantGroup(id: tenantGroupProperty.id)
-                
-                // Using optional binding to safely unwrap the tenantGroup
-                if let tenantGroup = tenantGroupOptional {
-                    // Check if lastUpdated values are equal
-                    if tenantGroup.lastUpdated != tenantGroupProperty.lastUpdated {
-                        tenantGroup.name = tenantGroupProperty.name
-                        tenantGroup.created = tenantGroupProperty.created
-                        tenantGroup.lastUpdated = tenantGroupProperty.lastUpdated
-                    }
-                    tenantGroup.name = tenantGroupProperty.name
-                    tenantGroup.created = tenantGroupProperty.created
-                    tenantGroup.lastUpdated = tenantGroupProperty.lastUpdated
-                    
-                    // If tenantGroup does not exist, insert it into the model context
-                    if !tenantGroupExists {
-                        print("Inserting \(tenantGroupProperty.name) into swiftData")
-                        modelContext.insert(tenantGroup)
-                    }
-                }
-            }
-        }
-        
-        // Delete legacy tenantGroups after processing all tenantGroupProperties
-        for remainingTenantGroup in existingTenantGroupMap.values {
-            print("Deleting tenantGroup: \(remainingTenantGroup.name ?? "Unknown")")
-            modelContext.delete(remainingTenantGroup)
-        }
-        
-        // Save the context to commit the changes
-        do {
-            print("Attempting to save swiftData")
-            try modelContext.save()
-        } catch {
-            print("Error saving context after deleting tenantGroups: \(error)")
-        }
-        
-        print ("Completed getTenantGroup function")
+        logger.info("Completed batch update of all entities")
     }
     
-    /**
-     Fetch and process tenant properties.
-     
-     This function fetches and processes tenant properties, updating existing tenant and inserting new ones as necessary.
-     It then deletes any remaining tenant that were not in the fetched tenant properties.
-     
-     - Parameter tenantProperties: An optional array of `tenantProperties` to be processed. If `nil`, the function will fetch the region properties by executing a tenant API request.
-     */
-    func getTenants(tenantProperties: [TenantProperties]? = nil) async throws {
-        let modelContext = ModelContext(modelContainer)
-        
-        var tenantPropertiesList: [TenantProperties] = []
-        
-        var deleteOld = false
-        
-        // If tenantPropertiesList is nil, execute tenant request to populate it.
-        if let tenantProperties = tenantProperties {
-            tenantPropertiesList = tenantProperties
-        } else {
-            // Initialize resource and request objects.
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            
-            let resource = TenantResource()
-            let tenantRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            // Execute device API request.
-            do {
-                tenantPropertiesList = try await tenantRequest.execute()
-            } catch {
-                // TODO: Advise user of errors
-                print("Error executing tenant request: \(error)")
-                throw error
-            }
-            deleteOld = true
-        }
-        
-        // Initialize a dictionary to hold tenants categorized as insert or delete.
-        var existingTenantMap: [Int64: Tenant] = [:]
-        
-        if deleteOld {
-            // Fetch existing tenants.
-            let descriptor = FetchDescriptor<Tenant>()
-            if let existingTenants = try? modelContext.fetch(descriptor) {
-                // Map existing tenants by their IDs
-                for tenant in existingTenants {
-                    existingTenantMap[tenant.id] = tenant
-                }
-            }
-        }
-        
-        do {
-            for tenantProperty in tenantPropertiesList {
-                
-                print("tenantProperty: \(tenantProperty.name)")
-                // Determine if <Tenant> already exists and remove from deletion queue
-                let tenantExists: Bool = existingTenantMap.keys.contains(tenantProperty.id)
-                print("tenantExists: \(tenantExists)")
-                let tenantOptional = tenantExists ? existingTenantMap.removeValue(forKey: tenantProperty.id) : Tenant(id: tenantProperty.id)
-                
-                // Using optional binding to safely unwrap the tenant
-                if let tenant = tenantOptional {
-                    // Check if lastUpdated values are equal
-                    if tenant.lastUpdated != tenantProperty.lastUpdated {
-                        tenant.name = tenantProperty.name
-                        tenant.created = tenantProperty.created
-                        tenant.lastUpdated = tenantProperty.lastUpdated
-                        if tenantProperty.groupId != 0 {
-                            print("Establishing relationship with Tenant Group")
-                            let groupId = tenantProperty.groupId ?? 0
-                            
-                            let predicate = #Predicate<TenantGroup> { tenantGroup in
-                                tenantGroup.id == groupId
-                            }
-                            
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let tenantGroup = try? modelContext.fetch(fetchDescriptor).first {
-                                tenant.group = tenantGroup
-                            }
-                        }
-                    } else {
-                        tenant.name = tenantProperty.name
-                        tenant.created = tenantProperty.created
-                        tenant.lastUpdated = tenantProperty.lastUpdated
-                        
-                        // If tenant does not exist, insert it into the model context
-                        if !tenantExists {
-                            print("Inserting \(tenantProperty.name) into swiftData")
-                            modelContext.insert(tenant)
-                        }
-                        
-                        // TODO: Refactor mapping of relationships
-                        // Establishing relationship with Tenant Group
-                        if tenantProperty.groupId != 0 {
-                            print("Establishing relationship with Tenant Group")
-                            let groupId = tenantProperty.groupId ?? 0
-                            
-                            let predicate = #Predicate<TenantGroup> { tenantGroup in
-                                tenantGroup.id == groupId
-                            }
-                            
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let tenantGroup = try? modelContext.fetch(fetchDescriptor).first {
-                                tenant.group = tenantGroup
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Delete legacy tenants after processing all tenantProperties
-        for remainingTenant in existingTenantMap.values {
-            
-            print("Deleting tenant: \(remainingTenant.name)")
-            modelContext.delete(remainingTenant)
-        }
-        
-        // Save the context to commit the changes
-        do {
-            print("Attempting to save swiftData")
-            try modelContext.save()
-        } catch {
-            print("Error saving context after deleting tenants: \(error)")
-        }
-        print ("Completed getTenants function")
-    }
-    
-    /**
-     Fetch and process region properties.
-     
-     This function fetches and processes region properties, updating existing region and inserting new ones as necessary.
-     It then deletes any remaining region that were not in the fetched region properties.
-     
-     - Parameter regionProperties: An optional array of `regionProperties` to be processed. If `nil`, the function will fetch the region properties by executing a deviceRole API request.
-     */
-    func getRegions(regionProperties: [RegionProperties]? = nil) async throws {
-        let modelContext = ModelContext(modelContainer)
-        
-        var regionPropertiesList: [RegionProperties] = []
-        
-        var deleteOld = false
-        
-        // If regionPropertiesList is nil, execute regionRole request to populate it.
-        if let regionProperties = regionProperties {
-            regionPropertiesList = regionProperties
-        } else {
-            // Initialize resource and request objects.
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            
-            let resource = RegionResource()
-            let regionRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            // Execute region API request.
-            do {
-                regionPropertiesList = try await regionRequest.execute()
-            } catch {
-                // TODO: Advise user of errors
-                print("Error executing site request: \(error)")
-                throw error
-            }
-            deleteOld = true
-        }
-        
-        // Initialize a dictionary to hold region categorized as insert or delete.
-        var existingRegionMap: [Int64: Region] = [:]
-        
-        if deleteOld {
-            // Fetch existing regions.
-            let descriptor = FetchDescriptor<Region>()
-            if let existingregions = try? modelContext.fetch(descriptor) {
-                // Map existing region by their IDs
-                for region in existingregions {
-                    existingRegionMap[region.id] = region
-                }
-            }
-        }
-        
-        do {
-            for regionProperty in regionPropertiesList {
-                
-                print("regionProperty: \(regionProperty.name)")
-                // TODO: regionProperty.id should not be optional
-                // Determine if <Region> already exists and remove from deletion queue
-                let regionExists: Bool = existingRegionMap.keys.contains(regionProperty.id)
-                print("deviceRoleExists: \(regionExists)")
-                let regionOptional = regionExists ? existingRegionMap.removeValue(forKey: regionProperty.id) : Region(id: regionProperty.id)
-                
-                // Using optional binding to safely unwrap the region
-                if let region = regionOptional {
-                    // Check if lastUpdated values are equal
-                    if region.lastUpdated != regionProperty.lastUpdated {
-                        region.name = regionProperty.name
-                        region.created = regionProperty.created
-                        region.siteCount = regionProperty.siteCount
-                        region.lastUpdated = regionProperty.lastUpdated
-                        
-                        // Establishing relationship with region
-                        if let parentId = regionProperty.parentId,
-                           parentId != 0,
-                           parentId != region.parent?.id {
-                            print("Establishing relationship with parent Region")
-                            
-                            let predicate = #Predicate<Region> { parent in
-                                parent.id == parentId
-                            }
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let parent = try? modelContext.fetch(fetchDescriptor).first {
-                                region.parent = parent
-                            }
-                        }
-                    } else {
-                        region.name = regionProperty.name
-                        region.created = regionProperty.created
-                        region.siteCount = regionProperty.siteCount
-                        region.lastUpdated = regionProperty.lastUpdated
-                        
-                        // Establishing relationship with region
-                        if let parentId = regionProperty.parentId,
-                           parentId != 0,
-                           parentId != region.parent?.id {
-                            print("Establishing relationship with parent Region")
-                            
-                            let predicate = #Predicate<Region> { parent in
-                                parent.id == parentId
-                            }
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let parent = try? modelContext.fetch(fetchDescriptor).first {
-                                region.parent = parent
-                            }
-                        }
-                    }
-                    
-                    // If region does not exist, insert it into the model context
-                    if !regionExists {
-                        print("Inserting \(regionProperty.name) into swiftData")
-                        modelContext.insert(region)
-                    }
-                    
-                }
-            }
-        }
-        
-        // Delete legacy regions after processing all regionProperties
-        for remainingRegion in existingRegionMap.values {
-            print("Deleting region: \(remainingRegion.name)")
-            modelContext.delete(remainingRegion)
-        }
-        
-        // Save the context to commit the changes
-        do {
-            print("Attempting to save swiftData")
-            try modelContext.save()
-        } catch {
-            print("Error saving context after deleting deviceRoles: \(error)")
-        }
-        print ("Completed getRegions function")
-    }
-    
-    /**
-     Fetch and process deviceRole properties.
-     
-     This function fetches and processes deviceRole properties, updating existing deviceRoles and inserting new ones as necessary.
-     It then deletes any remaining deviceRoles that were not in the fetched deviceRole properties.
-     
-     - Parameter deviceRoleProperties: An optional array of `deviceRoleProperties` to be processed. If `nil`, the function will fetch the deviceRole properties by executing a deviceRole API request.
-     */
-    func getDeviceRoles(deviceRoleProperties: [DeviceRoleProperties]? = nil) async throws  {
-        let modelContext = ModelContext(modelContainer)
-        
-        var deviceRolePropertiesList: [DeviceRoleProperties] = []
-        
-        var deleteOld = false
-        
-        // If deviceRolePropertiesList is nil, execute deviceRole request to populate it.
-        if let deviceRoleProperties = deviceRoleProperties {
-            deviceRolePropertiesList = deviceRoleProperties
-        } else {
-            // Initialize resource and request objects.
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            
-            let resource = DeviceRoleResource()
-            let deviceRoleRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            // Execute deviceRole API request.
-            do {
-                deviceRolePropertiesList = try await deviceRoleRequest.execute()
-            } catch {
-                // TODO: Advise user of errors
-                print("Error executing deviceRole request: \(error)")
-                throw error
-            }
-            deleteOld = true
-        }
-        
-        // Initialize a dictionary to hold deviceRole categorized as insert or delete.
-        var existingDeviceRoleMap: [Int64: DeviceRole] = [:]
-        
-        if deleteOld {
-            // Fetch existing deviceRoles.
-            let descriptor = FetchDescriptor<DeviceRole>()
-            if let existingDeviceRoles = try? modelContext.fetch(descriptor) {
-                // Map existing deviceRole by their IDs
-                for deviceRole in existingDeviceRoles {
-                    existingDeviceRoleMap[deviceRole.id] = deviceRole
-                }
-            }
-        }
-        
-        do {
-            for deviceRoleProperty in deviceRolePropertiesList {
-                
-                print("deviceRoleProperty: \(deviceRoleProperty.name)")
-                // TODO: deviceRoleProperty.id should not be optional
-                // Determine if <DeviceRole> already exists and remove from deletion queue
-                let deviceRoleExists: Bool = existingDeviceRoleMap.keys.contains(deviceRoleProperty.id)
-                print("deviceRoleExists: \(deviceRoleExists)")
-                let deviceRoleOptional = deviceRoleExists ? existingDeviceRoleMap.removeValue(forKey: deviceRoleProperty.id) : DeviceRole(id: deviceRoleProperty.id)
-                
-                // Using optional binding to safely unwrap the deviceRole
-                if let deviceRole = deviceRoleOptional {
-                    // Check if lastUpdated values are equal
-                    if deviceRole.lastUpdated != deviceRoleProperty.lastUpdated {
-                        ///Perform updates if lastUpdated do not match
-                        deviceRole.name = deviceRoleProperty.name
-                        deviceRole.created = deviceRoleProperty.created
-                        deviceRole.lastUpdated = deviceRoleProperty.lastUpdated
-                        deviceRole.colour = deviceRoleProperty.colour
-                        
-                    } else {
-                        deviceRole.name = deviceRoleProperty.name
-                        deviceRole.created = deviceRoleProperty.created
-                        deviceRole.lastUpdated = deviceRoleProperty.lastUpdated
-                        deviceRole.colour = deviceRoleProperty.colour
-                    }
-                    
-                    // If deviceRole does not exist, insert it into the model context
-                    if !deviceRoleExists {
-                        print("Inserting \(deviceRoleProperty.name) into swiftData")
-                        modelContext.insert(deviceRole)
-                    }
-                    
-                }
-            }
-        }
-        
-        // Delete legacy deviceRoles after processing all deviceRoleProperties
-        for remainingDeviceRole in existingDeviceRoleMap.values {
-            print("Deleting deviceRole: \(remainingDeviceRole.name ?? "Unknown")")
-            modelContext.delete(remainingDeviceRole)
-        }
-        
-        // Save the context to commit the changes
-        do {
-            print("Attempting to save swiftData")
-            try modelContext.save()
-        } catch {
-            print("Error saving context after deleting deviceRoles: \(error)")
-        }
-        print ("Completed getDeviceRole function")
-    }
-    
-    /**
-     Fetch and process deviceType properties.
-     
-     This function fetches and processes deviceType properties, updating existing deviceTypes and inserting new ones as necessary.
-     It then deletes any remaining deviceTypes that were not in the fetched deviceType properties.
-     
-     - Parameter deviceTypeProperties: An optional array of `deviceTypeProperties` to be processed. If `nil`, the function will fetch the site properties by executing a deviceType API request.
-     */
-    func getDeviceTypes(deviceTypeProperties: [DeviceTypeProperties]? = nil) async throws  {
-        let modelContext = ModelContext(modelContainer)
-        
-        var deviceTypePropertiesList: [DeviceTypeProperties] = []
-        
-        var deleteOld = false
-        
-        // If deviceTypePropertiesList is nil, execute deviceType request to populate it.
-        if let deviceTypeProperties = deviceTypeProperties {
-            deviceTypePropertiesList = deviceTypeProperties
-        } else {
-            // Initialize resource and request objects.
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            
-            let resource = DeviceTypeResource()
-            let deviceTypeRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            // Execute deviceType API request.
-            do {
-                deviceTypePropertiesList = try await deviceTypeRequest.execute()
-            } catch {
-                // TODO: Advise user of errors
-                print("Error executing site request: \(error)")
-                throw error
-            }
-            deleteOld = true
-        }
-        
-        // Initialize a dictionary to hold deviceTypes categorized as insert or delete.
-        var existingDeviceTypeMap: [Int64: DeviceType] = [:]
-        
-        if deleteOld {
-            // Fetch existing deviceTypes.
-            let descriptor = FetchDescriptor<DeviceType>()
-            if let existingDeviceTypes = try? modelContext.fetch(descriptor) {
-                // Map existing deviceTypes by their IDs
-                for deviceType in existingDeviceTypes {
-                    existingDeviceTypeMap[deviceType.id] = deviceType
-                }
-            }
-        }
-        
-        do {
-            for deviceTypeProperty in deviceTypePropertiesList {
-                
-                print("deviceTypeProperty: \(deviceTypeProperty.model)")
-                // TODO: deviceTypeProperty.id should not be optional
-                // Determine if <DeviceType> already exists and remove from deletion queue
-                let deviceTypeExists: Bool = existingDeviceTypeMap.keys.contains(deviceTypeProperty.id)
-                print("deviceTypeExists: \(deviceTypeExists)")
-                let deviceTypeOptional = deviceTypeExists ? existingDeviceTypeMap.removeValue(forKey: deviceTypeProperty.id) : DeviceType(id: deviceTypeProperty.id)
-                
-                // Using optional binding to safely unwrap the deviceType
-                if let deviceType = deviceTypeOptional {
-                    // Check if lastUpdated values are equal
-                    if deviceType.lastUpdated != deviceTypeProperty.lastUpdated {
-                        ///Perform updates if lastUpdated do not match
-                        deviceType.model = deviceTypeProperty.model
-                        deviceType.created = deviceTypeProperty.created
-                        deviceType.lastUpdated = deviceTypeProperty.lastUpdated
-                        deviceType.uHeight = deviceTypeProperty.uHeight
-                    } else {
-                        deviceType.model = deviceTypeProperty.model
-                        deviceType.created = deviceTypeProperty.created
-                        deviceType.lastUpdated = deviceTypeProperty.lastUpdated
-                        deviceType.uHeight = deviceTypeProperty.uHeight
-                    }
-                    
-                    // If deviceType does not exist, insert it into the model context
-                    if !deviceTypeExists {
-                        print("Inserting \(deviceTypeProperty.model) into swiftData")
-                        modelContext.insert(deviceType)
-                    }
-                }
-            }
-        }
-        
-        // Delete legacy deviceTypes after processing all deviceProperties
-        for remainingDeviceType in existingDeviceTypeMap.values {
-            print("Deleting deviceType: \(remainingDeviceType.model ?? "Unknown")")
-            modelContext.delete(remainingDeviceType)
-        }
-        
-        // Save the context to commit the changes
-        do {
-            print("Attempting to save swiftData")
-            try modelContext.save()
-        } catch {
-            print("Error saving context after deleting sites: \(error)")
-        }
-        print ("Completed getDeviceType function")
-    }
-    
-    /**
-     Fetch and process siteGroup properties.
-     
-     This function fetches and processes siteGroup properties, updating existing siteGroups and inserting new ones as necessary.
-     It then deletes any remaining site that were not in the fetched siteGroup properties.
-     
-     - Parameter siteGroupProperties: An optional array of `siteGroupProperties` to be processed. If `nil`, the function will fetch the site properties by executing a site API request.
-     */
-    func getSiteGroups(siteGroupProperties: [SiteGroupProperties]? = nil) async throws  {
-        let modelContext = ModelContext(modelContainer)
-        
-        var siteGroupPropertiesList: [SiteGroupProperties] = []
-        
-        var deleteOld = false
-        
-        // If siteGroupProperties is nil, execute device request to populate it.
-        if let siteGroupProperties = siteGroupProperties {
-            siteGroupPropertiesList = siteGroupProperties
-        } else {
-            // Initialize resource and request objects.
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            
-            let resource = SiteGroupResource()
-            let siteGroupRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            // Execute device API request.
-            do {
-                siteGroupPropertiesList = try await siteGroupRequest.execute()
-            } catch {
-                // TODO: Advise user of errors
-                print("Error executing site request: \(error)")
-                throw error
-            }
-            deleteOld = true
-        }
-        
-        // Initialize a dictionary to hold siteGroups categorized as insert or delete.
-        var existingSiteGroupMap: [Int64: SiteGroup] = [:]
-        
-        if deleteOld {
-            // Fetch existing siteGroups.
-            let descriptor = FetchDescriptor<SiteGroup>()
-            if let existingSiteGroups = try? modelContext.fetch(descriptor) {
-                // Map existing siteGroups by their IDs
-                for siteGroup in existingSiteGroups {
-                    existingSiteGroupMap[siteGroup.id] = siteGroup
-                }
-            }
-        }
-        
-        do {
-            for siteGroupProperty in siteGroupPropertiesList {
-                
-                print("siteGroupProperty: \(siteGroupProperty.name)")
-                // TODO: siteGroupProperty.id should not be optional
-                // Determine if <SiteGroup> already exists and remove from deletion queue
-                let siteGroupExists: Bool = existingSiteGroupMap.keys.contains(siteGroupProperty.id)
-                print("siteGroupExists: \(siteGroupExists)")
-                let siteGroupOptional = siteGroupExists ? existingSiteGroupMap.removeValue(forKey: siteGroupProperty.id) : SiteGroup(id: siteGroupProperty.id)
-                
-                // Using optional binding to safely unwrap the device
-                if let siteGroup = siteGroupOptional {
-                    // Check if lastUpdated values are equal
-                    if siteGroup.lastUpdated != siteGroupProperty.lastUpdated {
-                        ///Perform updates if lastUpdated do not match
-                        siteGroup.name = siteGroupProperty.name
-                        siteGroup.created = siteGroupProperty.created
-                        siteGroup.lastUpdated = siteGroupProperty.lastUpdated
-                        
-                        // Establishing relationship with siteGroup
-                        if let parentId = siteGroupProperty.parentId,
-                           parentId != 0,
-                           parentId != siteGroup.parent?.id {
-                            print("Establishing relationship with parent Site Group")
-                            
-                            let predicate = #Predicate<SiteGroup> { parent in
-                                parent.id == parentId
-                            }
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let parent = try? modelContext.fetch(fetchDescriptor).first {
-                                siteGroup.parent = parent
-                            }
-                        }
-                        
-                    } else {
-                        ///Create new Site object
-                        siteGroup.name = siteGroupProperty.name
-                        siteGroup.created = siteGroupProperty.created
-                        siteGroup.lastUpdated = siteGroupProperty.lastUpdated
-                        
-                        // Establishing relationship with siteGroup
-                        if let parentId = siteGroupProperty.parentId,
-                           parentId != 0,
-                           parentId != siteGroup.parent?.id {
-                            print("Establishing relationship with parent Site Group")
-                            
-                            let predicate = #Predicate<SiteGroup> { parent in
-                                parent.id == parentId
-                            }
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let parent = try? modelContext.fetch(fetchDescriptor).first {
-                                siteGroup.parent = parent
-                            }
-                        }
-                    }
-                    
-                    // If siteGroup does not exist, insert it into the model context
-                    if !siteGroupExists {
-                        print("Inserting \(siteGroupProperty.name) into swiftData")
-                        modelContext.insert(siteGroup)
-                    }
-                    
-                }
-            }
-        }
-        
-        if deleteOld {
-            // Delete legacy siteGroups after processing all siteGroupProperties
-            for remainingSiteGroup in existingSiteGroupMap.values {
-                
-                print("Deleting siteGroup: \(remainingSiteGroup.name)")
-                modelContext.delete(remainingSiteGroup)
-            }
-        }
-        
-        // Save the context to commit the changes
-        do {
-            print("Attempting to save swiftData")
-            try modelContext.save()
-        } catch {
-            print("Error saving context after deleting sites: \(error)")
-        }
-        print ("Completed getSiteGroups function")
-    }
-    
-    /**
-     Fetch and process site properties.
-     
-     This function fetches and processes site properties, updating existing sites and inserting new ones as necessary.
-     It then deletes any remaining site that were not in the fetched site properties.
-     
-     - Parameter siteProperties: An optional array of `SiteProperties` to be processed. If `nil`, the function will fetch the site properties by executing a site API request.
-     */
-    func getSites(siteProperties: [SiteProperties]? = nil) async throws  {
-        let modelContext = ModelContext(modelContainer)
-        
-        var sitePropertiesList: [SiteProperties] = []
-        
-        //Flag for deleting old sites depending on whether a GET or POST request was made
-        var deleteOld = false
-        
-        // If sitePropertiesList is nil, execute site request to populate it.
-        if let siteProperties = siteProperties {
-            sitePropertiesList = siteProperties
-        } else {
-            // Initialize resource and request objects.
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            
-            let resource = SiteResource()
-            let siteRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            // Execute device API request.
-            do {
-                sitePropertiesList = try await siteRequest.execute()
-            } catch {
-                // TODO: Advise user of errors
-                print("Error executing site request: \(error)")
-                throw error
-            }
-            deleteOld = true
-        }
-        
-        // Initialize a dictionary to hold sites categorized as insert or delete.
-        var existingSiteMap: [Int64: Site] = [:]
-        
-        if deleteOld {
-            // Fetch existing sites.
-            let descriptor = FetchDescriptor<Site>()
-            if let existingSites = try? modelContext.fetch(descriptor) {
-                // Map existing sites by their IDs
-                for site in existingSites {
-                    existingSiteMap[site.id] = site
-                }
-            }
-        }
-        
-        do {
-            for siteProperty in sitePropertiesList {
-                
-                print("siteProperty: \(siteProperty.name)")
-                // TODO: siteProperty.id should not be optional
-                // Determine if <Site> already exists and remove from deletion queue
-                let siteExists: Bool = existingSiteMap.keys.contains(siteProperty.id ?? 0)
-                print("siteExists: \(siteExists)")
-                let siteOptional = siteExists ? existingSiteMap.removeValue(forKey: siteProperty.id ?? 0) : Site(id: siteProperty.id ?? 0)
-                
-                // Using optional binding to safely unwrap the site
-                if let site = siteOptional {
-                    // Check if lastUpdated values are equal
-                    if site.lastUpdated != siteProperty.lastUpdated {
-                        site.created = siteProperty.created
-                        site.deviceCount = siteProperty.deviceCount
-                        site.display = siteProperty.display
-                        site.lastUpdated = siteProperty.lastUpdated
-                        site.latitude = siteProperty.latitude
-                        site.longitude = siteProperty.longitude
-                        site.name = siteProperty.name
-                        site.status = siteProperty.status
-                        site.physicalAddress = siteProperty.physicalAddress
-                        site.shippingAddress = siteProperty.shippingAddress
-                        site.url = siteProperty.url
-                        
-                        if siteProperty.groupId != 0 {
-                            print("Establishing relationship with Site Group")
-                            let groupId = siteProperty.groupId
-                            
-                            let predicate = #Predicate<SiteGroup> { siteGroup in
-                                siteGroup.id == groupId
-                            }
-                            
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let siteGroup = try? modelContext.fetch(fetchDescriptor).first {
-                                site.group = siteGroup
-                            }
-                        }
-                        
-                        // Establishing relationship with Tenant Group
-                        if siteProperty.tenantId != 0 {
-                            print("Establishing relationship with Site Group")
-                            let tenantId = siteProperty.tenantId
-                            
-                            let predicate = #Predicate<Tenant> { tenant in
-                                tenant.id == tenantId
-                            }
-                            
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let tenant = try? modelContext.fetch(fetchDescriptor).first {
-                                site.tenant = tenant
-                            }
-                        }
-                        
-                        if siteProperty.regionId != 0 {
-                            print("Establishing relationship with Site Group")
-                            let regionId = siteProperty.regionId
-                            
-                            let predicate = #Predicate<Region> { region in
-                                region.id == regionId
-                            }
-                            
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let region = try? modelContext.fetch(fetchDescriptor).first {
-                                site.region = region
-                            }
-                        }
-                        
-                    } else {
-                        site.created = siteProperty.created
-                        site.deviceCount = siteProperty.deviceCount
-                        site.display = siteProperty.display
-                        site.lastUpdated = siteProperty.lastUpdated
-                        site.latitude = siteProperty.latitude
-                        site.longitude = siteProperty.longitude
-                        site.name = siteProperty.name
-                        site.status = siteProperty.status
-                        site.physicalAddress = siteProperty.physicalAddress
-                        site.shippingAddress = siteProperty.shippingAddress
-                        site.url = siteProperty.url
-                        
-                        // If site does not exist, insert it into the model context
-                        if !siteExists {
-                            print("Inserting \(siteProperty.name) into swiftData")
-                            modelContext.insert(site)
-                        }
-                        
-                        // TODO: Refactor mapping of relationships
-                        // Establishing relationship with Site Group
-                        if siteProperty.groupId != 0 {
-                            print("Establishing relationship with Site Group")
-                            let groupId = siteProperty.groupId
-                            
-                            let predicate = #Predicate<SiteGroup> { siteGroup in
-                                siteGroup.id == groupId
-                            }
-                            
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let siteGroup = try? modelContext.fetch(fetchDescriptor).first {
-                                site.group = siteGroup
-                            }
-                        }
-                        
-                        // Establishing relationship with Tenant Group
-                        if siteProperty.tenantId != 0 {
-                            print("Establishing relationship with Site Group")
-                            let tenantId = siteProperty.tenantId
-                            
-                            let predicate = #Predicate<Tenant> { tenant in
-                                tenant.id == tenantId
-                            }
-                            
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let tenant = try? modelContext.fetch(fetchDescriptor).first {
-                                site.tenant = tenant
-                            }
-                        }
-                        
-                        if siteProperty.regionId != 0 {
-                            print("Establishing relationship with Site Group")
-                            let regionId = siteProperty.regionId
-                            
-                            let predicate = #Predicate<Region> { region in
-                                region.id == regionId
-                            }
-                            
-                            let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                            
-                            if let region = try? modelContext.fetch(fetchDescriptor).first {
-                                site.region = region
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Delete legacy sites after processing all deviceProperties
-        for remainingSite in existingSiteMap.values {
-            
-            print("Deleting site: \(remainingSite.name)")
-            modelContext.delete(remainingSite)
-        }
-        
-        // Save the context to commit the changes
-        do {
-            print("Attempting to save swiftData")
-            try modelContext.save()
-        } catch {
-            print("Error saving context after deleting sites: \(error)")
-        }
-        print ("Completed getSites function")
-    }
-    
-    //TODO: Implement logic to delete old racks
-    func getRacks(rackProperties: [RackProperties]? = nil) async throws  {
-        let modelContext = ModelContext(modelContainer)
-        
-        var rackPropertiesList: [RackProperties] = []
-        var deleteOld = false
-        
-        // Fetch rack properties if not provided
-        if let rackProperties = rackProperties {
-            rackPropertiesList = rackProperties
-        } else {
-            // Fetch from API
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            
-            let resource = RackResource()
-            let rackRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            
-            do {
-                rackPropertiesList = try await rackRequest.execute()
-            } catch {
-                print("Error executing rack request: \(error)")
-                throw error
-            }
-            deleteOld = true
-        }
-        
-        // Fetch existing racks
-        var existingRackMap: [Int64: Rack] = [:]
-        if deleteOld {
-            let descriptor = FetchDescriptor<Rack>()
-            if let existingRacks = try? modelContext.fetch(descriptor) {
-                for rack in existingRacks {
-                    existingRackMap[rack.id] = rack
-                }
-            }
-        }
-        
-        // Process rack properties
-        for rackProperty in rackPropertiesList {
-            let rackExists = existingRackMap.keys.contains(rackProperty.id ?? 0)
-            let rack = rackExists ? existingRackMap.removeValue(forKey: rackProperty.id ?? 0) : Rack(id: rackProperty.id ?? 0)
-            
-            if let rack = rack {
-                // Update rack properties
-                rack.name = rackProperty.name
-                rack.display = rackProperty.display
-                rack.created = rackProperty.created
-                rack.lastUpdated = rackProperty.lastUpdated
-                rack.url = rackProperty.url
-                rack.uHeight = rackProperty.uHeight
-                rack.startingUnit = rackProperty.startingUnit
-                rack.deviceCount = rackProperty.deviceCount
-                rack.status = rackProperty.status
-                rack.formFactor = rackProperty.formFactor
-                
-                // Handle site relationship
-                if rackProperty.siteId != 0 {
-                    let predicate = #Predicate<Site> { site in
-                        site.id == rackProperty.siteId
-                    }
-                    let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                    if let site = try? modelContext.fetch(fetchDescriptor).first {
-                        rack.site = site
-                    }
-                }
-                
-                if !rackExists {
-                    modelContext.insert(rack)
-                }
-            }
-        }
-        
-        // Delete old racks
-        for remainingRack in existingRackMap.values {
-            modelContext.delete(remainingRack)
-        }
-        
-        // Save changes
-        do {
-            try modelContext.save()
-        } catch {
-            print("Error saving context after processing racks: \(error)")
-        }
-        
-        print("Completed getRacks function")
-    }
-    
-    
-    /**
-     Fetch and process device properties.
-     
-     This function fetches and processes device properties, updating existing devices and inserting new ones as necessary.
-     It then deletes any remaining devices that were not in the fetched device properties.
-     
-     - Parameter deviceProperties: An optional array of `DeviceProperties` to be processed. If `nil`, the function will fetch the device properties by executing a device API request.
-     */
-    func getDevices(deviceProperties: [DeviceProperties]? = nil) async throws  {
-        let modelContext = ModelContext(modelContainer)
-        
-        var devicePropertiesList: [DeviceProperties] = []
-        
-        // Flag for deleting old devices depending on whether a GET or POST request was made
-        var deleteOld = false
-        
-        // If devicePropertiesList is nil, execute device request to populate it.
-        if let deviceProperties = deviceProperties {
-            devicePropertiesList = deviceProperties
-        } else {
-            // Initialize resource and request objects.
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            
-            let resource = DeviceResource()
-            let deviceRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            // Execute device API request.
-            do {
-                devicePropertiesList = try await deviceRequest.execute()
-            } catch {
-                // TODO: Advise user of errors
-                print("Error executing device request: \(error)")
-                throw error
-            }
-            deleteOld = true
-        }
-        
-        let existingDevices = (try? modelContext.fetch(FetchDescriptor<Device>())) ?? []
-        let existingDeviceIds = Set(existingDevices.map { $0.id })
-        
-        do {
-            
-            // Processing devices in batches
-            let batchSize = determineBatchSize(for: devicePropertiesList.count)
-            let totalBatches = (devicePropertiesList.count + batchSize - 1) / batchSize
-            
-            print("Batch size: \(batchSize)")
-            print("Batch count: \(totalBatches)")
-            
-            await withThrowingTaskGroup(of: Void.self) { group in
-                for i in 0..<totalBatches {
-                    let batchStartIndex = i * batchSize
-                    let batchEndIndex = min(batchStartIndex + batchSize, devicePropertiesList.count)
-                    let batch = Array(devicePropertiesList[batchStartIndex..<batchEndIndex])
-                    
-                    group.addTask {
-                        try await self.processDeviceBatch(batch: batch, existingDeviceIds: existingDeviceIds)
-                    }
-                }
-            }
-            
-            if deleteOld {
-                let updatedDeviceIds = Set(devicePropertiesList.map { $0.id! })
-                let devicesToDelete = existingDeviceIds.subtracting(updatedDeviceIds)
-                
-                for deviceId in devicesToDelete {
-                    let predicate = #Predicate<Device> { $0.id == deviceId }
-                    let fetchDescriptor = FetchDescriptor(predicate: predicate)
-                    if let deviceToDelete = try? modelContext.fetch(fetchDescriptor).first {
-                        modelContext.delete(deviceToDelete)
-                    }
-                }
-            }
-            
-            // Set last NetBox update to now
-            let fetchDescriptor = FetchDescriptor<SyncProvider>()
-            let syncProvider = try modelContext.fetch(fetchDescriptor)
-            syncProvider.first?.lastNetBoxUpdate = Date()
-            
-            try modelContext.save()
-            
-        } catch {
-            print("Failed. Error: \(error)")
-        }
-        print("Completed getDevices function")
-    }
-    
-    private func processDeviceBatch(batch: [DeviceProperties], existingDeviceIds: Set<Int64>) async throws {
-        let batchContext = ModelContext(modelContainer)
-        
-        // Fetch related objects in advance
-        let devices = try batchContext.fetch(FetchDescriptor<Device>())
-        let filteredDevices = devices.filter { existingDeviceIds.contains($0.id) }
-        
-        // Use a dictionary that allows multiple values per key
-        var devicesDict = [Int64: [Device]]()
-        for device in filteredDevices {
-            devicesDict[device.id, default: []].append(device)
-        }
-        
-        let deviceRoles = try batchContext.fetch(FetchDescriptor<DeviceRole>())
-        let deviceRolesDict = Dictionary(uniqueKeysWithValues: deviceRoles.map { ($0.id, $0) })
-        
-        let deviceTypes = try batchContext.fetch(FetchDescriptor<DeviceType>())
-        let deviceTypesDict = Dictionary(uniqueKeysWithValues: deviceTypes.map { ($0.id, $0) })
-        
-        let sites = try batchContext.fetch(FetchDescriptor<Site>())
-        let sitesDict = Dictionary(uniqueKeysWithValues: sites.map { ($0.id, $0) })
-        
-        // Fetch all Racks
-        let racks = try batchContext.fetch(FetchDescriptor<Rack>())
-        let racksDict = Dictionary(uniqueKeysWithValues: racks.map { ($0.id, $0) })
-        
-        for deviceProperty in batch {
-            if let existingDevices = devicesDict[deviceProperty.id!], !existingDevices.isEmpty {
-                // Update the first existing device with this ID
-                let existingDevice = existingDevices[0]
-                // Optionally update existing device properties if needed
-                existingDevice.created = deviceProperty.created
-                existingDevice.display = deviceProperty.display
-                existingDevice.lastUpdated = deviceProperty.lastUpdated
-                existingDevice.name = deviceProperty.name
-                existingDevice.rackPosition = deviceProperty.rackPosition
-                existingDevice.primaryIP = deviceProperty.primaryIP
-                existingDevice.serial = deviceProperty.serial
-                existingDevice.url = deviceProperty.url
-                existingDevice.x = deviceProperty.x
-                existingDevice.y = deviceProperty.y
-                existingDevice.zabbixId = deviceProperty.zabbixId
-                existingDevice.zabbixInstance = deviceProperty.zabbixInstance
-                
-                // Update device role relationship
-                if deviceProperty.deviceRoleId != 0, let deviceRole = deviceRolesDict[deviceProperty.deviceRoleId] {
-                    existingDevice.deviceRole = deviceRole
-                } else {
-                    existingDevice.deviceRole = nil
-                }
-                
-                // Update device type relationship
-                if deviceProperty.deviceTypeId != 0, let deviceType = deviceTypesDict[deviceProperty.deviceTypeId] {
-                    existingDevice.deviceType = deviceType
-                } else {
-                    existingDevice.deviceType = nil
-                }
-                
-                // Update site relationship
-                if deviceProperty.siteId != 0, let site = sitesDict[deviceProperty.siteId] {
-                    existingDevice.site = site
-                } else {
-                    existingDevice.site = nil
-                }
-                
-                // Update rack relationship
-                if let rackId = deviceProperty.rackId, rackId != 0, let rack = racksDict[rackId] {
-                    existingDevice.rack = rack
-                } else {
-                    existingDevice.rack = nil
-                }
-                
-                // If there are more devices with the same ID, log a warning
-                if existingDevices.count > 1 {
-                    print("Warning: Multiple devices found with ID: \(deviceProperty.id!). Only the first one was updated.")
-                }
-            } else {
-                // Insert new device
-                let device = Device(id: deviceProperty.id!)
-                device.created = deviceProperty.created
-                device.display = deviceProperty.display
-                device.lastUpdated = deviceProperty.lastUpdated
-                device.name = deviceProperty.name
-                device.rackPosition = deviceProperty.rackPosition
-                device.primaryIP = deviceProperty.primaryIP
-                device.serial = deviceProperty.serial
-                device.url = deviceProperty.url
-                device.x = deviceProperty.x
-                device.y = deviceProperty.y
-                device.zabbixId = deviceProperty.zabbixId
-                device.zabbixInstance = deviceProperty.zabbixInstance
-                
-                // Establishing relationship with Device Role
-                if deviceProperty.deviceRoleId != 0, let deviceRole = deviceRolesDict[deviceProperty.deviceRoleId] {
-                    device.deviceRole = deviceRole
-                }
-                
-                // Establishing relationship with Device Type
-                if deviceProperty.deviceTypeId != 0, let deviceType = deviceTypesDict[deviceProperty.deviceTypeId] {
-                    device.deviceType = deviceType
-                }
-                
-                // Establishing relationship with Site
-                if deviceProperty.siteId != 0, let site = sitesDict[deviceProperty.siteId] {
-                    device.site = site
-                }
-                
-                // Establishing relationship with Rack
-                if let rackId = deviceProperty.rackId, rackId != 0, let rack = racksDict[rackId] {
-                    device.rack = rack
-                }
-                
-                batchContext.insert(device)
-            }
-        }
-        
-        try batchContext.save()
-        print("Devices in batch processed.")
-    }
-    
-    private func determineBatchSize(for count: Int) -> Int {
-        // TODO: Adjust these values based on performance testing
-        switch count {
-        case 1...10:
-            return 2
-        case 11...100:
-            return 10
-        case 101...500:
-            return 25
-        case 501...1000:
-            return 50
-        case 1001...10000:
-            return 500
-        case 10001...50000:
-            return 2500
-        case 50001...100000:
-            return 1000
-        default:
-            return 2000
-        }
-    }
-    
-    //MARK: New functions for creating Device, Site and Cable
     func postSite(with properties: SiteProperties) async {
         let netboxApiServer = await Configuration.shared.getNetboxApiServer()
         let netboxApiToken = await Configuration.shared.getNetboxApiToken()
@@ -1355,7 +711,7 @@ actor ProviderModelActor {
         let netboxApiServer = await Configuration.shared.getNetboxApiServer()
         let netboxApiToken = await Configuration.shared.getNetboxApiToken()
         
-        let deviceResource = DeviceResource(deviceProperties: properties, deviceId: properties.id ?? 0)
+        let deviceResource = DeviceResource(deviceProperties: properties, deviceId: properties.id)
         let apiRequest = APIRequest(resource: deviceResource, apiKey: netboxApiToken, baseURL: netboxApiServer)
         
         do {
@@ -1368,3 +724,21 @@ actor ProviderModelActor {
         }
     }
 }
+
+// MARK: - Protocol for APIResource
+protocol APIResourceProtocol {
+    associatedtype ResultType
+    init()
+}
+
+extension TenantGroupResource: APIResourceProtocol { typealias ResultType = [TenantGroupProperties] }
+extension TenantResource: APIResourceProtocol { typealias ResultType = [TenantProperties] }
+extension RegionResource: APIResourceProtocol { typealias ResultType = [RegionProperties] }
+extension DeviceRoleResource: APIResourceProtocol { typealias ResultType = [DeviceRoleResource] }
+extension DeviceTypeResource: APIResourceProtocol { typealias ResultType = [DeviceTypeProperties] }
+extension SiteGroupResource: APIResourceProtocol { typealias ResultType = [SiteGroupProperties] }
+extension SiteResource: APIResourceProtocol { typealias ResultType = [SiteProperties] }
+extension RackResource: APIResourceProtocol { typealias ResultType = [RackProperties] }
+extension DeviceResource: APIResourceProtocol { typealias ResultType = [DeviceProperties] }
+
+

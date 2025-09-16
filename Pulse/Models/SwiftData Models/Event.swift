@@ -276,7 +276,8 @@ struct EventProperties: Decodable {
     let severity: String
     let opData: String
     let suppressed: String
-    
+    let lastUpdated: Date
+
     
     let rClock: String?
     let value: String?
@@ -358,6 +359,7 @@ struct EventProperties: Decodable {
         self.opData = opData
         self.suppressed = suppressed
         self.hostIds = hostIds
+        self.lastUpdated = Date.now
     }
     
     var dictionaryValue: [String: Any] {

@@ -27,7 +27,7 @@ import Foundation
 
 // MARK: Network Protocols
 /// API resource protocol extension. Move to own file.
-protocol NetboxResource {
+protocol NetboxResource : Sendable{
     associatedtype ModelType: Codable
     var methodPath: String { get }
     var filterId: String? { get }
@@ -137,6 +137,10 @@ struct SiteResource: NetboxResource {
     var headers: [String: String]?
     var body: Data?
     
+    init() {
+        return;
+    }
+    
     init(siteProperties: SiteProperties? = nil) {
         if let siteProperties = siteProperties {
             self.body = try? JSONEncoder().encode(siteProperties)
@@ -154,6 +158,11 @@ struct DeviceResource: NetboxResource {
     var headers: [String: String]?
     var body: Data?
     var isUpdate: Bool //The flag that determines the HTTP method
+    
+    init(){
+        self.methodPath = "/api/dcim/devices/?manufacturer_id__n=5&role_id__n=29&role_id__n=30&limit=1000"
+        self.isUpdate = false
+    }
     
     // Initializer for fetching devices
     init(deviceProperties: DeviceProperties? = nil) {

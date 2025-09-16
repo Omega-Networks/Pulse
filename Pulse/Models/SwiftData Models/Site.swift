@@ -227,7 +227,7 @@ struct SiteProperties: Codable {
            case status = "value"
     }
     
-    let id: Int64?
+    let id: Int64
     let url: String
     let display: String
     let name: String
@@ -236,7 +236,7 @@ struct SiteProperties: Codable {
     let created: Date?
     let physicalAddress: String
     let shippingAddress: String
-    let lastUpdated: Date?
+    let lastUpdated: Date
     let deviceCount: Int64?
     let groupId: Int64
     let tenantId: Int64
@@ -343,10 +343,10 @@ struct SiteProperties: Codable {
         self.regionId = regionId
     }
     
-    init(name: String, slug: String, status: String, display: String, url: String, latitude: Double, longitude: Double, physicalAddress: String, shippingAddress: String, groupId: Int64, regionId: Int64, tenantId: Int64) {
-        self.id = nil
+    init(id: Int64, name: String, slug: String, status: String, display: String, url: String, latitude: Double, longitude: Double, physicalAddress: String, shippingAddress: String, groupId: Int64, regionId: Int64, tenantId: Int64) {
+        self.id = id
         self.created = nil
-        self.lastUpdated = nil
+        self.lastUpdated = Date.distantPast
         self.name = name
         self.status = status
         self.display = display

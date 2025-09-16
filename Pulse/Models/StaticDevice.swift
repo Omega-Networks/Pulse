@@ -118,12 +118,12 @@ extension StaticDevice {
  This struct conforms to Codable for easy serialization and deserialization.
  */
 struct StaticDeviceProperties: Codable {
-    let id: Int64?
+    let id: Int64
     let name: String
     let display: String
     let url: String
     let created: Date?
-    let lastUpdated: Date?
+    let lastUpdated: Date
     let deviceTypeId: Int64
     let deviceTypeModel: String
     let deviceRoleId: Int64
@@ -253,7 +253,7 @@ struct StaticDeviceProperties: Codable {
         self.display = display
         self.url = url
         self.created = rawCreated
-        self.lastUpdated = rawLastUpdated
+        self.lastUpdated = rawLastUpdated ?? Date.distantPast
         self.siteId = rawSiteId
         self.siteName = rawSiteName
         self.rackId = rawRackId

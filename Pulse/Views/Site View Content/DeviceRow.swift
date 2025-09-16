@@ -87,7 +87,7 @@ struct DeviceRow: View {
                 if let device = device.first {
                     let deviceId = device.id
                     Task.detached(priority: .background) {
-                        //TODO: Conform to Swift 6 standards
+                        //TODO: Conform to Swift 6 standards // WHY??
                         await deleteDevice(deviceId)
                     }
                 }

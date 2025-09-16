@@ -40,6 +40,14 @@ struct AnnotationView: View {
         self._selectedSite = selectedSite
     }
     
+    var circleFrame:CGFloat {
+#if os(iOS)
+        return 10;
+#elseif os(macOS)
+        return 30;
+#endif
+    }
+    
     var body: some View {
         ZStack {
             let siteSeverityColour = site.severityColor
@@ -66,11 +74,7 @@ struct AnnotationView: View {
                 .onTapGesture {
                     selectedSite = site
                 }
-#if os(iOS)
-                .frame(width: 30, height: 30)  // Larger size for iOS
-#else
-                .frame(width: 10, height: 10)  // Smaller size for macOS
-#endif
+                .frame(width: circleFrame, height: circleFrame)
 #if os(macOS)
                 .popover(isPresented: Binding(
                     get: { selectedSite?.id == site.id },
@@ -134,7 +138,6 @@ struct AnnotationView: View {
                         .font(.headline)
                     Text("\(site.coordinate.latitude),\(site.coordinate.longitude)")
                         .font(.caption)
-                    
                     
                     Divider()
                     

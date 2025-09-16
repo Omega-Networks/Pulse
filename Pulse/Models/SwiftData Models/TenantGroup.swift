@@ -71,7 +71,7 @@ struct TenantGroupProperties: Codable {
     let id: Int64
     let name: String
     let created: Date
-    let lastUpdated: Date?
+    let lastUpdated: Date
     
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -99,7 +99,7 @@ struct TenantGroupProperties: Codable {
         self.id = id
         self.name = name
         self.created = created
-        self.lastUpdated = rawLastUpdated
+        self.lastUpdated = rawLastUpdated ?? Date.distantPast
     }
     
     func encode(to encoder: Encoder) throws {

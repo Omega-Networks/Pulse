@@ -72,8 +72,8 @@ struct DeviceRoleRecord: Codable, Transferable {
     init(deviceRole: DeviceRole) {
         self.id = deviceRole.id
         self.name = deviceRole.name ?? ""
-        self.created = deviceRole.created ?? Date()
-        self.lastUpdated = deviceRole.lastUpdated ?? Date()
+        self.created = deviceRole.created ?? Date.distantPast
+        self.lastUpdated = deviceRole.lastUpdated ?? Date.distantPast
         self.allowedDeviceTypes = deviceRole.allowedDeviceTypes
     }
     
@@ -130,7 +130,7 @@ struct DeviceRoleProperties: Codable {
     let id: Int64
     let name: String
     let created: Date
-    let lastUpdated: Date?
+    let lastUpdated: Date
     let colour: String?
     
     init(from decoder: Decoder) throws {
@@ -160,7 +160,7 @@ struct DeviceRoleProperties: Codable {
         self.id = id
         self.name = name
         self.created = created
-        self.lastUpdated = rawLastUpdated
+        self.lastUpdated = rawLastUpdated ?? Date.distantPast
         self.colour = rawColour
     }
     

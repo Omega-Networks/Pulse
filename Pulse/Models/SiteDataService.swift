@@ -53,7 +53,7 @@ actor SiteDataService {
             
             let staticDeviceProperties = try await request.execute()
             let devices = staticDeviceProperties.map { staticDeviceProperties in
-                var staticDevice = StaticDevice(id: staticDeviceProperties.id ?? 0)
+                var staticDevice = StaticDevice(id: staticDeviceProperties.id)
                 staticDevice.name = staticDeviceProperties.name
                 staticDevice.display = staticDeviceProperties.display
                 staticDevice.created = staticDeviceProperties.created

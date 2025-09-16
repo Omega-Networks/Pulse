@@ -407,6 +407,7 @@ struct AddSiteWindow: View {
         let formattedLongitude = String(format: "%.5f", sharedLocations.tapLocation?.longitude ?? 0.0)
         
         let siteProperties = SiteProperties(
+            id: Int64.random(in: Int64.min...Int64.max),
             name: selectedName,
             slug: generateSlug(from: selectedName),
             status: selectedStatus,
