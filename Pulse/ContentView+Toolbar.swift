@@ -84,6 +84,21 @@ extension ContentView {
         ToolbarItem() {
             EventCounter()
         }
+
+        ToolbarItem() {
+            // PowerSense overlay toggle
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    showPowerSenseOverlay.toggle()
+                }
+            }) {
+                Image(systemName: showPowerSenseOverlay ? "bolt.fill" : "bolt")
+                    .foregroundStyle(showPowerSenseOverlay ? .blue : .gray)
+                    .scaleEffect(showPowerSenseOverlay ? 1.1 : 1.0)
+            }
+            .help(showPowerSenseOverlay ? "Hide PowerSense Heat Map" : "Show PowerSense Heat Map")
+        }
+
     }
 #endif
     

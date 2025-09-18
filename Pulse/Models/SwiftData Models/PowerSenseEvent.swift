@@ -42,8 +42,10 @@ final class PowerSenseEvent {
     /// Event timestamp
     var timestamp: Date
 
-    /// Event type - power lost, power restored, or unknown
-    var eventType: PowerEventType
+    /// Whether the event is currently active (true = power off, false = resolved/power restored)
+    var isActive: Bool {
+        return resolvedAt == nil
+    }
 
     /// Event severity level (0-5, following Zabbix convention)
     var severity: Int = 0
@@ -81,10 +83,9 @@ final class PowerSenseEvent {
 
     // MARK: - Initialization
 
-    init(eventId: String, timestamp: Date, eventType: PowerEventType, deviceId: String? = nil) {
+    init(eventId: String, timestamp: Date, deviceId: String? = nil) {
         self.eventId = eventId
         self.timestamp = timestamp
-        self.eventType = eventType
     }
 
     // MARK: - Event Processing
@@ -100,7 +101,7 @@ final class PowerSenseEvent {
         self.zabbixEventId = properties.zabbixEventId
 
         // Calculate outage duration if event is resolved
-        if let resolvedAt = resolvedAt, eventType == .powerLost {
+        if let resolvedAt = resolvedAt {
             self.outageDuration = resolvedAt.timeIntervalSince(timestamp)
         }
     }
@@ -115,42 +116,7 @@ final class PowerSenseEvent {
         guard resolvedAt == nil else { return } // Already resolved
 
         resolvedAt = Date()
-        if eventType == .powerLost {
-            outageDuration = resolvedAt!.timeIntervalSince(timestamp)
-        }
-    }
-}
-
-// MARK: - PowerEventType Enum
-
-/// Enumeration of possible PowerSense event types
-enum PowerEventType: String, Codable, CaseIterable {
-    case powerLost = "power_lost"
-    case powerRestored = "power_restored"
-    case unknown = "unknown"
-
-    var displayName: String {
-        switch self {
-        case .powerLost: return "Power Lost"
-        case .powerRestored: return "Power Restored"
-        case .unknown: return "Unknown"
-        }
-    }
-
-    var severity: Int {
-        switch self {
-        case .powerLost: return 4      // High severity
-        case .powerRestored: return 1  // Information
-        case .unknown: return 2        // Warning
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .powerLost: return .red
-        case .powerRestored: return .green
-        case .unknown: return .orange
-        }
+        outageDuration = resolvedAt!.timeIntervalSince(timestamp)
     }
 }
 
@@ -172,6 +138,9 @@ struct PowerSenseEventProperties: Decodable {
         case severity
         case acknowledges
         case tags
+        case hosts
+        case rEventId = "r_eventid"
+        case rClock = "r_clock"
     }
 
     struct TagData: Decodable {
@@ -188,6 +157,10 @@ struct PowerSenseEventProperties: Decodable {
         let action: String?
     }
 
+    struct HostData: Decodable {
+        let hostid: String
+    }
+
     // MARK: - Properties
 
     let eventId: String
@@ -200,15 +173,45 @@ struct PowerSenseEventProperties: Decodable {
     let severity: Int
     let acknowledges: [AcknowledgeData]
     let tags: [TagData]
+    let hosts: [HostData]?
+    let rEventId: String?
+    let rClock: String?
 
     // Computed properties for compatibility
+    var hostIds: [String] {
+        // For events (event.get): use hosts array if available
+        if let hosts = hosts {
+            return hosts.map { $0.hostid }
+        }
+        // For problems (problem.get): use objectId as hostId
+        return [objectId]
+    }
+
+    var primaryHostId: String? {
+        return hostIds.first
+    }
     var value: String? { nil } // Not provided in problem.get
-    var rClock: String? { nil } // Not provided in problem.get
     var hostId: String { objectId } // Use objectId as hostId
     var acknowledged: Bool { !acknowledges.isEmpty }
     var alarmId: String? {
         // Extract alarm_id from tags
         tags.first { $0.tag == "alarm_id" }?.value
+    }
+
+    /// Extract ONT device name from PowerSense event name for device matching
+    /// Format: "Power Off Event: ONT030842360" -> "ONT030842360"
+    var ontDeviceName: String? {
+        // PowerSense events are always in format "Power Off Event: [ONT_NAME]"
+        let powerOffPrefix = "Power Off Event: "
+
+        if name.starts(with: powerOffPrefix) {
+            let deviceName = String(name.dropFirst(powerOffPrefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if deviceName.starts(with: "ONT") && !deviceName.isEmpty {
+                return deviceName
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Decodable Implementation
@@ -226,6 +229,8 @@ struct PowerSenseEventProperties: Decodable {
 
         // Optional fields
         ns = try container.decodeIfPresent(String.self, forKey: .ns)
+        rEventId = try container.decodeIfPresent(String.self, forKey: .rEventId)
+        rClock = try container.decodeIfPresent(String.self, forKey: .rClock) // Will be nil for event.get
 
         // Handle severity as string or int
         if let severityInt = try? container.decode(Int.self, forKey: .severity) {
@@ -236,9 +241,10 @@ struct PowerSenseEventProperties: Decodable {
             severity = 0
         }
 
-        // Decode acknowledges and tags arrays
+        // Decode acknowledges, tags, and hosts arrays
         acknowledges = try container.decodeIfPresent([AcknowledgeData].self, forKey: .acknowledges) ?? []
         tags = try container.decodeIfPresent([TagData].self, forKey: .tags) ?? []
+        hosts = try container.decodeIfPresent([HostData].self, forKey: .hosts) // Optional for problem.get
     }
 
     // MARK: - Computed Properties
@@ -259,38 +265,15 @@ struct PowerSenseEventProperties: Decodable {
         return eventId
     }
 
-    /// Determine event type from PowerSense event name and tags
-    var eventType: PowerEventType {
-        let lowercaseName = name.lowercased()
-
-        // Check for PowerSense specific patterns
-        if lowercaseName.contains("power off") {
-            return .powerLost
-        } else if lowercaseName.contains("power on") {
-            return .powerRestored
-        } else if lowercaseName.contains("power") && lowercaseName.contains("lost") {
-            return .powerLost
-        } else if lowercaseName.contains("power") && (lowercaseName.contains("restored") || lowercaseName.contains("recovered")) {
-            return .powerRestored
-        } else if lowercaseName.contains("dying gasp") {
-            return .powerLost
-        }
-
-        // Check tags for event type
-        if let typeTag = tags.first(where: { $0.tag == "type" }) {
-            if typeTag.value == "off" {
-                return .powerLost
-            } else if typeTag.value == "on" {
-                return .powerRestored
-            }
-        }
-
-        return .unknown
+    /// Whether this event represents a power loss event based on the name
+    var isPowerLossEvent: Bool {
+        // PowerSense events are always "Power Off Event: [ONT_NAME]" format
+        return name.starts(with: "Power Off Event: ")
     }
 
     /// Whether this event represents an active outage
     var isActiveOutage: Bool {
-        return eventType == .powerLost && resolvedAt == nil
+        return isPowerLossEvent && resolvedAt == nil
     }
 
     // MARK: - Validation
@@ -309,7 +292,7 @@ extension PowerSenseEvent {
 
     /// Whether this event represents an active outage (power lost and not resolved)
     var isActiveOutage: Bool {
-        return eventType == .powerLost && resolvedAt == nil
+        return isActive  // Active means power is off
     }
 
     /// Human-readable duration string
@@ -356,26 +339,26 @@ extension PowerSenseEvent {
 
     /// Group events by time window for analysis
     static func groupByTimeWindow(_ events: [PowerSenseEvent], windowSize: TimeInterval = 3600) -> [Date: [PowerSenseEvent]] {
-        let calendar = Calendar.current
+        _ = Calendar.current
         return Dictionary(grouping: events) { event in
             let windowStart = floor(event.timestamp.timeIntervalSince1970 / windowSize) * windowSize
             return Date(timeIntervalSince1970: windowStart)
         }
     }
 
-    /// Filter events for recent outages (power lost events within timeframe)
+    /// Filter events for recent outages (active events within timeframe)
     static func recentOutages(_ events: [PowerSenseEvent], within timeframe: TimeInterval = 3600) -> [PowerSenseEvent] {
         let cutoff = Date().addingTimeInterval(-timeframe)
         return events.filter { event in
-            event.eventType == .powerLost && event.timestamp > cutoff
+            event.isActive && event.timestamp > cutoff
         }
     }
 
     /// Calculate outage statistics for a collection of events
     static func outageStatistics(for events: [PowerSenseEvent]) -> OutageStatistics {
-        let powerLostEvents = events.filter { $0.eventType == .powerLost }
-        let activeOutages = powerLostEvents.filter { $0.isActiveOutage }
-        let resolvedOutages = powerLostEvents.filter { !$0.isActiveOutage && $0.outageDuration != nil }
+        let powerLostEvents = events  // All events are power-related
+        let activeOutages = powerLostEvents.filter { $0.isActive }
+        let resolvedOutages = powerLostEvents.filter { !$0.isActive && $0.outageDuration != nil }
 
         let totalOutages = powerLostEvents.count
         let activeCount = activeOutages.count

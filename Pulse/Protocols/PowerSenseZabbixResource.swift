@@ -193,7 +193,7 @@ struct PowerSenseHostResource: PowerSenseZabbixResource {
             parameters["output"] = ["hostid", "name", "status", "host"]
             parameters["selectMacros"] = ["macro", "value", "description"]
             parameters["templateids"] = ["10614"]
-            parameters["limit"] = 1000  // Pull 1,000 devices at once
+            parameters["limit"] = 1000  // Keep at 1000 to prevent server timeouts
         }
 
         if let groupNames = groupNames, !groupNames.isEmpty {
@@ -206,11 +206,96 @@ struct PowerSenseHostResource: PowerSenseZabbixResource {
     var headers: [String: String]? = nil
 }
 
+/// Resource for counting total PowerSense devices
+struct PowerSenseDeviceCountResource: PowerSenseZabbixResource {
+    typealias ModelType = PowerSenseDeviceCount
+    let method = "host.get"
+    let methodPath = ""
+
+    var params: [String: Any]? {
+        return [
+            "search": [
+                "template": ["PowerSense Device"]
+            ],
+            "templateids": ["10614"],
+            "countOutput": true  // This returns just the count
+        ]
+    }
+
+    var headers: [String: String]? = nil
+}
+
+/// Simple structure to hold device count
+struct PowerSenseDeviceCount: Codable {
+    let count: Int
+
+    init(from decoder: Decoder) throws {
+        // Zabbix returns count as a string when using countOutput
+        let container = try decoder.singleValueContainer()
+        if let countString = try? container.decode(String.self) {
+            self.count = Int(countString) ?? 0
+        } else {
+            self.count = try container.decode(Int.self)
+        }
+    }
+}
+
+/// Simple structure to hold only hostid (for Phase 1)
+struct PowerSenseHostIdOnly: Codable {
+    let hostid: String
+}
+
+/// Phase 1: Resource for retrieving only PowerSense host IDs (lightweight)
+struct PowerSenseHostIdsResource: PowerSenseZabbixResource {
+    typealias ModelType = PowerSenseHostIdOnly
+    let method = "host.get"
+    let methodPath = ""
+
+    var params: [String: Any]? {
+        return [
+            "search": [
+                "template": ["PowerSense Device"]
+            ],
+            "output": ["hostid"],  // Only fetch hostid for lightweight response
+            "templateids": ["10614"],
+            "sortfield": "hostid",
+            "sortorder": "ASC"
+            // No limit - fetch all host IDs in one call
+        ]
+    }
+
+    var headers: [String: String]? = nil
+}
+
+/// Phase 2: Resource for retrieving full PowerSense device details by hostid array
+struct PowerSenseHostDetailsByIdsResource: PowerSenseZabbixResource {
+    typealias ModelType = PowerSenseDeviceProperties
+    let method = "host.get"
+    let methodPath = ""
+    let hostIds: [String]
+
+    init(hostIds: [String]) {
+        self.hostIds = hostIds
+    }
+
+    var params: [String: Any]? {
+        return [
+            "hostids": hostIds,  // Exact hostid array lookup
+            "output": ["hostid", "name", "status", "host"],
+            "selectMacros": ["macro", "value", "description"],
+            "sortfield": "hostid",
+            "sortorder": "ASC"
+        ]
+    }
+
+    var headers: [String: String]? = nil
+}
+
 /// Resource for retrieving PowerSense power events
 struct PowerSenseEventResource: PowerSenseZabbixResource {
     typealias ModelType = PowerSenseEventProperties
 
-    let method = "problem.get"
+    let method = "event.get"
     let methodPath = ""
 
     let hostIds: [String]?
@@ -221,7 +306,7 @@ struct PowerSenseEventResource: PowerSenseZabbixResource {
     init(hostIds: [String]? = nil,
          timeFrom: Date? = nil,
          timeTill: Date? = nil,
-         limit: Int = 100) {
+         limit: Int = 1000) {
         self.hostIds = hostIds
         self.timeFrom = timeFrom
         self.timeTill = timeTill
@@ -230,10 +315,28 @@ struct PowerSenseEventResource: PowerSenseZabbixResource {
 
     var params: [String: Any]? {
         var parameters: [String: Any] = [
-            "output": ["eventid", "source", "object", "objectid", "clock", "ns", "name", "severity"],
+            "output": ["eventid", "source", "object", "objectid", "clock", "ns", "name", "severity", "r_eventid"],
             "selectAcknowledges": "extend",
             "selectTags": "extend",
-            "recent": false,
+            "selectHosts": ["hostid"],
+            "tags": [
+                [
+                    "tag": "classification",
+                    "value": "device",
+                    "operator": 0
+                ],
+                [
+                    "tag": "component",
+                    "value": "power",
+                    "operator": 0
+                ],
+                [
+                    "tag": "component",
+                    "value": "powersense",
+                    "operator": 0
+                ]
+            ],
+            "evaltype": 0,
             "sortfield": ["eventid"],
             "sortorder": "DESC",
             "limit": limit
@@ -275,11 +378,28 @@ struct PowerSenseProblemsResource: PowerSenseZabbixResource {
     var params: [String: Any]? {
         var parameters: [String: Any] = [
             "output": "extend",
-            "selectHosts": ["hostid"],
+            "selectTags": "extend",
+            "tags": [
+                [
+                    "tag": "classification",
+                    "value": "device",
+                    "operator": 0
+                ],
+                [
+                    "tag": "component",
+                    "value": "power",
+                    "operator": 0
+                ],
+                [
+                    "tag": "component",
+                    "value": "powersense",
+                    "operator": 0
+                ]
+            ],
+            "evaltype": 0,
             "sortfield": ["eventid"],
             "sortorder": "DESC",
-            "recent": true,
-            "severities": [severityMin, 2, 3, 4, 5] // Exclude "Not classified" (0)
+            "recent": true
         ]
 
         if let hostIds = hostIds, !hostIds.isEmpty {
@@ -439,5 +559,190 @@ func fetchPowerSenseProblems(hostIds: [String]? = nil) async throws -> [PowerSen
         let errorDescription = "Invalid response structure"
         logger.error("Error fetching PowerSense problems: \(errorDescription)")
         throw PowerSenseZabbixError.invalidResponse(errorDescription)
+    }
+}
+
+/// Count total PowerSense devices available
+func countPowerSenseDevices() async throws -> Int {
+    let logger = Logger(subsystem: "powersense", category: "api")
+
+    // Check if PowerSense is enabled and configured
+    let config = await Configuration.shared
+    guard await config.isPowerSenseEnabled() else {
+        throw PowerSenseZabbixError.powerSenseDisabled
+    }
+
+    guard await config.isPowerSenseConfigured() else {
+        throw PowerSenseZabbixError.configurationMissing
+    }
+
+    logger.debug("Counting total PowerSense devices...")
+
+    let resource = PowerSenseDeviceCountResource()
+    let request = try await resource.request
+    let (data, response) = try await URLSession.shared.data(for: request)
+
+    // Log response details for debugging
+    if let httpResponse = response as? HTTPURLResponse {
+        logger.debug("PowerSense count HTTP response: \(httpResponse.statusCode)")
+    }
+
+    // Parse JSON response
+    let jsonObject: [String: Any]
+    do {
+        jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+    } catch {
+        logger.error("PowerSense count JSON parsing failed: \(error)")
+        throw PowerSenseZabbixError.invalidResponse("JSON parsing failed: \(error.localizedDescription)")
+    }
+
+    // Check for API error
+    if let errorInfo = jsonObject["error"] as? [String: Any] {
+        let errorCode = errorInfo["code"] as? Int ?? -1
+        let errorMessage = errorInfo["message"] as? String ?? "Unknown error"
+        let errorData = errorInfo["data"] as? String ?? ""
+        let fullError = "Code: \(errorCode), Message: \(errorMessage), Data: \(errorData)"
+        logger.error("PowerSense count API error: \(fullError)")
+        throw PowerSenseZabbixError.invalidResponse(fullError)
+    }
+
+    // Parse count result
+    if let resultString = jsonObject["result"] as? String {
+        let count = Int(resultString) ?? 0
+        logger.info("Total PowerSense devices: \(count)")
+        return count
+    } else if let resultInt = jsonObject["result"] as? Int {
+        logger.info("Total PowerSense devices: \(resultInt)")
+        return resultInt
+    } else {
+        logger.error("Invalid count response format")
+        throw PowerSenseZabbixError.invalidResponse("Count response format invalid")
+    }
+}
+
+// Old batched function removed - now using two-phase approach:
+// Phase 1: fetchAllPowerSenseHostIds()
+// Phase 2: fetchPowerSenseDevicesByIds()
+
+/// Phase 1: Fetch all PowerSense host IDs only (lightweight call)
+func fetchAllPowerSenseHostIds() async throws -> [String] {
+    let logger = Logger(subsystem: "powersense", category: "api")
+
+    // Check if PowerSense is enabled and configured
+    let config = await Configuration.shared
+    guard await config.isPowerSenseEnabled() else {
+        throw PowerSenseZabbixError.powerSenseDisabled
+    }
+
+    guard await config.isPowerSenseConfigured() else {
+        throw PowerSenseZabbixError.configurationMissing
+    }
+
+    logger.info("Phase 1: Fetching all PowerSense host IDs (lightweight call)...")
+
+    let resource = PowerSenseHostIdsResource()
+    let request = try await resource.request
+    let (data, response) = try await URLSession.shared.data(for: request)
+
+    // Log response details for debugging
+    if let httpResponse = response as? HTTPURLResponse {
+        logger.debug("PowerSense hostids HTTP response: \(httpResponse.statusCode)")
+        logger.debug("Response size: \(data.count) bytes")
+    }
+
+    // Parse JSON response
+    let jsonObject: [String: Any]
+    do {
+        jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+    } catch {
+        logger.error("PowerSense hostids JSON parsing failed: \(error)")
+        throw PowerSenseZabbixError.invalidResponse("JSON parsing failed: \(error.localizedDescription)")
+    }
+
+    // Check for API error
+    if let errorInfo = jsonObject["error"] as? [String: Any] {
+        let errorCode = errorInfo["code"] as? Int ?? -1
+        let errorMessage = errorInfo["message"] as? String ?? "Unknown error"
+        let errorData = errorInfo["data"] as? String ?? ""
+        let fullError = "Code: \(errorCode), Message: \(errorMessage), Data: \(errorData)"
+        logger.error("PowerSense hostids API error: \(fullError)")
+        throw PowerSenseZabbixError.invalidResponse(fullError)
+    }
+
+    // Parse hostid results
+    if let result = jsonObject["result"] as? [[String: Any]] {
+        let jsonData = try JSONSerialization.data(withJSONObject: result)
+        let hostIdObjects = try JSONDecoder().decode([PowerSenseHostIdOnly].self, from: jsonData)
+        let hostIds = hostIdObjects.map { $0.hostid }
+
+        logger.info("Phase 1 complete: Retrieved \(hostIds.count) PowerSense host IDs")
+        logger.debug("Host ID range: \(hostIds.first ?? "none") to \(hostIds.last ?? "none")")
+
+        return hostIds
+    } else {
+        logger.error("PowerSense hostids result format invalid")
+        throw PowerSenseZabbixError.invalidResponse("Result format invalid")
+    }
+}
+
+/// Phase 2: Fetch full PowerSense device details for specific host IDs
+func fetchPowerSenseDevicesByIds(_ hostIds: [String]) async throws -> [PowerSenseDeviceProperties] {
+    let logger = Logger(subsystem: "powersense", category: "api")
+
+    guard !hostIds.isEmpty else {
+        logger.warning("No host IDs provided for device details fetch")
+        return []
+    }
+
+    // Check if PowerSense is enabled and configured
+    let config = await Configuration.shared
+    guard await config.isPowerSenseEnabled() else {
+        throw PowerSenseZabbixError.powerSenseDisabled
+    }
+
+    guard await config.isPowerSenseConfigured() else {
+        throw PowerSenseZabbixError.configurationMissing
+    }
+
+    logger.debug("Phase 2: Fetching device details for \(hostIds.count) host IDs")
+
+    let resource = PowerSenseHostDetailsByIdsResource(hostIds: hostIds)
+    let request = try await resource.request
+    let (data, response) = try await URLSession.shared.data(for: request)
+
+    // Log response details for debugging
+    if let httpResponse = response as? HTTPURLResponse {
+        logger.debug("PowerSense device details HTTP response: \(httpResponse.statusCode)")
+        logger.debug("Response size: \(data.count) bytes")
+    }
+
+    // Parse JSON response - same logic as original fetchPowerSenseDevices
+    let jsonObject: [String: Any]
+    do {
+        jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+    } catch {
+        logger.error("PowerSense device details JSON parsing failed: \(error)")
+        throw PowerSenseZabbixError.invalidResponse("JSON parsing failed: \(error.localizedDescription)")
+    }
+
+    // Check for API error
+    if let errorInfo = jsonObject["error"] as? [String: Any] {
+        let errorCode = errorInfo["code"] as? Int ?? -1
+        let errorMessage = errorInfo["message"] as? String ?? "Unknown error"
+        let errorData = errorInfo["data"] as? String ?? ""
+        let fullError = "Code: \(errorCode), Message: \(errorMessage), Data: \(errorData)"
+        logger.error("PowerSense device details API error: \(fullError)")
+        throw PowerSenseZabbixError.invalidResponse(fullError)
+    }
+
+    // Parse device results
+    if let result = jsonObject["result"] as? [[String: Any]] {
+        let jsonData = try JSONSerialization.data(withJSONObject: result)
+        let devices = try JSONDecoder().decode([PowerSenseDeviceProperties].self, from: jsonData)
+        logger.debug("Phase 2: Fetched details for \(devices.count) PowerSense devices")
+        return devices.filter { $0.isValid }
+    } else {
+        logger.error("PowerSense device details result format invalid")
+        throw PowerSenseZabbixError.invalidResponse("Result format invalid")
     }
 }

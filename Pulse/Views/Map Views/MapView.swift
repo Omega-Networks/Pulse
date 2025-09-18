@@ -33,11 +33,40 @@ struct MapView: View {
     @Environment(\.openWindow) var openWindow
     @Environment(\.modelContext) private var modelContext
     @Query private var sites: [Site]
+
+    // PowerSense data for basic stats
+    @Query private var powerSenseEvents: [PowerSenseEvent]
+    @Query private var powerSenseDevices: [PowerSenseDevice]
+
+    // Computed property for events related to devices
+    private var eventsRelatedToDevices: [PowerSenseEvent] {
+        powerSenseEvents.filter { $0.device != nil }
+    }
+
+    // Computed properties for device power states
+    private var offlinePowerSenseDevices: [PowerSenseDevice] {
+        powerSenseDevices.filter { device in
+            device.isOffline == true  // Explicitly offline (has active event)
+        }
+    }
+
+    private var onlinePowerSenseDevices: [PowerSenseDevice] {
+        powerSenseDevices.filter { device in
+            device.isOffline == false  // Explicitly online (has resolved event)
+        }
+    }
+
+    private var unknownStatusDevices: [PowerSenseDevice] {
+        powerSenseDevices.filter { device in
+            device.isOffline == nil  // No events, status unknown
+        }
+    }
     @Binding var cameraPosition: MapCameraPosition
     @Binding var mapStyle: MapStyle
-    
+
     @Binding var selectedSite: Site?
     var selectedSiteGroups: Set<Int64>
+    @Binding var showPowerSenseOverlay: Bool
     
     //State variable for storing coordinate data
     @State private var tapLocation: CLLocationCoordinate2D? = nil
@@ -55,12 +84,14 @@ struct MapView: View {
         cameraPosition: Binding<MapCameraPosition>,
         mapStyle: Binding<MapStyle>,
         selectedSite: Binding<Site?>,
-        selectedSiteGroups: Set<Int64>
+        selectedSiteGroups: Set<Int64>,
+        showPowerSenseOverlay: Binding<Bool>
     ) {
         self.selectedSiteGroups = selectedSiteGroups
         self._cameraPosition = cameraPosition
         self._selectedSite = selectedSite
         self._mapStyle = mapStyle
+        self._showPowerSenseOverlay = showPowerSenseOverlay
         
         // Predicate for filtering sites by search text and selected site groups
         let predicate = #Predicate<Site> { site in
@@ -77,7 +108,8 @@ struct MapView: View {
         selectedSite: Binding<Site?>,
         selectedSiteGroups: Set<Int64>,
         openSiteGroups: Binding<Bool>,
-        isMapSheetPresented: Binding<Bool>
+        isMapSheetPresented: Binding<Bool>,
+        showPowerSenseOverlay: Binding<Bool>
     ) {
         self.selectedSiteGroups = selectedSiteGroups
         self._cameraPosition = cameraPosition
@@ -85,6 +117,7 @@ struct MapView: View {
         self._mapStyle = mapStyle
         self._openSiteGroups = openSiteGroups
         self._isMapSheetPresented = isMapSheetPresented
+        self._showPowerSenseOverlay = showPowerSenseOverlay
         
         // Predicate for filtering sites by search text and selected site groups
         let predicate = #Predicate<Site> { site in
@@ -100,12 +133,25 @@ struct MapView: View {
         ZStack (alignment: .topTrailing) {
             MapReader { reader  in
                 Map(position: $cameraPosition) {
+                    // Site annotations
                     ForEach(sites) { site in
                         Annotation(site.name, coordinate: site.coordinate) {
                             AnnotationView(
                                 site: site,
                                 selectedSite: $selectedSite
                             )
+                        }
+                    }
+
+                    // PowerSense device annotations (simple circles)
+                    if showPowerSenseOverlay {
+                        ForEach(offlinePowerSenseDevices, id: \.deviceId) { device in
+                            if device.latitude != 0.0 && device.longitude != 0.0 {
+                                Annotation(device.name ?? device.deviceId,
+                                         coordinate: CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude)) {
+                                    PowerSenseDeviceCircle(device: device)
+                                }
+                            }
                         }
                     }
                 }
@@ -142,6 +188,24 @@ struct MapView: View {
 #if os(iOS)
             buttonOverlays
 #endif
+
+            // PowerSense statistics overlay (simple)
+            if showPowerSenseOverlay {
+                VStack {
+                    HStack {
+                        PowerSenseMapStatsBadge(
+                            deviceCount: powerSenseDevices.count,
+                            eventCount: powerSenseEvents.count,
+                            eventsWithDevicesCount: eventsRelatedToDevices.count,
+                            offlineDeviceCount: offlinePowerSenseDevices.count,
+                            onlineDeviceCount: onlinePowerSenseDevices.count
+                        )
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding()
+            }
         }
     }
 
@@ -234,10 +298,100 @@ struct MapView: View {
  @ObservedObject var sharedLocations = SharedLocations()
  ```
  */
+
+// MARK: - PowerSense Simple Stats Component
+
+struct PowerSenseMapStatsBadge: View {
+    let deviceCount: Int
+    let eventCount: Int
+    let eventsWithDevicesCount: Int
+    let offlineDeviceCount: Int
+    let onlineDeviceCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: "bolt.fill")
+                    .font(.caption)
+                    .foregroundStyle(.blue)
+                Text("PowerSense")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
+
+            // Device power status breakdown
+            HStack(spacing: 12) {
+                // Online devices
+                HStack(spacing: 2) {
+                    Image(systemName: "bolt.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                    Text("\(onlineDeviceCount)")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                        .fontWeight(.medium)
+                }
+
+                // Offline devices
+                if offlineDeviceCount > 0 {
+                    HStack(spacing: 2) {
+                        Image(systemName: "bolt.slash.circle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                        Text("\(offlineDeviceCount)")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                            .fontWeight(.medium)
+                    }
+                }
+            }
+
+            Text("\(deviceCount) total devices")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Text("\(eventCount) events")
+                .font(.caption2)
+                .foregroundStyle(.primary)
+
+            if eventsWithDevicesCount > 0 {
+                Text("\(eventsWithDevicesCount) linked to devices")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                    .fontWeight(.medium)
+            }
+        }
+        .padding(8)
+        .background(.ultraThinMaterial)
+        .cornerRadius(8)
+        .shadow(radius: 2)
+    }
+}
+
+
 @Observable
 class SharedLocations {
     var tapLocation: CLLocationCoordinate2D?
     var tapAddress: String?
+}
+
+struct PowerSenseDeviceCircle: View {
+    let device: PowerSenseDevice
+
+    private var statusColor: Color {
+        switch device.isOffline {
+        case true: return .red      // Device is down
+        case false: return .green   // Device is up
+        case nil: return .orange    // Status unknown
+        }
+    }
+
+    var body: some View {
+        Circle()
+            .fill(statusColor)
+            .frame(width: 8, height: 8)
+            .drawingGroup() // Flatten rendering for performance
+    }
 }
 
 extension CLLocationCoordinate2D {

@@ -57,9 +57,12 @@ struct ContentView: View {
     @State private var cameraPosition: MapCameraPosition = .automatic
     
     //Proprety for changing the map style
-    @AppStorage("mapStyle") 
+    @AppStorage("mapStyle")
     var mapStyle: MapStyle = .standard
     @State var openMapStyles = false
+
+    //Property for PowerSense overlay toggle
+    @State var showPowerSenseOverlay = false
     
     //Properties for the iOS version
     @State private var eventMonitoringTimer: Timer?
@@ -99,7 +102,8 @@ struct ContentView: View {
                     cameraPosition: $cameraPosition,
                     mapStyle: $mapStyle,
                     selectedSite: $selectedSite,
-                    selectedSiteGroups: selectedSiteGroups
+                    selectedSiteGroups: selectedSiteGroups,
+                    showPowerSenseOverlay: $showPowerSenseOverlay
                 )
             }
 #elseif os (iOS)
@@ -111,7 +115,8 @@ struct ContentView: View {
                     selectedSite: $selectedSite,
                     selectedSiteGroups: selectedSiteGroups,
                     openSiteGroups: $openSiteGroups,
-                    isMapSheetPresented: $isMapSheetPresented
+                    isMapSheetPresented: $isMapSheetPresented,
+                    showPowerSenseOverlay: $showPowerSenseOverlay
                 )
             }
             .sheet(isPresented: $mainSheetOpen) { //Main sheet containing list of sites and search bar

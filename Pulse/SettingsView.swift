@@ -54,15 +54,19 @@ struct SettingsView: View {
     @State private var powerSenseUpdateInterval: Int = 60
     @State private var powerSenseMinDeviceThreshold: Int = 3
     @State private var powerSenseGridSize: Int = 100
+    @State private var isFullSyncing = false
 
     // PowerSense Testing State
     @State private var isTestingConnection = false
     @State private var isTestingDevices = false
     @State private var isTestingEvents = false
+    @State private var isTestingProblems = false
     @State private var testResults: String = ""
     @State private var showingTestResults = false
     @State private var powerSenseDeviceCount = 0
     @State private var powerSenseEventCount = 0
+    @State private var activeProblemsCount = 0
+    @State private var resolvedProblemsCount = 0
 
     // Alert State
     @State private var showingAlert = false
@@ -104,6 +108,13 @@ struct SettingsView: View {
             .tabItem {
                 Label("PowerSense", systemImage: "bolt.circle")
             }
+
+            ///PowerSense Data Viewer - device and event data inspection
+            PowerSenseDataViewer()
+                .tabItem {
+                    Label("Data Viewer", systemImage: "eye.circle")
+                }
+
 
             ///Sync dashboard - contains Model Object Counts
             SyncDashboardView()
@@ -156,7 +167,7 @@ struct SettingsView: View {
             }
 #endif
         }
-        .frame(width: 350)
+        .frame(minWidth: 350, maxWidth: .infinity)
         .alert(isPresented: $showingAlert) {
             Alert(
                 title: Text("Settings"),
@@ -302,6 +313,57 @@ struct SettingsView: View {
                 } else {
                     Text("\(powerSenseEventCount) events")
                         .foregroundColor(.secondary)
+                }
+            }
+
+            HStack {
+                Button("Test Problem Resolution") {
+                    Task {
+                        await testProblemResolution()
+                    }
+                }
+                .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || isTestingProblems)
+
+                Spacer()
+
+                if isTestingProblems {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else if activeProblemsCount > 0 || resolvedProblemsCount > 0 {
+                    HStack(spacing: 8) {
+                        if activeProblemsCount > 0 {
+                            Text("🔴 \(activeProblemsCount)")
+                                .foregroundColor(.red)
+                                .font(.caption)
+                        }
+                        if resolvedProblemsCount > 0 {
+                            Text("✅ \(resolvedProblemsCount)")
+                                .foregroundColor(.green)
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Button("Full Sync All Devices") {
+                    Task {
+                        await fullSyncAllDevices()
+                    }
+                }
+                .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || isFullSyncing)
+
+                Spacer()
+
+                if isFullSyncing {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Text("Syncs all 120k devices")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
                 }
             }
 
@@ -541,6 +603,65 @@ struct SettingsView: View {
         isTestingDevices = false
     }
 
+    private func testProblemResolution() async {
+        guard powerSenseEnabled else { return }
+
+        isTestingProblems = true
+        activeProblemsCount = 0
+        resolvedProblemsCount = 0
+        logger.debug("Testing PowerSense problem resolution...")
+
+        do {
+            // Use PowerSenseDataService to test problem resolution
+            let dataService = PowerSenseDataService(modelContext: modelContext)
+            let (success, message, activeCount, resolvedCount) = await dataService.testProblemsFetching()
+
+            testResults += "\n=== PowerSense Problem Resolution Test ===\n"
+            if success {
+                testResults += "✅ Successfully processed problems\n"
+                testResults += "🔴 Active problems: \(activeCount)\n"
+                testResults += "✅ Resolved problems: \(resolvedCount)\n"
+                testResults += "🕒 Test time: \(Date().formatted())\n"
+
+                // Update UI counters
+                activeProblemsCount = activeCount
+                resolvedProblemsCount = resolvedCount
+            } else {
+                testResults += "❌ Problem resolution failed: \(message)\n"
+                throw PowerSenseZabbixError.invalidResponse(message)
+            }
+
+            // Show detailed problem info
+            let activeEvents = try modelContext.fetch(
+                FetchDescriptor<PowerSenseEvent>(
+                    predicate: #Predicate<PowerSenseEvent> { event in
+                        event.resolvedAt == nil
+                    }
+                )
+            )
+
+            if !activeEvents.isEmpty {
+                testResults += "\n--- Active Problems ---\n"
+                for event in activeEvents.prefix(5) {
+                    testResults += "• Event \(event.eventId): \(event.eventDescription ?? "Unknown")\n"
+                    if let device = event.device {
+                        testResults += "  Device: \(device.name) (ID: \(device.deviceId))\n"
+                    }
+                }
+                if activeEvents.count > 5 {
+                    testResults += "... and \(activeEvents.count - 5) more\n"
+                }
+            }
+
+            showingTestResults = true
+        } catch {
+            testResults += "\n❌ Problem resolution test failed: \(error.localizedDescription)\n"
+            showingTestResults = true
+        }
+
+        isTestingProblems = false
+    }
+
     private func testFetchEvents() async {
         guard powerSenseEnabled else { return }
 
@@ -548,58 +669,47 @@ struct SettingsView: View {
         logger.debug("Testing PowerSense event fetching...")
 
         do {
-            // Fetch events from the last hour
-            let oneHourAgo = Date().addingTimeInterval(-3600)
-            let events = try await fetchPowerSenseEvents(timeFrom: oneHourAgo)
+            // Use PowerSenseDataService event-only test (no device sync)
+            let dataService = PowerSenseDataService(modelContext: modelContext)
+            let (success, message, eventCount) = await dataService.testEventFetching()
 
-            testResults += "\n=== Event Fetch Test ===\n"
-            testResults += "✅ Successfully fetched \(events.count) PowerSense events\n"
-            testResults += "📅 Time range: Last 1 hour\n"
-            testResults += "🕒 Test time: \(Date().formatted())\n"
+            testResults += "\n=== PowerSense Event Test ===\n"
+            if success {
+                testResults += "✅ Successfully fetched PowerSense events\n"
+                testResults += "⚡ Events processed: \(eventCount)\n"
+                testResults += "🕒 Test time: \(Date().formatted())\n"
+            } else {
+                testResults += "❌ Event fetch failed: \(message)\n"
+                throw PowerSenseZabbixError.invalidResponse(message)
+            }
 
-            // Sample a few events for display
-            let sampleEvents = Array(events.prefix(3))
-            for event in sampleEvents {
-                testResults += "⚡ Event: \(event.name)\n"
+            // Get sample events to display
+            var eventDescriptor = FetchDescriptor<PowerSenseEvent>(
+                sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+            )
+            eventDescriptor.fetchLimit = 3
+            let recentEvents = try modelContext.fetch(eventDescriptor)
+
+            for event in recentEvents {
+                testResults += "⚡ Event: \(event.eventDescription ?? "PowerSense Event")\n"
                 testResults += "   ID: \(event.eventId)\n"
-                testResults += "   Type: \(event.eventType.displayName)\n"
+                testResults += "   Status: \(event.isActive ? "Active (Power Off)" : "Resolved (Power On)")\n"
                 testResults += "   Severity: \(event.severity)\n"
                 testResults += "   Time: \(event.timestamp.formatted())\n"
-                testResults += "   Host: \(event.hostId)\n"
+                testResults += "   Device: \(event.device?.name ?? "nil")\n"
+                testResults += "   Device ID: \(event.device?.deviceId ?? "nil")\n"
                 testResults += "\n"
             }
 
-            if events.count > 3 {
-                testResults += "... and \(events.count - 3) more events\n"
+            if eventCount > 3 {
+                testResults += "... and \(eventCount - 3) more events\n"
             }
 
-            // Store events in SwiftData for testing
-            for eventProperties in events {
-                let event = PowerSenseEvent(
-                    eventId: eventProperties.eventId,
-                    timestamp: eventProperties.timestamp,
-                    eventType: eventProperties.eventType
-                )
-                event.update(with: eventProperties)
-
-                // Try to link to existing device
-                let deviceId = eventProperties.hostId
-                let deviceFetch = FetchDescriptor<PowerSenseDevice>(
-                    predicate: #Predicate { $0.deviceId == deviceId }
-                )
-                if let device = try? modelContext.fetch(deviceFetch).first {
-                    event.device = device
-                }
-
-                modelContext.insert(event)
-            }
-
-            try? modelContext.save()
             await refreshDataCounts()
 
-            alertMessage = "Successfully fetched and stored \(events.count) PowerSense events"
+            alertMessage = "Successfully processed \(eventCount) events with proper device linking"
             showingAlert = true
-            logger.debug("PowerSense event fetch test passed: \(events.count) events")
+            logger.debug("PowerSense event test passed: \(eventCount) events")
 
         } catch {
             testResults += "\n=== Event Fetch Test ===\n"
@@ -655,16 +765,35 @@ struct SettingsView: View {
     private func refreshDataCounts() async {
         do {
             let deviceFetch = FetchDescriptor<PowerSenseDevice>()
-            let devices = try modelContext.fetch(deviceFetch)
-            powerSenseDeviceCount = devices.count
+            powerSenseDeviceCount = try modelContext.fetchCount(deviceFetch)
 
             let eventFetch = FetchDescriptor<PowerSenseEvent>()
-            let events = try modelContext.fetch(eventFetch)
-            powerSenseEventCount = events.count
+            powerSenseEventCount = try modelContext.fetchCount(eventFetch)
 
             logger.debug("Data counts refreshed: \(powerSenseDeviceCount) devices, \(powerSenseEventCount) events")
         } catch {
             logger.error("Failed to refresh data counts: \(error.localizedDescription)")
+        }
+    }
+
+    private func fullSyncAllDevices() async {
+        guard !isFullSyncing else { return }
+
+        isFullSyncing = true
+        defer { isFullSyncing = false }
+
+        logger.info("Starting full sync of all PowerSense devices...")
+
+        do {
+            let dataService = PowerSenseDataService(modelContext: modelContext)
+            let (deviceCount, eventCount) = try await dataService.syncPowerSenseData()
+
+            await refreshDataCounts()
+
+            logger.info("Full sync completed: \(deviceCount) devices, \(eventCount) events processed")
+
+        } catch {
+            logger.error("Full sync failed: \(error.localizedDescription)")
         }
     }
 }
@@ -706,7 +835,7 @@ struct PowerSenseTestResultsView: View {
 
             scrollContent
         }
-        .frame(width: 600, height: 500)
+        .frame(minWidth: 600, minHeight: 500)
         #endif
     }
 

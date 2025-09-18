@@ -28,6 +28,9 @@
 		41446D242BF40D3900EA7A14 /* CPUCoresChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41446D232BF40D3900EA7A14 /* CPUCoresChart.swift */; };
 		4158C9682BF16BAA00BB318C /* DeviceUptimeChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4158C9672BF16BAA00BB318C /* DeviceUptimeChart.swift */; };
 		415F99462CD820B300845D15 /* SiteDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 415F99452CD820B300845D15 /* SiteDataService.swift */; };
+		7A91D588E88E472992B10C33 /* PowerSenseAggregationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F06ADFE57D64C7DB680146D /* PowerSenseAggregationService.swift */; };
+		199ADECD0DA44F6AA0EBAAB3 /* PowerSenseDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDF88230972E4B79804F5880 /* PowerSenseDataService.swift */; };
+		8F732C378E0C441CA8FB563E /* PowerSenseDataViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F732C378E0C441CA8FB563D /* PowerSenseDataViewer.swift */; };
 		41691A772D2CD04100F8FCA3 /* SiteLeftPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41691A762D2CD04100F8FCA3 /* SiteLeftPane.swift */; };
 		416EF8932D21E979001CD25B /* ChartDataProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 416EF8922D21E979001CD25B /* ChartDataProcessor.swift */; };
 		41703CA32CC9D9CB00FA5C03 /* Interface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41703CA22CC9D9CB00FA5C03 /* Interface.swift */; };
@@ -156,6 +159,12 @@
 		41446D232BF40D3900EA7A14 /* CPUCoresChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPUCoresChart.swift; sourceTree = "<group>"; };
 		4158C9672BF16BAA00BB318C /* DeviceUptimeChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceUptimeChart.swift; sourceTree = "<group>"; };
 		415F99452CD820B300845D15 /* SiteDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteDataService.swift; sourceTree = "<group>"; };
+		3F06ADFE57D64C7DB680146D /* PowerSenseAggregationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseAggregationService.swift; sourceTree = "<group>"; };
+		BDF88230972E4B79804F5880 /* PowerSenseDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDataService.swift; sourceTree = "<group>"; };
+		0E0BDEEBD6094CC4834A796F /* PowerSenseOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseOverviewView.swift; sourceTree = "<group>"; };
+		873FCC1744D443C580856063 /* PowerSenseDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDashboardView.swift; sourceTree = "<group>"; };
+		8F732C378E0C441CA8FB563D /* PowerSenseDataViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDataViewer.swift; sourceTree = "<group>"; };
+		762AEEBA6971484482E4B4C0 /* PowerSenseToolbarButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseToolbarButton.swift; sourceTree = "<group>"; };
 		41691A762D2CD04100F8FCA3 /* SiteLeftPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLeftPane.swift; sourceTree = "<group>"; };
 		416EF8922D21E979001CD25B /* ChartDataProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChartDataProcessor.swift; sourceTree = "<group>"; };
 		41703CA22CC9D9CB00FA5C03 /* Interface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interface.swift; sourceTree = "<group>"; };
@@ -457,6 +466,8 @@
 				41A898FC2CC6F7E900856329 /* DeviceBay.swift */,
 				41703CA22CC9D9CB00FA5C03 /* Interface.swift */,
 				415F99452CD820B300845D15 /* SiteDataService.swift */,
+				3F06ADFE57D64C7DB680146D /* PowerSenseAggregationService.swift */,
+				BDF88230972E4B79804F5880 /* PowerSenseDataService.swift */,
 				416EF8922D21E979001CD25B /* ChartDataProcessor.swift */,
 				41DD37732D349F45009F37A0 /* TipManager.swift */,
 			);
@@ -487,6 +498,7 @@
 				419A0D9C2BED8A0D00FC74AF /* MapStyleButton.swift */,
 				4107D86D2C2CD9B700632BE4 /* InvoicesButton.swift */,
 				4177A5EB2CE3FF2E00A7C754 /* SyncButton.swift */,
+				762AEEBA6971484482E4B4C0 /* PowerSenseToolbarButton.swift */,
 			);
 			path = "Toolbar Content";
 			sourceTree = "<group>";
@@ -501,6 +513,7 @@
 				4158C9662BF16B6200BB318C /* Site View Content */,
 				C96191D12ACA5A42000198DB /* Graph Views */,
 				C96192002ACA5CC4000198DB /* Table Views */,
+				8A4D5B0C123456789ABCDEF0 /* PowerSenseViews */,
 				C96191F12ACA5C03000198DB /* SiteGroupRow.swift */,
 				419D50F82C227D3600CEA439 /* SitesList.swift */,
 			);
@@ -558,6 +571,16 @@
 				4114A6E72BA3B77A00ABEC8C /* Problems */,
 			);
 			path = "Table Views";
+			sourceTree = "<group>";
+		};
+		8A4D5B0C123456789ABCDEF0 /* PowerSenseViews */ = {
+			isa = PBXGroup;
+			children = (
+				0E0BDEEBD6094CC4834A796F /* PowerSenseOverviewView.swift */,
+				873FCC1744D443C580856063 /* PowerSenseDashboardView.swift */,
+				8F732C378E0C441CA8FB563D /* PowerSenseDataViewer.swift */,
+			);
+			path = PowerSenseViews;
 			sourceTree = "<group>";
 		};
 		C9EF519B2D3083F400D49DEA /* SwiftData Models */ = {
@@ -802,6 +825,9 @@
 				41B82EE92CACBC930019FDAD /* RackView.swift in Sources */,
 				410F372A2CABA58B008236ED /* Rack.swift in Sources */,
 				415F99462CD820B300845D15 /* SiteDataService.swift in Sources */,
+				7A91D588E88E472992B10C33 /* PowerSenseAggregationService.swift in Sources */,
+				199ADECD0DA44F6AA0EBAAB3 /* PowerSenseDataService.swift in Sources */,
+				8F732C378E0C441CA8FB563E /* PowerSenseDataViewer.swift in Sources */,
 				41B467B02C3C984C00B23BA8 /* DeviceBuilder.swift in Sources */,
 				41934BAF2BC8C552007DB27A /* MemberCell.swift in Sources */,
 				C97136DF2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift in Sources */,

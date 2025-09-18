@@ -43,13 +43,6 @@ final class PowerSenseDevice {
     /// Device name/identifier
     var name: String?
 
-    /// Current power status - nil means unknown/no data available
-    /// true = powered, false = power lost, nil = unknown
-    var isPowered: Bool?
-
-    /// Last time power status changed (nil if never changed or unknown)
-    var lastStatusChange: Date?
-
     /// Creation timestamp
     var created: Date = Date()
 
@@ -83,9 +76,25 @@ final class PowerSenseDevice {
 
     // MARK: - Data Quality Properties
 
+    /// Get the most recent event by eventId (highest ID = most recent)
+    var mostRecentEvent: PowerSenseEvent? {
+        events.max(by: { Int($0.eventId) ?? 0 < Int($1.eventId) ?? 0 })
+    }
+
+    /// Device is offline if the most recent event is active (true = offline, false = online, nil = unknown)
+    var isOffline: Bool? {
+        guard let latestEvent = mostRecentEvent else { return nil }
+        return latestEvent.isActive
+    }
+
+    /// Last time power status changed (from most recent event)
+    var lastStatusChange: Date? {
+        return mostRecentEvent?.timestamp
+    }
+
     /// Whether we have valid power status data for this device
     var hasPowerStatusData: Bool {
-        isPowered != nil
+        mostRecentEvent != nil
     }
 
     /// Last time we received any data about this device
@@ -123,7 +132,6 @@ final class PowerSenseDevice {
         self.latitude = latitude
         self.longitude = longitude
         self.updateGridCoordinates()
-        // Explicitly not setting isPowered - it remains nil until we have actual data
     }
 
     // MARK: - Privacy and Aggregation Methods
@@ -151,26 +159,11 @@ final class PowerSenseDevice {
 
     // MARK: - Power Status Methods
 
-    /// Update power status and record the change
-    func updatePowerStatus(_ newStatus: Bool?) {
-        guard newStatus != isPowered else { return } // No change
-
-        let oldStatus = isPowered
-        isPowered = newStatus
-
-        // Only update lastStatusChange if we have actual data
-        if newStatus != nil {
-            lastStatusChange = Date()
-            lastDataReceived = Date()
-            lastUpdated = Date()
-        }
-    }
-
     /// Power status as a string for debugging/logging
     var powerStatusString: String {
-        switch isPowered {
-        case true: return "Powered"
-        case false: return "Power Lost"
+        switch isOffline {
+        case true: return "Offline"
+        case false: return "Online"
         case nil: return "Unknown"
         }
     }
@@ -225,7 +218,7 @@ struct PowerSenseDeviceProperties: Decodable {
         var parsedTlc: String?
         var parsedTui: String?
         var parsedAlarmId: String?
-        var parsedLastUpdate: String?
+        let parsedLastUpdate: String? = nil
 
         // Parse macros to extract key PowerSense data
         if let macrosArray = try? container.decode([MacroData].self, forKey: .macros) {
@@ -260,12 +253,7 @@ struct PowerSenseDeviceProperties: Decodable {
 
     // MARK: - Computed Properties
 
-    /// Returns nil for power status - actual power state should come from events, not host status
-    var isPowered: Bool? {
-        // Don't assume power state from host monitoring status
-        // Power state should be determined from actual PowerSense events
-        return nil
-    }
+    // Power state is determined from actual PowerSense events in the model
 
     var isMonitored: Bool {
         return status == "0"
@@ -316,9 +304,9 @@ extension PowerSenseDevice {
 
     /// Recent power loss (within last hour) - only if we have status data
     var hasRecentPowerLoss: Bool {
-        guard let powered = isPowered,
+        guard let offline = isOffline,
               let statusChange = lastStatusChange else { return false }
-        return !powered && statusChange.timeIntervalSinceNow > -3600
+        return offline && statusChange.timeIntervalSinceNow > -3600
     }
 
     /// Stable power status (no changes in last 15 minutes) - only if we have data

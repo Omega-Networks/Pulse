@@ -157,6 +157,15 @@ struct PulseApp: App {
                     .modelContainer(modelContainer)
             }
         }
+
+        // PowerSense window - uncomment when PowerSenseDashboardView is added to project
+        // WindowGroup("PowerSense", id: "PowerSense") {
+        //     if showContentView {
+        //         PowerSenseDashboardView(modelContext: modelContainer.mainContext)
+        //             .modelContainer(modelContainer)
+        //     }
+        // }
+
         #endif
     }
     
