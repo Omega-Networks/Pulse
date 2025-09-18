@@ -51,6 +51,20 @@ final class Rack {
     
     @Relationship(deleteRule: .cascade, inverse: \Device.rack)
     var devices: [Device]?
+    
+    public init (_ properties: RackProperties) {
+        self.id = properties.id
+        self.name = properties.name
+        self.display = properties.display
+        self.created = properties.created
+        self.lastUpdated = properties.lastUpdated
+        self.url = properties.url
+        self.uHeight = properties.uHeight
+        self.startingUnit = properties.startingUnit
+        self.deviceCount = properties.deviceCount
+        self.status = properties.status
+        self.formFactor = properties.formFactor
+    }
 }
 
 // API For Rack

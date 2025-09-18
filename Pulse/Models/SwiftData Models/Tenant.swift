@@ -41,6 +41,13 @@ final class Tenant {
     init(id: Int64) {
         self.id = id
     }
+    
+    public init (_ properties: TenantProperties){
+        self.id = properties.id
+        self.name = properties.name
+        self.created = properties.created
+        self.lastUpdated = properties.lastUpdated
+    }
 }
 
 /// API For Tenant

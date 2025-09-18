@@ -43,6 +43,14 @@ final class DeviceRole {
     init(id: Int64) {
         self.id = id
     }
+    
+    public init (_ properties: DeviceRoleProperties){
+        self.id = properties.id
+        self.name = properties.name
+        self.created = properties.created
+        self.lastUpdated = properties.lastUpdated
+        self.colour = properties.colour
+    }
 }
 
 extension DeviceRole {

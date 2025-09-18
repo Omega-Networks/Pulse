@@ -62,6 +62,21 @@ final class Site {
     init(id: Int64) {
         self.id = id
     }
+    
+    public init (_ properties: SiteProperties){
+        self.id = properties.id
+        self.created = properties.created
+        self.deviceCount = properties.deviceCount
+        self.display = properties.display
+        self.lastUpdated = properties.lastUpdated
+        self.latitude = properties.latitude
+        self.longitude = properties.longitude
+        self.name = properties.name
+        self.status = properties.status
+        self.physicalAddress = properties.physicalAddress
+        self.shippingAddress = properties.shippingAddress
+        self.url = properties.url
+    }
 }
 
 extension Site {

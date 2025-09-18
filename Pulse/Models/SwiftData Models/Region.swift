@@ -46,6 +46,14 @@ final class Region {
     init(id: Int64) {
         self.id = id
     }
+    
+    public init (_ properties: RegionProperties){
+        self.id = properties.id
+        self.name = properties.name
+        self.created = properties.created
+        self.siteCount = properties.siteCount
+        self.lastUpdated = properties.lastUpdated
+    }
 }
 
 /// A struct for decoding JSON with the following structure;

@@ -40,7 +40,7 @@ struct AnnotationView: View {
         self._selectedSite = selectedSite
     }
     
-    var circleFrame:CGFloat {
+    var circleFrame:CGFloat? {
 #if os(iOS)
         return 10;
 #elseif os(macOS)

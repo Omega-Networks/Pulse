@@ -57,11 +57,7 @@ protocol EntityOperations {
 // Protocol conformances for existing entities
 extension SiteGroupProperties: EntityPropertiesProtocol {}
 extension SiteProperties: EntityPropertiesProtocol {}
-extension DeviceProperties: EntityPropertiesProtocol {
-    var id: Int64 {
-        return Int64.random(in: Int64.min...Int64.max)
-    }
-}
+extension DeviceProperties: EntityPropertiesProtocol {}
 extension EventProperties: EntityPropertiesProtocol {
     var id: Int64 {
         return Int64.random(in: Int64.min...Int64.max)
@@ -117,7 +113,7 @@ struct TenantGroupOperations: EntityOperations {
     typealias PropertiesType = TenantGroupProperties
     
     func createEntity(from properties: TenantGroupProperties) -> TenantGroup {
-        return TenantGroup(id: properties.id)
+        return TenantGroup(properties)
     }
     
     func updateEntity(_ entity: TenantGroup, with properties: TenantGroupProperties) {
@@ -126,7 +122,7 @@ struct TenantGroupOperations: EntityOperations {
         entity.lastUpdated = properties.lastUpdated
     }
     
-    //No relationship for tenant group
+    //TODO: Check db for tenant - tenantgroup relationship
     func setupRelationships(for entity: TenantGroup, with properties: TenantGroupProperties, in context: ModelContext) throws {
     }
 }
@@ -136,7 +132,7 @@ struct TenantOperations: EntityOperations {
     typealias PropertiesType = TenantProperties
     
     func createEntity(from properties: TenantProperties) -> Tenant {
-        return Tenant(id: properties.id)
+        return Tenant(properties)
     }
     
     func updateEntity(_ entity: Tenant, with properties: TenantProperties) {
@@ -163,7 +159,7 @@ struct RegionOperations: EntityOperations {
     typealias PropertiesType = RegionProperties
     
     func createEntity(from properties: RegionProperties) -> Region {
-        return Region(id: properties.id)
+        return Region(properties)
     }
     
     func updateEntity(_ entity: Region, with properties: RegionProperties) {
@@ -191,7 +187,7 @@ struct DeviceRoleOperations: EntityOperations {
     typealias PropertiesType = DeviceRoleProperties
     
     func createEntity(from properties: DeviceRoleProperties) -> DeviceRole {
-        return DeviceRole(id: properties.id)
+        return DeviceRole(properties)
     }
     
     func updateEntity(_ entity: DeviceRole, with properties: DeviceRoleProperties) {
@@ -201,8 +197,8 @@ struct DeviceRoleOperations: EntityOperations {
         entity.colour = properties.colour
     }
     
+    //TODO: Setup Device relationship if needed, check db
     func setupRelationships(for entity: DeviceRole, with properties: DeviceRoleProperties, in context: ModelContext) throws {
-        // DeviceRole relationships can be added here if needed
     }
 }
 
@@ -211,7 +207,7 @@ struct DeviceTypeOperations: EntityOperations {
     typealias PropertiesType = DeviceTypeProperties
     
     func createEntity(from properties: DeviceTypeProperties) -> DeviceType {
-        return DeviceType(id: properties.id)
+        return DeviceType(properties)
     }
     
     func updateEntity(_ entity: DeviceType, with properties: DeviceTypeProperties) {
@@ -221,7 +217,7 @@ struct DeviceTypeOperations: EntityOperations {
         entity.uHeight = properties.uHeight
     }
     
-    //No relationship for this
+    //TODO: Maybe reverse is enough, check db
     func setupRelationships(for entity: DeviceType, with properties: DeviceTypeProperties, in context: ModelContext) throws {
     }
 }
@@ -231,7 +227,7 @@ struct SiteGroupOperations: EntityOperations {
     typealias PropertiesType = SiteGroupProperties
     
     func createEntity(from properties: SiteGroupProperties) -> SiteGroup {
-        return SiteGroup(id: properties.id)
+        return SiteGroup(properties)
     }
     
     func updateEntity(_ entity: SiteGroup, with properties: SiteGroupProperties) {
@@ -258,7 +254,7 @@ struct SiteOperations: EntityOperations {
     typealias PropertiesType = SiteProperties
     
     func createEntity(from properties: SiteProperties) -> Site {
-        return Site(id: properties.id)
+        return Site(properties)
     }
     
     func updateEntity(_ entity: Site, with properties: SiteProperties) {
@@ -329,7 +325,7 @@ struct RackOperations: EntityOperations {
     typealias PropertiesType = RackProperties
     
     func createEntity(from properties: RackProperties) -> Rack {
-        return Rack(id: properties.id)
+        return Rack(properties)
     }
     
     func updateEntity(_ entity: Rack, with properties: RackProperties) {
@@ -355,8 +351,8 @@ struct RackOperations: EntityOperations {
             if let site = try? context.fetch(fetchDescriptor).first {
                 entity.site = site
             }
-
         }
+        
     }
 }
 
@@ -365,7 +361,7 @@ struct DeviceOperations: EntityOperations {
     typealias PropertiesType = DeviceProperties
     
     func createEntity(from properties: DeviceProperties) -> Device {
-        return Device(id: properties.id)
+        return  Device(properties)
     }
     
     func updateEntity(_ entity: Device, with properties: DeviceProperties) {
@@ -385,25 +381,41 @@ struct DeviceOperations: EntityOperations {
     }
     
     func setupRelationships(for entity: Device, with properties: DeviceProperties, in context: ModelContext) throws {
-//        // Establishing relationship with Device Role
-//        if deviceProperty.deviceRoleId != 0, let deviceRole = deviceRolesDict[deviceProperty.deviceRoleId] {
-//            device.deviceRole = deviceRole
-//        }
-//        
-//        // Establishing relationship with Device Type
-//        if deviceProperty.deviceTypeId != 0, let deviceType = deviceTypesDict[deviceProperty.deviceTypeId] {
-//            device.deviceType = deviceType
-//        }
-//        
-//        // Establishing relationship with Site
-//        if deviceProperty.siteId != 0, let site = sitesDict[deviceProperty.siteId] {
-//            device.site = site
-//        }
-//        
-//        // Establishing relationship with Rack
-//        if let rackId = deviceProperty.rackId, rackId != 0, let rack = racksDict[rackId] {
-//            device.rack = rack
-//        }
+        // Establishing relationship with Device Role
+        if (properties.deviceRoleId != 0) {
+            let deviceRolePredicate = #Predicate<DeviceRole> {
+                item in item.id == properties.deviceRoleId
+            }
+            let deviceRole = try? context.fetch(FetchDescriptor(predicate: deviceRolePredicate)).first;
+            entity.deviceRole = deviceRole
+        }
+        
+        // Establishing relationship with Device Type
+        if (properties.deviceTypeId != 0){
+            let deviceTypePredicate = #Predicate<DeviceType> {
+                role in role.id == properties.deviceTypeId
+            }
+            let deviceType = try? context.fetch(FetchDescriptor(predicate: deviceTypePredicate)).first;
+            entity.deviceType = deviceType
+        }
+        
+        // Establishing relationship with Site
+        if (properties.siteId != 0) {
+            let sitePredicate = #Predicate<Site> {
+                item in item.id == properties.siteId
+            }
+            let site = try? context.fetch(FetchDescriptor(predicate: sitePredicate)).first;
+            entity.site = site
+        }
+        
+        // Establishing relationship with Rack
+        if (properties.rackId != 0){
+            let rackPredicate = #Predicate<Rack> {
+                role in role.id == (properties.rackId ?? 0)
+            }
+            let rack = try? context.fetch(FetchDescriptor(predicate: rackPredicate)).first;
+            entity.rack = rack
+        }
     }
 }
 

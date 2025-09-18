@@ -41,6 +41,14 @@ final class DeviceType {
     init(id: Int64) {
         self.id = id
     }
+    
+    public init(_ properties: DeviceTypeProperties){
+        self.id = properties.id
+        self.model = properties.model
+        self.created = properties.created
+        self.lastUpdated = properties.lastUpdated
+        self.uHeight = properties.uHeight
+    }
 }
 
 /// API For Device Type

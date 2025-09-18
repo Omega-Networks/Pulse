@@ -77,6 +77,22 @@ final class Device {
     
     var localX: Double = 0
     var localY: Double = 0
+    
+    public init(_ properties: DeviceProperties){
+        self.id = properties.id
+        self.created = properties.created
+        self.display = properties.display
+        self.lastUpdated = properties.lastUpdated
+        self.name = properties.name
+        self.rackPosition = properties.rackPosition
+        self.primaryIP = properties.primaryIP
+        self.serial = properties.serial
+        self.url = properties.url
+        self.x = properties.x
+        self.y = properties.y
+        self.zabbixId = properties.zabbixId
+        self.zabbixInstance = properties.zabbixInstance;
+    }
 }
 
 
@@ -204,6 +220,7 @@ extension Device {
        
        return Color(red: r, green: g, blue: b)
    }
+    
 }
 
 //MARK: API request for device as a reference
@@ -346,7 +363,7 @@ struct DeviceProperties: Codable {
            case rackName = "name"
     }
         
-//    var id: Int64?
+    var id: Int64
     let name: String
     let display: String
     let url: String
@@ -372,6 +389,7 @@ struct DeviceProperties: Codable {
     let status: String // This will hold only the value, not the label
     
     let rackId: Int64?
+    
     let rackName: String?
     
     /**
@@ -492,7 +510,7 @@ struct DeviceProperties: Codable {
         self.deviceRoleId = rawDeviceRoleId
         self.deviceRoleName = rawDeviceRoleName
         
-//        self.id = id
+        self.id = id
         self.name = name
         self.created = created
         self.lastUpdated = lastUpdated
@@ -518,8 +536,8 @@ struct DeviceProperties: Codable {
     /**
      Initialisation body for either creating or updating a Device, and pushing the information to NetBox.
      */
-    init(id: Int64? = nil, name: String, display: String, status: String, deviceType: String, primaryIP: String, serial: String, siteId: Int64, siteName: String, x: Double, y: Double, zabbixId: Int64, zabbixInstance: Int64, deviceRoleId: Int64, deviceRoleName: String, deviceTypeId: Int64, deviceTypeModel: String, rackId: Int64?, rackName: String?, rackPosition: Float?) {
-//        self.id = id
+    init(id: Int64, name: String, display: String, status: String, deviceType: String, primaryIP: String, serial: String, siteId: Int64, siteName: String, x: Double, y: Double, zabbixId: Int64, zabbixInstance: Int64, deviceRoleId: Int64, deviceRoleName: String, deviceTypeId: Int64, deviceTypeModel: String, rackId: Int64?, rackName: String?, rackPosition: Float?) {
+        self.id = id
         self.created = nil
         self.lastUpdated = Date.distantPast
         self.name = name

@@ -40,7 +40,12 @@ final class TenantGroup {
     init(id: Int64) {
         self.id = id
     }
-    
+    public init (_ properties: TenantGroupProperties){
+        self.id = properties.id
+        self.name = properties.name
+        self.created = properties.created
+        self.lastUpdated = properties.lastUpdated
+    }
 }
 
 /// API For TenantGroup
