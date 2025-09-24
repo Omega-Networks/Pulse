@@ -39,32 +39,34 @@ struct PowerSenseToolbarButton: View {
     @State private var showingDashboard = false
 
     var body: some View {
+        Group {
 #if os(macOS)
-        Button(action: {
-            openWindow(id: "PowerSense")
-        }) {
-            Image(systemName: powerSenseIcon)
-                .foregroundStyle(powerSenseColor)
-                .help("Open PowerSense Dashboard")
-        }
-        .disabled(!isPowerSenseConfigured)
+            Button(action: {
+                openWindow(id: "PowerSense")
+            }) {
+                Image(systemName: powerSenseIcon)
+                    .foregroundStyle(powerSenseColor)
+                    .help("Open PowerSense Dashboard")
+            }
+            .disabled(!isPowerSenseConfigured)
 #else
-        Button(action: {
-            showingDashboard = true
-        }) {
-            Image(systemName: powerSenseIcon)
-                .foregroundStyle(powerSenseColor)
-        }
-        .disabled(!isPowerSenseConfigured)
-        .sheet(isPresented: $showingDashboard) {
-            PowerSenseDashboardView.integrated(modelContext: modelContext)
-        }
+            Button(action: {
+                showingDashboard = true
+            }) {
+                Image(systemName: powerSenseIcon)
+                    .foregroundStyle(powerSenseColor)
+            }
+            .disabled(!isPowerSenseConfigured)
+            .sheet(isPresented: $showingDashboard) {
+                PowerSenseDashboardView.integrated(modelContext: modelContext)
+            }
 #endif
+        }
         .task {
             await loadPowerSenseStatus()
         }
         .onChange(of: isPowerSenseEnabled) { _, _ in
-            Task { @MainActor in
+            Task {
                 await loadPowerSenseStatus()
             }
         }

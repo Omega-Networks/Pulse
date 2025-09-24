@@ -74,12 +74,10 @@ struct PowerSenseDashboardView: View {
 
                         Button("Clear Data", role: .destructive) {
                             Task {
-                                await dataService.clearAllData()
+                                await dataService.clearAllPowerSenseData()
                             }
                         }
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
                 }
             }
         }
@@ -148,7 +146,9 @@ extension PowerSenseDashboardView {
     /// Check if PowerSense should be available in the main app
     static func shouldBeAvailable(modelContext: ModelContext) async -> Bool {
         let config = await Configuration.shared
-        return await config.isPowerSenseEnabled() && await config.isPowerSenseConfigured()
+        let isEnabled = await config.isPowerSenseEnabled()
+        let isConfigured = await config.isPowerSenseConfigured()
+        return isEnabled && isConfigured
     }
 }
 

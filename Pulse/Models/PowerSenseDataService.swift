@@ -26,22 +26,46 @@
 import Foundation
 import SwiftData
 import OSLog
+import Combine
 
 /// Simple service for PowerSense data ingestion and SwiftData mapping
 /// Focus: Basic data fetching and storage without complex UI bindings
 @MainActor
-final class PowerSenseDataService {
+final class PowerSenseDataService: ObservableObject {
 
     private let logger = Logger(subsystem: "powersense", category: "dataService")
     private let modelContext: ModelContext
 
-    // MARK: - Simple State
-    private var isCurrentlySyncing = false
+    // MARK: - Published State for UI
+    @Published private(set) var isCurrentlySyncing = false
+    @Published private(set) var deviceCount: Int = 0
+    @Published private(set) var eventCount: Int = 0
+    @Published private(set) var lastSyncTime: Date?
+    @Published private(set) var syncStatus: SyncStatus = .idle
+    @Published private(set) var isEnabled: Bool = false
+
+    enum SyncStatus {
+        case idle, syncing, completed, failed
+
+        var displayName: String {
+            switch self {
+            case .idle: return "Ready"
+            case .syncing: return "Syncing"
+            case .completed: return "Completed"
+            case .failed: return "Failed"
+            }
+        }
+    }
 
     // MARK: - Initialization
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         logger.debug("PowerSenseDataService initialized")
+
+        // Initialize UI state
+        Task {
+            await updateUIState()
+        }
     }
 
     // MARK: - Basic Data Sync
@@ -500,6 +524,57 @@ final class PowerSenseDataService {
         } catch {
             logger.error("PowerSense test failed: \(error)")
             return (false, "Test failed: \(error.localizedDescription)", 0, 0)
+        }
+    }
+
+    // MARK: - UI Interface Methods
+
+    /// Update UI state from current data
+    private func updateUIState() async {
+        let config = await Configuration.shared
+        self.isEnabled = await config.isPowerSenseEnabled()
+
+        let counts = try? await getDataCounts()
+        self.deviceCount = counts?.deviceCount ?? 0
+        self.eventCount = counts?.eventCount ?? 0
+    }
+
+    /// Perform sync for UI
+    func performSync() async {
+        syncStatus = .syncing
+        do {
+            let (deviceCount, eventCount) = try await syncPowerSenseData()
+            self.deviceCount = deviceCount
+            self.eventCount = eventCount
+            self.lastSyncTime = Date()
+            self.syncStatus = .completed
+        } catch {
+            logger.error("Sync failed: \(error)")
+            self.syncStatus = .failed
+        }
+    }
+
+    /// Enable PowerSense
+    func enable() async {
+        let config = await Configuration.shared
+        await config.setPowerSenseEnabled(true)
+        await updateUIState()
+    }
+
+    /// Disable PowerSense
+    func disable() async {
+        let config = await Configuration.shared
+        await config.setPowerSenseEnabled(false)
+        await updateUIState()
+    }
+
+    /// Clear all data and update UI
+    func clearAllPowerSenseData() async {
+        do {
+            try await clearAllData()
+            await updateUIState()
+        } catch {
+            logger.error("Clear data failed: \(error)")
         }
     }
 }

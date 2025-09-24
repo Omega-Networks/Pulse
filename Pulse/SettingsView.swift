@@ -645,7 +645,7 @@ struct SettingsView: View {
                 for event in activeEvents.prefix(5) {
                     testResults += "• Event \(event.eventId): \(event.eventDescription ?? "Unknown")\n"
                     if let device = event.device {
-                        testResults += "  Device: \(device.name) (ID: \(device.deviceId))\n"
+                        testResults += "  Device: \(device.name ?? "Unnamed") (ID: \(device.deviceId))\n"
                     }
                 }
                 if activeEvents.count > 5 {

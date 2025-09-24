@@ -27,7 +27,7 @@ import SwiftUI
 import MapKit
 import SwiftData
 import CoreLocation
-//import simd
+import OSLog
 
 struct MapView: View {
     @Environment(\.openWindow) var openWindow
@@ -37,6 +37,15 @@ struct MapView: View {
     // PowerSense data for basic stats
     @Query private var powerSenseEvents: [PowerSenseEvent]
     @Query private var powerSenseDevices: [PowerSenseDevice]
+
+    // PowerSense polygon overlay system
+    @State private var heatMapViewModel: HeatMapViewModel?
+
+    // TEST ONLY: Device circle rendering (easily removable)
+    @State private var showTestDeviceCircles = false // Set to false to disable
+
+    // Debug logging
+    private let logger = Logger(subsystem: "pulse", category: "mapView")
 
     // Computed property for events related to devices
     private var eventsRelatedToDevices: [PowerSenseEvent] {
@@ -130,81 +139,164 @@ struct MapView: View {
     #endif
     
     var body: some View {
-        ZStack (alignment: .topTrailing) {
-            MapReader { reader  in
-                Map(position: $cameraPosition) {
-                    // Site annotations
-                    ForEach(sites) { site in
-                        Annotation(site.name, coordinate: site.coordinate) {
-                            AnnotationView(
-                                site: site,
-                                selectedSite: $selectedSite
-                            )
-                        }
-                    }
-
-                    // PowerSense device annotations (simple circles)
-                    if showPowerSenseOverlay {
-                        ForEach(offlinePowerSenseDevices, id: \.deviceId) { device in
-                            if device.latitude != 0.0 && device.longitude != 0.0 {
-                                Annotation(device.name ?? device.deviceId,
-                                         coordinate: CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude)) {
-                                    PowerSenseDeviceCircle(device: device)
-                                }
-                            }
-                        }
-                    }
-                }
-                .onTapGesture(perform: { screenCoord in
-                    Task {
-                        if let tapLocation = reader.convert(screenCoord, from: .local) {
-                            sharedLocations.tapLocation = tapLocation
-                            
-                            let address = await getAddress(coordinate: tapLocation)
-                            if let address = address {
-                                sharedLocations.tapAddress = address
-                            }
-                        }
-                    }
-                })
-                .mapControlVisibility(.visible)
-                .mapStyle(
-                    mapStyle == .standard ?
-                        .standard(elevation: .realistic, emphasis: .automatic, pointsOfInterest: .excludingAll) :
-                        .imagery(elevation: .realistic)
-                )
-                .mapControls {
-                    MapCompass()
-                    MapScaleView()
-                    MapPitchToggle()
-                    #if os(macOS)
-                    MapPitchSlider()
-                    MapZoomStepper()
-                    #endif
+        mainMapView
+            .onAppear {
+                logger.info("🏁 MapView onAppear - PowerSense overlay enabled: \(showPowerSenseOverlay)")
+                // Only initialize if PowerSense overlay is actually enabled
+                if showPowerSenseOverlay {
+                    initializePowerSenseViewModel()
+                } else {
+                    logger.info("⏭️ Skipping PowerSense initialization - overlay disabled")
                 }
             }
-            
-            //MARK: Overlay of buttons on top of map view
-#if os(iOS)
-            buttonOverlays
-#endif
-
-            // PowerSense statistics overlay (simple)
-            if showPowerSenseOverlay {
-                VStack {
-                    HStack {
-                        PowerSenseMapStatsBadge(
-                            deviceCount: powerSenseDevices.count,
-                            eventCount: powerSenseEvents.count,
-                            eventsWithDevicesCount: eventsRelatedToDevices.count,
-                            offlineDeviceCount: offlinePowerSenseDevices.count,
-                            onlineDeviceCount: onlinePowerSenseDevices.count
-                        )
-                        Spacer()
-                    }
-                    Spacer()
+            .onChange(of: powerSenseDevices) { _, _ in
+                if showPowerSenseOverlay {
+                    logger.debug("🔄 PowerSense devices changed - handling data change")
+                    handlePowerSenseDataChange()
+                } else {
+                    logger.debug("⏭️ PowerSense devices changed but overlay disabled - ignoring")
                 }
-                .padding()
+            }
+            .onChange(of: powerSenseEvents) { _, _ in
+                if showPowerSenseOverlay {
+                    logger.debug("🔄 PowerSense events changed - handling data change")
+                    handlePowerSenseDataChange()
+                } else {
+                    logger.debug("⏭️ PowerSense events changed but overlay disabled - ignoring")
+                }
+            }
+            .onChange(of: showPowerSenseOverlay) { _, newValue in
+                if newValue {
+                    logger.info("🟢 PowerSense overlay enabled in MapView")
+                    initializePowerSenseViewModel()
+                } else {
+                    logger.info("🔴 PowerSense overlay disabled in MapView")
+                }
+            }
+    }
+
+    // MARK: - Main Map View
+
+    private var mainMapView: some View {
+        ZStack(alignment: .topTrailing) {
+            mapReaderContent
+            overlayContent
+        }
+    }
+
+    private var mapReaderContent: some View {
+        MapReader { reader in
+            mapContent
+                .onTapGesture(perform: { screenCoord in
+                    handleMapTap(reader: reader, screenCoord: screenCoord)
+                })
+                .mapControlVisibility(.visible)
+                .mapStyle(currentMapStyle)
+                .mapControls {
+                    mapControlsContent
+                }
+        }
+    }
+
+    private var mapContent: some View {
+        Map(position: $cameraPosition) {
+            siteAnnotations
+            powerSensePolygons
+            testDeviceCircles
+        }
+    }
+
+    @MapContentBuilder
+    private var siteAnnotations: some MapContent {
+        ForEach(sites) { site in
+            Annotation(site.name, coordinate: site.coordinate) {
+                AnnotationView(
+                    site: site,
+                    selectedSite: $selectedSite
+                )
+            }
+        }
+    }
+
+    @MapContentBuilder
+    private var powerSensePolygons: some MapContent {
+        if showPowerSenseOverlay, let viewModel = heatMapViewModel {
+            ForEach(viewModel.outagePolygons, id: \.id) { polygon in
+                MapPolygon(coordinates: polygon.coordinates)
+                    .foregroundStyle(polygonForegroundStyle(for: polygon))
+                    .tag(polygon.id)
+            }
+        }
+    }
+
+    // TEST ONLY: Individual device circles for debugging (easily removable)
+    @MapContentBuilder
+    private var testDeviceCircles: some MapContent {
+        if showPowerSenseOverlay && showTestDeviceCircles {
+            ForEach(offlinePowerSenseDevices, id: \.deviceId) { device in
+                MapCircle(center: CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude), radius: 50)
+                    .foregroundStyle(testDeviceColor(for: device).opacity(0.6))
+                    .stroke(testDeviceColor(for: device), lineWidth: 2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var mapControlsContent: some View {
+        MapCompass()
+        MapScaleView()
+        MapPitchToggle()
+        #if os(macOS)
+        MapPitchSlider()
+        MapZoomStepper()
+        #endif
+    }
+
+    private var currentMapStyle: _MapKit_SwiftUI.MapStyle {
+        mapStyle == .standard ?
+            .standard(elevation: .realistic, emphasis: .automatic, pointsOfInterest: .excludingAll) :
+            .imagery(elevation: .realistic)
+    }
+
+    @ViewBuilder
+    private var overlayContent: some View {
+        #if os(iOS)
+        buttonOverlays
+        #endif
+
+        if showPowerSenseOverlay {
+            powerSenseStatsOverlay
+        }
+    }
+
+    private var powerSenseStatsOverlay: some View {
+        VStack {
+            HStack {
+                PowerSenseMapStatsBadge(
+                    deviceCount: powerSenseDevices.count,
+                    eventCount: powerSenseEvents.count,
+                    eventsWithDevicesCount: eventsRelatedToDevices.count,
+                    offlineDeviceCount: offlinePowerSenseDevices.count,
+                    onlineDeviceCount: onlinePowerSenseDevices.count
+                )
+                Spacer()
+            }
+            Spacer()
+        }
+        .padding()
+    }
+
+    // MARK: - Helper Methods
+
+    private func handleMapTap(reader: MapProxy, screenCoord: CGPoint) {
+        Task {
+            if let tapLocation = reader.convert(screenCoord, from: .local) {
+                sharedLocations.tapLocation = tapLocation
+
+                let address = await getAddress(coordinate: tapLocation)
+                if let address = address {
+                    sharedLocations.tapAddress = address
+                }
             }
         }
     }
@@ -240,6 +332,7 @@ struct MapView: View {
     }
     
     func getAddress(coordinate: CLLocationCoordinate2D) async -> String? {
+        // TODO: Replace CLGeocoder with MKReverseGeocodingRequest (deprecated in macOS 26.0)
         let geocoder = CLGeocoder()
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         
@@ -279,6 +372,66 @@ struct MapView: View {
         default: // More than 10 minutes
             return .red
         }
+    }
+
+    // MARK: - PowerSense Polygon Styling
+
+    /// Simplified gradient with 4-stop gradient for MapKit compatibility (Phase 1 fix)
+    private func polygonForegroundStyle(for polygon: OutagePolygon) -> some ShapeStyle {
+        let opacities = polygon.simplifiedGradientOpacities
+
+        let colors = opacities.map { opacity in
+            polygon.confidenceColor.opacity(opacity)
+        }
+
+        return RadialGradient(
+            colors: colors,
+            center: .center,
+            startRadius: 0,
+            endRadius: 120 // Reduced from 250 for better MapKit rendering
+        )
+    }
+
+    // TEST ONLY: Device status color helper (easily removable)
+    private func testDeviceColor(for device: PowerSenseDevice) -> Color {
+        switch device.isOffline {
+        case true: return .red      // Device is offline/down
+        case false: return .green   // Device is online/up
+        case nil: return .blue      // Status unknown
+        }
+    }
+
+    // MARK: - View Model Management
+
+    /// Initialize PowerSense heat map view model with debugging
+    private func initializePowerSenseViewModel() {
+        guard heatMapViewModel == nil else {
+            logger.debug("🔄 HeatMapViewModel already initialized - skipping")
+            return
+        }
+
+        logger.info("🔧 Initializing PowerSense HeatMapViewModel for MapView integration")
+        logger.info("📊 Context: PowerSense overlay enabled: \(showPowerSenseOverlay)")
+        logger.info("📊 Data available: \(powerSenseDevices.count) devices, \(powerSenseEvents.count) events")
+
+        // Check if we should actually initialize
+        if !showPowerSenseOverlay {
+            logger.warning("⚠️ PowerSense overlay is DISABLED but initializePowerSenseViewModel was called!")
+        }
+
+        heatMapViewModel = HeatMapViewModel(modelContext: modelContext)
+
+        logger.info("📊 PowerSense overlay system ready")
+    }
+
+    /// Handle PowerSense data changes with debugging
+    private func handlePowerSenseDataChange() {
+        guard let viewModel = heatMapViewModel else { return }
+
+        logger.debug("🔄 PowerSense data changed - refreshing polygons")
+        logger.debug("📊 Current data: \(powerSenseDevices.count) devices, \(offlinePowerSenseDevices.count) offline")
+
+        viewModel.refreshPolygons()
     }
 }
 
@@ -400,3 +553,4 @@ extension CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: -38.831985, longitude: 175.870069)
     }
 }
+

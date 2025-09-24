@@ -48,23 +48,27 @@ struct PowerSenseOverviewView: View {
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
-                if isLoading {
-                    ProgressView("Loading PowerSense data...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let errorMessage = errorMessage {
-                    ContentUnavailableView(
-                        "PowerSense Error",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(errorMessage)
-                    )
-                } else if !dataService.isEnabled {
-                    ContentUnavailableView(
-                        "PowerSense Disabled",
-                        systemImage: "power",
-                        description: Text("Enable PowerSense in Settings to view outage data")
-                    )
-                } else {
+            if isLoading {
+                ProgressView("Loading PowerSense data...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .navigationTitle("PowerSense")
+            } else if let errorMessage = errorMessage {
+                ContentUnavailableView(
+                    "PowerSense Error",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
+                .navigationTitle("PowerSense")
+            } else if !dataService.isEnabled {
+                ContentUnavailableView(
+                    "PowerSense Disabled",
+                    systemImage: "power",
+                    description: Text("Enable PowerSense in Settings to view outage data")
+                )
+                .navigationTitle("PowerSense")
+            } else {
+                TabView {
+                    // Overview Tab
                     ScrollView {
                         VStack(spacing: 20) {
                             // System Status Overview
@@ -87,21 +91,30 @@ struct PowerSenseOverviewView: View {
                         }
                         .padding()
                     }
-                }
-            }
-            .navigationTitle("PowerSense Overview")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Refresh") {
-                        Task {
-                            await refreshData()
-                        }
+                    .navigationTitle("PowerSense Overview")
+                    .tabItem {
+                        Label("Overview", systemImage: "chart.bar.fill")
                     }
-                    .disabled(isLoading)
+
+                    // Map Tab
+                    OutageMapView(modelContext: modelContext)
+                        .tabItem {
+                            Label("Outage Map", systemImage: "map.fill")
+                        }
                 }
-            }
-            .task {
-                await refreshData()
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Refresh") {
+                            Task {
+                                await refreshData()
+                            }
+                        }
+                        .disabled(isLoading)
+                    }
+                }
+                .task {
+                    await refreshData()
+                }
             }
         }
     }
@@ -236,7 +249,7 @@ struct PowerSenseOverviewView: View {
             }
         }
         .padding(12)
-        .background(Color(.secondarySystemBackground))
+        .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
