@@ -57,9 +57,6 @@ final class PowerSenseDevice {
     /// Device longitude (stored with reduced precision for privacy)
     var longitude: Double = 0.0
 
-    /// Location accuracy/confidence level
-    var locationAccuracy: Double?
-
     // MARK: - Infrastructure Identifiers
 
     /// Telecom Location Code (TLC)
@@ -340,4 +337,15 @@ extension PowerSenseDevice {
     static func filterWithPowerData(_ devices: [PowerSenseDevice]) -> [PowerSenseDevice] {
         return devices.filter { $0.hasPowerStatusData }
     }
+}
+
+// MARK: - SpatialDevice Protocol Conformance
+
+extension PowerSenseDevice: SpatialDevice {
+    // PowerSenseDevice already implements all required SpatialDevice properties:
+    // - deviceId: String ✓
+    // - latitude: Double ✓
+    // - longitude: Double ✓
+    // - isOffline: Bool? ✓
+    // No additional implementation needed
 }

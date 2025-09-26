@@ -158,7 +158,7 @@ struct PulseApp: App {
             }
         }
 
-        // PowerSense window - uncomment when PowerSenseDashboardView is added to project
+        // PowerSense window - disabled for spatial clustering testing
         // WindowGroup("PowerSense", id: "PowerSense") {
         //     if showContentView {
         //         PowerSenseDashboardView(modelContext: modelContainer.mainContext)

@@ -86,6 +86,22 @@ extension ContentView {
         }
 
         ToolbarItem() {
+            Button("Test Spatial Clustering") {
+                Task {
+                    await testSpatialClustering()
+                }
+            }
+            .help("Run spatial clustering tests")
+        }
+
+        ToolbarItem() {
+            Button("View Clustering") {
+                showSpatialClusteringView = true
+            }
+            .help("Open spatial clustering visualization")
+        }
+
+        ToolbarItem() {
             // PowerSense overlay toggle
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.3)) {

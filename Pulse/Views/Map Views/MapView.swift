@@ -202,7 +202,6 @@ struct MapView: View {
         Map(position: $cameraPosition) {
             siteAnnotations
             powerSensePolygons
-            testDeviceCircles
         }
     }
 
@@ -228,19 +227,6 @@ struct MapView: View {
             }
         }
     }
-
-    // TEST ONLY: Individual device circles for debugging (easily removable)
-    @MapContentBuilder
-    private var testDeviceCircles: some MapContent {
-        if showPowerSenseOverlay && showTestDeviceCircles {
-            ForEach(offlinePowerSenseDevices, id: \.deviceId) { device in
-                MapCircle(center: CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude), radius: 50)
-                    .foregroundStyle(testDeviceColor(for: device).opacity(0.6))
-                    .stroke(testDeviceColor(for: device), lineWidth: 2)
-            }
-        }
-    }
-
     @ViewBuilder
     private var mapControlsContent: some View {
         MapCompass()
