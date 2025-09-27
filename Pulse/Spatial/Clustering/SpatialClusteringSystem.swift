@@ -53,7 +53,7 @@ public struct DeviceCluster: Identifiable {
     public let confidenceRating: Double    // 0.0 to 1.0 (offline devices / total devices in cluster area)
     public let totalDevicesInArea: Int     // Total devices considered for this cluster
     
-    public enum ClusterSeverity {
+    public enum ClusterSeverity: Sendable {
         case minor      // 3-9 devices
         case moderate   // 10-49 devices
         case major      // 50-199 devices
@@ -122,7 +122,7 @@ public struct DeviceCluster: Identifiable {
     }
 }
 
-public struct BoundingBox {
+public struct BoundingBox: Sendable {
     public let minX, maxX, minY, maxY: Double
     public let projectionSystem: ProjectionSystem
 

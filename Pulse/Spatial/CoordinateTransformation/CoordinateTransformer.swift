@@ -28,7 +28,7 @@ public import CoreLocation
 // MARK: - Public Types
 
 /// Projected coordinate in meters
-public struct ProjectedCoordinate {
+public struct ProjectedCoordinate: Sendable {
     public let x: Double  // Easting
     public let y: Double  // Northing
     public let system: ProjectionSystem
@@ -60,7 +60,7 @@ public struct ProjectedCoordinate {
 }
 
 /// Supported projection systems
-public enum ProjectionSystem: Equatable, Hashable {
+public enum ProjectionSystem: Equatable, Hashable, Sendable {
     case nztm2000        // New Zealand Transverse Mercator (EPSG:2193)
     case webMercator     // Web Mercator (EPSG:3857) - Global
     case utm(zone: Int)  // UTM zones for high accuracy regional use

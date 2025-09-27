@@ -157,6 +157,7 @@ extension ContentView {
      
      This function sets up a repeating timer that executes `monitorZabbixUpdate` every 60 seconds to check for and respond to Zabbix update statuses.
      */
+    // TODO: This does not work
     func monitorZabbixUpdate() {
         if let existingProvider = syncProvider.first {
             let lastUpdate = existingProvider.lastZabbixUpdate ?? Date ()
@@ -166,7 +167,7 @@ extension ContentView {
                 dispatchNotification()
                 existingProvider.userNotifiedZabbix = true
             } else if lastUpdate < fiveMinutesAgo && existingProvider.userNotifiedZabbix == true {
-                print("Zabbix data out of date but user notified. Doing nothing.")
+//                print("Zabbix data out of date but user notified. Doing nothing.")
             } else {
                 existingProvider.userNotifiedZabbix = false
                 UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["ZabbixUpdateNotification"])
