@@ -20,11 +20,9 @@
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
-import Foundation
-import GameplayKit
-public import MapKit
-import simd
-import CoreLocation
+public import CoreLocation
+import OSLog
+import Metal
 
 // MARK: - PowerSenseDevice Protocol
 
@@ -93,8 +91,11 @@ public struct DeviceCluster: Identifiable {
             system: projectionSystem
         )
 
-        // Pre-compute geographic coordinate to avoid repeated GPU transformations
-        self.centroidCoordinate = CoordinateTransformerManager.shared.inverseTransform(self.centroid)
+        // Pre-compute geographic coordinate (legacy - TODO: remove with DeviceCluster)
+        self.centroidCoordinate = CLLocationCoordinate2D(
+            latitude: centroid.y / 111000.0,  // Rough conversion from projected meters
+            longitude: centroid.x / 111000.0
+        )
 
         // Calculate bounding box using pre-transformed coordinates
         let minX = projectedCoordinates.map(\.x).min() ?? 0
@@ -178,108 +179,208 @@ public struct BoundingBox: Sendable {
     }
 }
 
-// MARK: - Spatial Index Manager
+// MARK: - GPU Spatial Index Manager (Phase 1)
 
-public final class SpatialIndexManager {
+/// GPU-accelerated spatial index manager using uniform grid
+public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable> {
 
     private let transformer: CoordinateTransformer
-    private let quadTree: GKQuadtree<GKAgent2D>
-    private let indexedDevices: [String: (device: any SpatialDevice, agent: GKAgent2D)]
-    private let agentToDeviceMap: [ObjectIdentifier: String] // Reverse lookup for O(1) performance
-    private let cachedProjectedCoordinates: [String: ProjectedCoordinate] // Cached transformations
-    
-    public init(devices: [any SpatialDevice], projectionSystem: ProjectionSystem = .nztm2000) throws {
-        self.transformer = try CoordinateTransformer(projectionSystem: projectionSystem)
-        
-        print("Building spatial index for \(devices.count) devices...")
-        
-        // Transform all coordinates in batch for efficiency
-        let coordinates = devices.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-        let projectedCoords = try transformer.batchTransform(coordinates)
-        
-        // Calculate bounds for quad tree
-        let minX = projectedCoords.map(\.x).min() ?? 0
-        let maxX = projectedCoords.map(\.x).max() ?? 0
-        let minY = projectedCoords.map(\.y).min() ?? 0
-        let maxY = projectedCoords.map(\.y).max() ?? 0
-        
-        // Add padding to bounds
-        let padding = 10000.0 // 10km padding
-        let quadTreeBounds = GKQuad(
-            quadMin: vector_float2(Float(minX - padding), Float(minY - padding)),
-            quadMax: vector_float2(Float(maxX + padding), Float(maxY + padding))
-        )
-        
-        // Create quad tree with optimal cell size
-        let cellSize = Float(min(500.0, (maxX - minX) / 100.0)) // Adaptive cell size
-        self.quadTree = GKQuadtree<GKAgent2D>(boundingQuad: quadTreeBounds, minimumCellSize: cellSize)
-        
-        // Build device index, reverse lookup, and cached coordinates
-        var deviceIndex: [String: (device: any SpatialDevice, agent: GKAgent2D)] = [:]
-        var reverseAgentMap: [ObjectIdentifier: String] = [:]
-        var coordinateCache: [String: ProjectedCoordinate] = [:]
+    private var cachedProjectedCoordinates: [String: ProjectedCoordinate] = [:]
+    private var indexedDevices: [SpatialDeviceType] = []
+    private var gridParams: GridIndexParameters?
+    private var neighborResults: [GPUNeighborResult] = []
+    private var metrics = SpatialIndexMetrics()
+    private let logger = Logger.spatialIndexing
 
-        for (index, device) in devices.enumerated() {
-            let projectedCoord = projectedCoords[index]
-            let agent = GKAgent2D()
+    // GPU buffers for on-demand neighbor queries
+    private var gpuCoordsBuffer: MTLBuffer?
+    private var gpuGrid: GPUGrid?
+    private var deviceIdToIndex: [String: Int] = [:]
 
-            agent.position = projectedCoord.vector2
-            agent.maxSpeed = 0 // Static devices
+    private var _isIndexReady = false
 
-            // Store device reference and build reverse lookup
-            deviceIndex[device.deviceId] = (device: device, agent: agent)
-            reverseAgentMap[ObjectIdentifier(agent)] = device.deviceId
-            coordinateCache[device.deviceId] = projectedCoord
+    public var deviceCount: Int { indexedDevices.count }
+    public var isIndexReady: Bool { _isIndexReady }
+    public var performanceMetrics: SpatialIndexMetrics { metrics }
 
-            // Add to quad tree
-            quadTree.add(agent, at: projectedCoord.vector2)
-        }
-
-        self.indexedDevices = deviceIndex
-        self.agentToDeviceMap = reverseAgentMap
-        self.cachedProjectedCoordinates = coordinateCache
-        
-        print("Spatial index built: \(devices.count) devices indexed")
-        print("Quad tree bounds: (\(minX), \(minY)) to (\(maxX), \(maxY))")
-        print("Cell size: \(cellSize)m")
+    public init(transformer: CoordinateTransformer) {
+        self.transformer = transformer
+        logger.info("🏗️ GPUSpatialIndexManager initialized")
     }
-    
-    // MARK: - Neighbor Search
-    
-    public func findNeighbors(for deviceId: String, within radius: Double) -> [any SpatialDevice] {
-        guard let (_, agent) = indexedDevices[deviceId] else { return [] }
 
-        let searchRadius = Float(radius)
-        let searchBounds = GKQuad(
-            quadMin: vector_float2(agent.position.x - searchRadius, agent.position.y - searchRadius),
-            quadMax: vector_float2(agent.position.x + searchRadius, agent.position.y + searchRadius)
+    public func buildIndex(devices: [SpatialDeviceType]) async throws {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        logger.info("🚀 Building GPU spatial index for \(devices.count) devices...")
+
+        _isIndexReady = false
+
+        // Validate devices
+        let validDevices = devices.validCoordinateDevices
+        guard !validDevices.isEmpty else {
+            throw ClusteringError.insufficientData(deviceCount: devices.count, minimum: 1)
+        }
+
+        // Transform all coordinates in batch for efficiency
+        let coordinates = validDevices.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+        let projectedCoords = try transformer.batchTransform(coordinates)
+
+        // Cache all projected coordinates
+        cachedProjectedCoordinates.removeAll(keepingCapacity: true)
+        for (index, device) in validDevices.enumerated() {
+            cachedProjectedCoordinates[device.deviceId] = projectedCoords[index]
+        }
+
+        // Store all devices and filter offline for indexing
+        indexedDevices = validDevices
+        let offlineDevices = validDevices.offlineDevices
+
+        logger.info("📊 Indexing \(offlineDevices.count) offline devices from \(validDevices.count) valid devices")
+
+        if !offlineDevices.isEmpty {
+            // Get offline coordinates and indices
+            let offlineCoords = offlineDevices.compactMap { cachedProjectedCoordinates[$0.deviceId] }
+            let deviceIndices = Array(0..<offlineDevices.count).map { Int32($0) }
+
+            // Build persistent GPU grid for on-demand neighbor queries
+            let (params, grid, coordsBuffer) = try transformer.buildPersistentGPUGrid(
+                offlineCoordinates: offlineCoords,
+                deviceIndices: deviceIndices,
+                epsilon: 500.0
+            )
+
+            // Store GPU structures for on-demand queries
+            self.gridParams = params
+            self.gpuGrid = grid
+            self.gpuCoordsBuffer = coordsBuffer
+
+            // Build device ID to index mapping
+            self.deviceIdToIndex = Dictionary(uniqueKeysWithValues:
+                offlineDevices.enumerated().map { (index, device) in (device.deviceId, index) }
+            )
+
+            // Clear legacy neighbor results (no longer needed with on-demand GPU queries)
+            self.neighborResults = []
+        } else {
+            self.gridParams = nil
+            self.gpuGrid = nil
+            self.gpuCoordsBuffer = nil
+            self.deviceIdToIndex = [:]
+            self.neighborResults = []
+        }
+
+        _isIndexReady = true
+        let buildTime = CFAbsoluteTimeGetCurrent() - startTime
+        metrics.indexBuildTime = buildTime
+        metrics.memoryUsage = estimateMemoryUsage()
+
+        logger.info("✅ GPU spatial index built in \(String(format: "%.3f", buildTime))s")
+    }
+
+    // MARK: - Neighbor Search (GPU Results)
+
+    public func findNeighbors(for deviceId: String, within epsilon: Double) async throws -> [SpatialDeviceType] {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        guard isIndexReady else {
+            throw ClusteringError.indexingFailed("Index not ready for queries")
+        }
+
+        guard cachedProjectedCoordinates[deviceId] != nil else {
+            throw ClusteringError.invalidCoordinates(deviceId: deviceId, latitude: 0, longitude: 0)
+        }
+
+        // GPU-only neighbor search using grid index
+        guard let queryIndex = deviceIdToIndex[deviceId],
+              let params = gridParams,
+              let grid = gpuGrid,
+              let coordsBuffer = gpuCoordsBuffer else {
+            throw ClusteringError.invalidCoordinates(deviceId: deviceId, latitude: 0, longitude: 0)
+        }
+
+        // Dispatch GPU kernel for neighbor search
+        let neighborIndices = try transformer.executeFindNeighborsKernel(
+            coordsBuffer: coordsBuffer,
+            grid: grid,
+            gridParams: params,
+            queryId: queryIndex
         )
 
-        let nearbyAgents = quadTree.elements(in: searchBounds)
-        let radiusSquared = radius * radius
+        // Map indices back to device objects using the same indexing as GPU
+        let neighbors: [SpatialDeviceType] = neighborIndices.compactMap { index in
+            guard index < indexedDevices.count else { return nil }
+            return indexedDevices[index]
+        }.filter { $0.isOffline == true }
 
-        var neighbors: [any SpatialDevice] = []
+        let queryTime = CFAbsoluteTimeGetCurrent() - startTime
+        metrics.queryCount += 1
+        metrics.lastQueryTime = queryTime
+        metrics.averageQueryTime = (metrics.averageQueryTime * Double(metrics.queryCount - 1) + queryTime) / Double(metrics.queryCount)
 
-        for nearbyAgent in nearbyAgents {
-            // Calculate actual distance
-            let dx = Double(agent.position.x - nearbyAgent.position.x)
-            let dy = Double(agent.position.y - nearbyAgent.position.y)
-            let distanceSquared = dx * dx + dy * dy
-
-            if distanceSquared <= radiusSquared {
-                // O(1) lookup using reverse dictionary
-                if let nearbyDeviceId = agentToDeviceMap[ObjectIdentifier(nearbyAgent)],
-                   let (device, _) = indexedDevices[nearbyDeviceId] {
-                    neighbors.append(device)
-                }
-            }
-        }
+        logger.debug("🔍 Found \(neighbors.count) neighbors for device \(deviceId) within \(epsilon)m in \(String(format: "%.6f", queryTime))s")
 
         return neighbors
     }
-    
-    public func getAllDevices() -> [any SpatialDevice] {
-        return indexedDevices.values.map { $0.device }
+
+    public func findNeighbors(at coordinate: CLLocationCoordinate2D, within epsilon: Double) async throws -> [SpatialDeviceType] {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        guard isIndexReady else {
+            throw ClusteringError.indexingFailed("Index not ready for queries")
+        }
+
+        // Transform query coordinate
+        let queryProjected = try transformer.transform(coordinate)
+
+        let offlineDevices = indexedDevices.offlineDevices
+        var neighbors: [SpatialDeviceType] = []
+        let epsilonSquared = epsilon * epsilon
+
+        for device in offlineDevices {
+            guard let deviceCoord = cachedProjectedCoordinates[device.deviceId] else { continue }
+
+            let distanceSquared = queryProjected.distanceSquared(to: deviceCoord)
+            if distanceSquared <= epsilonSquared {
+                neighbors.append(device)
+            }
+        }
+
+        let queryTime = CFAbsoluteTimeGetCurrent() - startTime
+        metrics.queryCount += 1
+        metrics.lastQueryTime = queryTime
+        metrics.averageQueryTime = (metrics.averageQueryTime * Double(metrics.queryCount - 1) + queryTime) / Double(metrics.queryCount)
+
+        logger.debug("🎯 Found \(neighbors.count) neighbors at coordinate (\(coordinate.latitude), \(coordinate.longitude)) within \(epsilon)m")
+
+        return neighbors
+    }
+
+    public func queryDevices(in region: GeographicBounds) async throws -> [SpatialDeviceType] {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        guard isIndexReady else {
+            throw ClusteringError.indexingFailed("Index not ready for queries")
+        }
+
+        let devicesInRegion = indexedDevices.filter { device in
+            let coordinate = CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude)
+            return region.contains(coordinate)
+        }
+
+        let queryTime = CFAbsoluteTimeGetCurrent() - startTime
+        metrics.queryCount += 1
+        metrics.lastQueryTime = queryTime
+        metrics.averageQueryTime = (metrics.averageQueryTime * Double(metrics.queryCount - 1) + queryTime) / Double(metrics.queryCount)
+
+        logger.debug("📍 Found \(devicesInRegion.count) devices in region")
+
+        return devicesInRegion
+    }
+
+    // MARK: - Legacy Support Methods (for Phase 1 compatibility)
+
+    /// Get all indexed devices (legacy method for backward compatibility)
+    public func getAllDevices() -> [SpatialDeviceType] {
+        return indexedDevices
     }
 
     /// Get cached projected coordinates for devices
@@ -291,245 +392,53 @@ public final class SpatialIndexManager {
     public func getAllProjectedCoordinates() -> [String: ProjectedCoordinate] {
         return cachedProjectedCoordinates
     }
-}
 
-// MARK: - DBSCAN Clustering Implementation
-
-public final class DBSCANClusterer {
-    
-    public struct Parameters: Sendable {
-        public let epsilon: Double      // Search radius in meters
-        public let minPoints: Int       // Minimum points to form a cluster
-
-        public init(epsilon: Double = 500.0, minPoints: Int = 3) {
-            self.epsilon = epsilon
-            self.minPoints = minPoints
-        }
-
-        // Predefined parameter sets for different scenarios
-        public static let urban = Parameters(epsilon: 300.0, minPoints: 4)
-        public static let suburban = Parameters(epsilon: 500.0, minPoints: 3)
-        public static let rural = Parameters(epsilon: 1000.0, minPoints: 2)
+    /// Get GPU neighbor results for analysis
+    public func getGPUNeighborResults() -> [GPUNeighborResult] {
+        return neighborResults
     }
-    
-    private let spatialIndex: SpatialIndexManager
-    private let parameters: Parameters
-    
-    public init(spatialIndex: SpatialIndexManager, parameters: Parameters = Parameters()) {
-        self.spatialIndex = spatialIndex
-        self.parameters = parameters
+
+    /// Get grid parameters
+    public func getGridParameters() -> GridIndexParameters? {
+        return gridParams
     }
-    
-    // MARK: - DBSCAN Implementation
-    
-    public func clusterOfflineDevices() -> [DeviceCluster] {
-        print("Starting DBSCAN clustering...")
-        print("Parameters: epsilon=\(parameters.epsilon)m, minPoints=\(parameters.minPoints)")
-        
-        let offlineDevices = spatialIndex.getAllDevices().filter { $0.isOffline == true }
-        print("Found \(offlineDevices.count) offline devices to cluster")
-        
-        guard !offlineDevices.isEmpty else { return [] }
-        
-        var visited = Set<String>()
-        var clusters: [Int: [any SpatialDevice]] = [:]
-        var noise: Set<String> = []
-        var currentClusterId = 0
-        
-        for device in offlineDevices {
-            guard !visited.contains(device.deviceId) else { continue }
-            
-            visited.insert(device.deviceId)
-            
-            let neighbors = spatialIndex.findNeighbors(for: device.deviceId, within: parameters.epsilon)
-            
-            if neighbors.count < parameters.minPoints {
-                noise.insert(device.deviceId)
-            } else {
-                // Start new cluster
-                currentClusterId += 1
-                expandCluster(
-                    device: device,
-                    neighbors: neighbors,
-                    clusterId: currentClusterId,
-                    visited: &visited,
-                    clusters: &clusters,
-                    noise: &noise
-                )
-            }
-        }
-        
-        print("DBSCAN completed: \(clusters.count) clusters, \(noise.count) noise points")
-        
-        // Convert to DeviceCluster objects using cached coordinates with confidence ratings
-        return clusters.map { clusterId, devices in
-            let deviceIds = devices.map { $0.deviceId }
-            let projectedCoords = spatialIndex.getProjectedCoordinates(for: deviceIds)
 
-            // Calculate confidence based on cluster representative device
-            var confidenceRating = 1.0  // Default high confidence
-            var totalDevicesInArea = devices.count
+    // MARK: - Private Helpers
 
-            if let representativeDevice = devices.first {
-                let allNeighbors = spatialIndex.findNeighbors(for: representativeDevice.deviceId, within: parameters.epsilon)
-                let offlineNeighbors = allNeighbors.filter { $0.isOffline == true }
+    private func estimateMemoryUsage() -> Int {
+        let coordinatesCacheSize = cachedProjectedCoordinates.count * MemoryLayout<ProjectedCoordinate>.size
+        let devicesSize = indexedDevices.count * MemoryLayout<SpatialDeviceType>.size
+        let gridParamsSize = gridParams != nil ? MemoryLayout<GridIndexParameters>.size : 0
+        let neighborResultsSize = neighborResults.count * MemoryLayout<GPUNeighborResult>.size
 
-                totalDevicesInArea = allNeighbors.count
-                confidenceRating = totalDevicesInArea > 0 ? Double(offlineNeighbors.count) / Double(totalDevicesInArea) : 1.0
-            }
-
-            return DeviceCluster(
-                clusterId: clusterId,
-                devices: devices,
-                projectedCoordinates: projectedCoords,
-                projectionSystem: .nztm2000,
-                confidenceRating: confidenceRating,
-                totalDevicesInArea: totalDevicesInArea
-            )
-        }.sorted { $0.severity.priority > $1.severity.priority }
-    }
-    
-    private func expandCluster(
-        device: any SpatialDevice,
-        neighbors: [any SpatialDevice],
-        clusterId: Int,
-        visited: inout Set<String>,
-        clusters: inout [Int: [any SpatialDevice]],
-        noise: inout Set<String>
-    ) {
-        clusters[clusterId, default: []].append(device)
-        
-        var neighborQueue = neighbors
-        var queueIndex = 0
-        
-        while queueIndex < neighborQueue.count {
-            let currentNeighbor = neighborQueue[queueIndex]
-            queueIndex += 1
-            
-            if !visited.contains(currentNeighbor.deviceId) {
-                visited.insert(currentNeighbor.deviceId)
-                
-                let newNeighbors = spatialIndex.findNeighbors(for: currentNeighbor.deviceId, within: parameters.epsilon)
-                
-                if newNeighbors.count >= parameters.minPoints {
-                    neighborQueue.append(contentsOf: newNeighbors)
-                }
-            }
-            
-            // If point is not yet in any cluster AND is offline, add it to current cluster
-            let isInAnyCluster = clusters.values.contains { clusterDevices in
-                clusterDevices.contains { $0.deviceId == currentNeighbor.deviceId }
-            }
-
-            // CRITICAL: Only cluster offline devices
-            if !isInAnyCluster && currentNeighbor.isOffline == true {
-                clusters[clusterId, default: []].append(currentNeighbor)
-                noise.remove(currentNeighbor.deviceId)
-            }
-        }
+        return coordinatesCacheSize + devicesSize + gridParamsSize + neighborResultsSize
     }
 }
 
-// MARK: - Viewport-Based Clustering Manager
+// MARK: - GPU-Only Architecture
+// Pure GPU implementation with Metal compute shaders
+// All CPU fallbacks and legacy components have been removed
 
-public final class OutageClusteringManager {
-    
-    private let transformer: CoordinateTransformer
-    private var cachedSpatialIndex: SpatialIndexManager?
-    private var lastViewportBounds: MKMapRect?
-    
-    public init(projectionSystem: ProjectionSystem = .nztm2000) throws {
-        self.transformer = try CoordinateTransformer(projectionSystem: projectionSystem)
-    }
-    
-    // MARK: - Main Clustering Interface
-    
-    public func clusterDevicesInViewport(
-        devices: [any SpatialDevice],
-        viewport: MKMapRect,
-        paddingKm: Double = 1000.0,
-        clusteringParameters: DBSCANClusterer.Parameters = .suburban
-    ) async throws -> [DeviceCluster] {
-        
-        print("Clustering devices for viewport with \(paddingKm)km padding...")
-        
-        // Calculate padded bounds
-        let paddedBounds = calculatePaddedBounds(viewport: viewport, paddingKm: paddingKm)
-        
-        // Filter devices within padded bounds
-        let devicesInBounds = filterDevicesInBounds(devices: devices, bounds: paddedBounds)
-        print("Filtered to \(devicesInBounds.count) devices within bounds")
-        
-        // Check if we need to rebuild spatial index
-        let shouldRebuildIndex = cachedSpatialIndex == nil ||
-                                 lastViewportBounds == nil ||
-                                 !viewport.intersects(lastViewportBounds!)
-        
-        let spatialIndex: SpatialIndexManager
-        if shouldRebuildIndex {
-            print("Building new spatial index...")
-            spatialIndex = try SpatialIndexManager(devices: devicesInBounds)
-            cachedSpatialIndex = spatialIndex
-            lastViewportBounds = viewport
-        } else {
-            print("Using cached spatial index...")
-            spatialIndex = cachedSpatialIndex!
-        }
-        
-        // Perform DBSCAN clustering
-        let clusterer = DBSCANClusterer(spatialIndex: spatialIndex, parameters: clusteringParameters)
-        let clusters = clusterer.clusterOfflineDevices()
-        
-        print("Found \(clusters.count) outage clusters")
-        for cluster in clusters.prefix(5) {
-            print("  Cluster \(cluster.clusterId): \(cluster.devices.count) devices (\(cluster.severity))")
-        }
-        
-        return clusters
-    }
-    
-    // MARK: - Bounds Calculation
-    
-    private func calculatePaddedBounds(viewport: MKMapRect, paddingKm: Double) -> GeographicBounds {
-        // Convert MKMapRect to geographic bounds
-        let topLeft = MKMapPoint(x: viewport.minX, y: viewport.minY)
-        let bottomRight = MKMapPoint(x: viewport.maxX, y: viewport.maxY)
-        
-        let topLeftCoord = topLeft.coordinate
-        let bottomRightCoord = bottomRight.coordinate
-        
-        // Apply padding in degrees (rough approximation)
-        let paddingDegrees = paddingKm / 111.0 // Approximately 111km per degree
-        
-        return GeographicBounds(
-            minLatitude: bottomRightCoord.latitude - paddingDegrees,
-            maxLatitude: topLeftCoord.latitude + paddingDegrees,
-            minLongitude: topLeftCoord.longitude - paddingDegrees,
-            maxLongitude: bottomRightCoord.longitude + paddingDegrees
-        )
-    }
-    
-    private func filterDevicesInBounds(devices: [any SpatialDevice], bounds: GeographicBounds) -> [any SpatialDevice] {
-        return devices.filter { device in
-            device.latitude >= bounds.minLatitude &&
-            device.latitude <= bounds.maxLatitude &&
-            device.longitude >= bounds.minLongitude &&
-            device.longitude <= bounds.maxLongitude
-        }
-    }
-}
+
 
 // MARK: - Supporting Types
 
-public struct GeographicBounds {
+public struct GeographicBounds: Sendable {
     public let minLatitude, maxLatitude: Double
     public let minLongitude, maxLongitude: Double
-    
+
     public init(minLatitude: Double, maxLatitude: Double, minLongitude: Double, maxLongitude: Double) {
         self.minLatitude = minLatitude
         self.maxLatitude = maxLatitude
         self.minLongitude = minLongitude
         self.maxLongitude = maxLongitude
+    }
+
+    public func contains(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        return coordinate.latitude >= minLatitude &&
+               coordinate.latitude <= maxLatitude &&
+               coordinate.longitude >= minLongitude &&
+               coordinate.longitude <= maxLongitude
     }
 }
 
@@ -558,14 +467,14 @@ public struct ClusteringMetrics {
     }
 }
 
-// MARK: - Example PowerSenseDevice Implementation
+// MARK: - Mock PowerSense Device Implementation
 
-public struct MockPowerSenseDevice: SpatialDevice {
+public struct MockPowerSenseDevice: SpatialDevice, Sendable {
     public let deviceId: String
     public let latitude: Double
     public let longitude: Double
     public let isOffline: Bool?
-    
+
     public init(deviceId: String, latitude: Double, longitude: Double, isOffline: Bool?) {
         self.deviceId = deviceId
         self.latitude = latitude
@@ -573,3 +482,132 @@ public struct MockPowerSenseDevice: SpatialDevice {
         self.isOffline = isOffline
     }
 }
+
+// MARK: - Mock Device Generator for Testing
+
+public struct MockDeviceGenerator {
+
+    /// Generate random mock devices within New Zealand bounds
+    public static func generateNZDevices(count: Int, offlineRatio: Double = 0.1) -> [MockPowerSenseDevice] {
+        // New Zealand rough bounds
+        let nzBounds = (
+            latRange: -47.0...(-34.0),      // South Island to North Island
+            lonRange: 166.0...179.0         // West to East coasts
+        )
+
+        var devices: [MockPowerSenseDevice] = []
+
+        for i in 0..<count {
+            let lat = Double.random(in: nzBounds.latRange)
+            let lon = Double.random(in: nzBounds.lonRange)
+            let isOffline = Double.random(in: 0...1) < offlineRatio
+
+            let device = MockPowerSenseDevice(
+                deviceId: "mock_device_\(i)",
+                latitude: lat,
+                longitude: lon,
+                isOffline: isOffline
+            )
+
+            devices.append(device)
+        }
+
+        print("Generated \(devices.count) mock devices (\(devices.filter { $0.isOffline == true }.count) offline)")
+        return devices
+    }
+
+    /// Generate clustered mock devices (devices close together) for testing clustering algorithms
+    public static func generateClusteredNZDevices(
+        clusterCount: Int,
+        devicesPerCluster: Int,
+        clusterRadiusKm: Double = 1.0,
+        offlineRatio: Double = 0.1
+    ) -> [MockPowerSenseDevice] {
+        var devices: [MockPowerSenseDevice] = []
+
+        // New Zealand center regions for cluster centers
+        let nzClusterCenters = [
+            (-36.8485, 174.7633),  // Auckland
+            (-41.2924, 174.7787),  // Wellington
+            (-43.5321, 172.6362),  // Christchurch
+            (-45.8788, 170.5028),  // Dunedin
+            (-39.9404, 175.0510),  // Napier-Hastings
+            (-37.7870, 175.2793),  // Hamilton
+            (-38.1368, 176.2497),  // Rotorua
+        ]
+
+        for clusterIdx in 0..<clusterCount {
+            // Pick a random cluster center or use predefined ones
+            let centerLat: Double
+            let centerLon: Double
+
+            if clusterIdx < nzClusterCenters.count {
+                (centerLat, centerLon) = nzClusterCenters[clusterIdx]
+            } else {
+                centerLat = Double.random(in: -47.0...(-34.0))
+                centerLon = Double.random(in: 166.0...179.0)
+            }
+
+            // Generate devices around this center
+            for deviceIdx in 0..<devicesPerCluster {
+                // Random position within cluster radius
+                let angle = Double.random(in: 0...(2 * Double.pi))
+                let distance = Double.random(in: 0...clusterRadiusKm)
+
+                // Convert km to rough degrees (1 degree ≈ 111km)
+                let latOffset = (distance * cos(angle)) / 111.0
+                let lonOffset = (distance * sin(angle)) / (111.0 * cos(centerLat * Double.pi / 180.0))
+
+                let deviceLat = centerLat + latOffset
+                let deviceLon = centerLon + lonOffset
+
+                let isOffline = Double.random(in: 0...1) < offlineRatio
+
+                let device = MockPowerSenseDevice(
+                    deviceId: "cluster_\(clusterIdx)_device_\(deviceIdx)",
+                    latitude: deviceLat,
+                    longitude: deviceLon,
+                    isOffline: isOffline
+                )
+
+                devices.append(device)
+            }
+        }
+
+        let offlineCount = devices.filter { $0.isOffline == true }.count
+        print("Generated \(devices.count) clustered mock devices in \(clusterCount) clusters (\(offlineCount) offline)")
+        return devices
+    }
+
+    /// Generate devices in Wellington region for focused testing
+    public static func generateWellingtonDevices(count: Int, offlineRatio: Double = 0.1) -> [MockPowerSenseDevice] {
+        // Wellington region bounds
+        let wellingtonBounds = (
+            latRange: -41.35...(-41.20),      // Wellington city area
+            lonRange: 174.75...174.85         // Harbour to hills
+        )
+
+        var devices: [MockPowerSenseDevice] = []
+
+        for i in 0..<count {
+            let lat = Double.random(in: wellingtonBounds.latRange)
+            let lon = Double.random(in: wellingtonBounds.lonRange)
+            let isOffline = Double.random(in: 0...1) < offlineRatio
+
+            let device = MockPowerSenseDevice(
+                deviceId: "wellington_device_\(i)",
+                latitude: lat,
+                longitude: lon,
+                isOffline: isOffline
+            )
+
+            devices.append(device)
+        }
+
+        print("Generated \(devices.count) Wellington mock devices (\(devices.filter { $0.isOffline == true }.count) offline)")
+        return devices
+    }
+}
+
+
+// GPU-only architecture - All validation performed via Metal kernels

@@ -20,7 +20,6 @@
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
-import Foundation
 import Metal
 import simd
 public import CoreLocation
@@ -103,7 +102,7 @@ public struct TransformationMetrics {
 // MARK: - Main Metal GPU CoordinateTransformer
 
 /// GPU-accelerated coordinate transformation using Metal compute shaders
-public final class CoordinateTransformer {
+public final class CoordinateTransformer: Sendable {
     
     // MARK: - Metal Resources
     
@@ -449,8 +448,480 @@ public final class CoordinateTransformer {
         return CLLocationCoordinate2D(latitude: lat * 180.0 / .pi, longitude: lon * 180.0 / .pi)
     }
     
+    // MARK: - GPU Grid Indexing
+
+    /// Build GPU grid index for offline devices and return neighbor counts
+    /// Uses proper grid-based O(N * avg_cell_size) algorithm instead of O(N²) brute force
+    public func buildGPUGridIndex(
+        offlineCoordinates: [ProjectedCoordinate],
+        deviceIndices: [Int32],
+        epsilon: Double = 500.0,
+        useGridOptimization: Bool = true
+    ) throws -> (gridParams: GridIndexParameters, neighborResults: [GPUNeighborResult]) {
+        guard !offlineCoordinates.isEmpty else {
+            let bounds = SpatialBounds(minX: 0, maxX: 1000, minY: 0, maxY: 1000)
+            let params = GridIndexParameters(bounds: bounds, cellSize: 353.0, epsilon: Float(epsilon))
+            return (params, [])
+        }
+
+        print("🔥 Building GPU grid index for \(offlineCoordinates.count) offline devices...")
+
+        // Calculate bounds and grid parameters
+        let bounds = SpatialBounds.from(coordinates: offlineCoordinates)
+        let cellSize = Float(epsilon / sqrt(2.0)) // ~353m for 500m epsilon
+        let gridParams = GridIndexParameters(bounds: bounds, cellSize: cellSize, epsilon: Float(epsilon))
+
+        let gridSize = Int(gridParams.gridWidth * gridParams.gridHeight)
+        print("   Grid dimensions: \(gridParams.gridWidth)x\(gridParams.gridHeight) = \(gridSize) cells")
+        print("   Cell size: \(cellSize)m, Search radius: \(epsilon)m")
+
+        // Choose algorithm based on optimization flag and dataset size
+        let shouldUseGrid = useGridOptimization && offlineCoordinates.count > 1000
+
+        if shouldUseGrid {
+            return try buildGridIndexOptimized(
+                offlineCoordinates: offlineCoordinates,
+                deviceIndices: deviceIndices,
+                gridParams: gridParams,
+                gridSize: gridSize
+            )
+        } else {
+            return try buildGridIndexBruteForce(
+                offlineCoordinates: offlineCoordinates,
+                deviceIndices: deviceIndices,
+                gridParams: gridParams
+            )
+        }
+    }
+
+    /// Optimized grid-based neighbor counting - O(N * avg_cell_size)
+    private func buildGridIndexOptimized(
+        offlineCoordinates: [ProjectedCoordinate],
+        deviceIndices: [Int32],
+        gridParams: GridIndexParameters,
+        gridSize: Int
+    ) throws -> (gridParams: GridIndexParameters, neighborResults: [GPUNeighborResult]) {
+
+        print("   Using optimized grid-based algorithm...")
+
+        // Convert coordinates to GPU format
+        let gpuCoords = offlineCoordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
+
+        // Create coordinate buffer
+        let coordsBuffer = device.makeBuffer(
+            bytes: gpuCoords,
+            length: gpuCoords.count * MemoryLayout<SIMD2<Float>>.size,
+            options: .storageModeShared
+        )!
+
+        let indicesBuffer = device.makeBuffer(
+            bytes: deviceIndices,
+            length: deviceIndices.count * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        )!
+
+        // Create GPU grid structure
+        let grid = try GPUGrid(device: device, gridSize: gridSize, totalPoints: offlineCoordinates.count)
+
+        // Phase 1: Count points per cell
+        try executeGridCountKernel(coordsBuffer: coordsBuffer, grid: grid, gridParams: gridParams, coordinateCount: offlineCoordinates.count)
+
+        // Phase 2: CPU prefix sum to convert counts to offsets
+        let cellCountsPointer = grid.cellCounts.contents().bindMemory(to: Int32.self, capacity: gridSize)
+        let cellOffsetsPointer = grid.cellOffsets.contents().bindMemory(to: Int32.self, capacity: gridSize)
+        let cellPositionsPointer = grid.cellPositions.contents().bindMemory(to: Int32.self, capacity: gridSize)
+
+        var runningSum: Int32 = 0
+        for i in 0..<gridSize {
+            cellOffsetsPointer[i] = runningSum
+            cellPositionsPointer[i] = runningSum  // Copy for atomic positions
+            runningSum += cellCountsPointer[i]
+        }
+
+        // Phase 3: Build point lists per cell
+        try executeGridBuildKernel(coordsBuffer: coordsBuffer, grid: grid, gridParams: gridParams, coordinateCount: offlineCoordinates.count)
+
+        // Phase 4: Count neighbors using grid
+        let resultsBuffer = device.makeBuffer(
+            length: offlineCoordinates.count * MemoryLayout<GPUNeighborResult>.size,
+            options: .storageModeShared
+        )!
+
+        try executeGridNeighborKernel(
+            coordsBuffer: coordsBuffer,
+            indicesBuffer: indicesBuffer,
+            resultsBuffer: resultsBuffer,
+            grid: grid,
+            gridParams: gridParams,
+            coordinateCount: offlineCoordinates.count
+        )
+
+        // Read results
+        let resultsPointer = resultsBuffer.contents().bindMemory(to: GPUNeighborResult.self, capacity: offlineCoordinates.count)
+        let neighborResults = Array(UnsafeBufferPointer(start: resultsPointer, count: offlineCoordinates.count))
+
+        let totalNeighbors = neighborResults.reduce(0) { $0 + Int($1.neighborCount) }
+        let avgCellOccupancy = gridSize > 0 ? Double(offlineCoordinates.count) / Double(gridSize) : 0
+        print("   ✅ Optimized GPU grid index built: \(totalNeighbors) neighbor relationships")
+        print("   Grid efficiency: \(String(format: "%.3f", avgCellOccupancy)) avg points/cell")
+
+        return (gridParams, neighborResults)
+    }
+
+    /// Brute-force neighbor counting - O(N²) fallback for small datasets
+    private func buildGridIndexBruteForce(
+        offlineCoordinates: [ProjectedCoordinate],
+        deviceIndices: [Int32],
+        gridParams: GridIndexParameters
+    ) throws -> (gridParams: GridIndexParameters, neighborResults: [GPUNeighborResult]) {
+
+        print("   Using brute-force algorithm (small dataset)...")
+
+        // Convert coordinates to GPU format
+        let gpuCoords = offlineCoordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
+
+        // Create Metal buffers
+        let coordsBuffer = device.makeBuffer(
+            bytes: gpuCoords,
+            length: gpuCoords.count * MemoryLayout<SIMD2<Float>>.size,
+            options: .storageModeShared
+        )!
+
+        let indicesBuffer = device.makeBuffer(
+            bytes: deviceIndices,
+            length: deviceIndices.count * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        )!
+
+        let resultsBuffer = device.makeBuffer(
+            length: offlineCoordinates.count * MemoryLayout<GPUNeighborResult>.size,
+            options: .storageModeShared
+        )!
+
+        // Execute legacy brute-force kernel
+        try executeGridBuildKernel(
+            coordsBuffer: coordsBuffer,
+            indicesBuffer: indicesBuffer,
+            resultsBuffer: resultsBuffer,
+            gridParams: gridParams,
+            coordinateCount: offlineCoordinates.count
+        )
+
+        // Read results
+        let resultsPointer = resultsBuffer.contents().bindMemory(to: GPUNeighborResult.self, capacity: offlineCoordinates.count)
+        let neighborResults = Array(UnsafeBufferPointer(start: resultsPointer, count: offlineCoordinates.count))
+
+        let totalNeighbors = neighborResults.reduce(0) { $0 + Int($1.neighborCount) }
+        print("   ✅ Brute-force GPU index built: \(totalNeighbors) neighbor relationships")
+
+        return (gridParams, neighborResults)
+    }
+
+    /// Execute the GPU grid build kernel
+    private func executeGridBuildKernel(
+        coordsBuffer: MTLBuffer,
+        indicesBuffer: MTLBuffer,
+        resultsBuffer: MTLBuffer,
+        gridParams: GridIndexParameters,
+        coordinateCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        // Create grid build pipeline if not exists (we'll add this to initialization)
+        let gridPipelineState = try getOrCreateGridPipelineState()
+        computeEncoder.setComputePipelineState(gridPipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)      // Offline coordinates
+        computeEncoder.setBuffer(indicesBuffer, offset: 0, index: 1)     // Device indices
+        computeEncoder.setBuffer(resultsBuffer, offset: 0, index: 2)     // Output results
+
+        // Set grid parameters
+        var params = gridParams
+        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 3)
+
+        // Set total count
+        var totalCount = UInt32(coordinateCount)
+        computeEncoder.setBytes(&totalCount, length: MemoryLayout<UInt32>.size, index: 4)
+
+        // Calculate thread distribution
+        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
+
+        // Dispatch compute shader
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        // Execute synchronously
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        // Check for GPU errors
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Execute grid count kernel (Phase 1 of optimized grid build)
+    private func executeGridCountKernel(
+        coordsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        coordinateCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "gridCountPass")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 1)
+
+        // Set grid parameters
+        var params = gridParams
+        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 2)
+
+        // Dispatch
+        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Execute grid build kernel (Phase 3 of optimized grid build)
+    private func executeGridBuildKernel(
+        coordsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        coordinateCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "gridBuildPass")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.cellPositions, offset: 0, index: 3)
+
+        // Set grid parameters
+        var params = gridParams
+        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 4)
+
+        // Dispatch
+        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Execute grid neighbor counting kernel (Phase 4 of optimized grid build)
+    private func executeGridNeighborKernel(
+        coordsBuffer: MTLBuffer,
+        indicesBuffer: MTLBuffer,
+        resultsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        coordinateCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "countNeighborsGrid")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 3)
+        computeEncoder.setBuffer(resultsBuffer, offset: 0, index: 4)
+        computeEncoder.setBuffer(indicesBuffer, offset: 0, index: 5)
+
+        // Set grid parameters
+        var params = gridParams
+        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 6)
+
+        // Set total count
+        var totalCount = UInt32(coordinateCount)
+        computeEncoder.setBytes(&totalCount, length: MemoryLayout<UInt32>.size, index: 7)
+
+        // Dispatch
+        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Execute on-demand neighbor search kernel
+    internal func executeFindNeighborsKernel(
+        coordsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        queryId: Int
+    ) throws -> [Int] {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "findNeighborsKernel")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Create output buffers
+        let maxNeighbors = 1000 // Safety limit
+        let outputNeighborsBuffer = device.makeBuffer(
+            length: maxNeighbors * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        )!
+
+        let outputCountBuffer = device.makeBuffer(
+            length: MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        )!
+
+        // Initialize count to 0
+        let countPointer = outputCountBuffer.contents().bindMemory(to: Int32.self, capacity: 1)
+        countPointer[0] = 0
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 3)
+        computeEncoder.setBuffer(outputNeighborsBuffer, offset: 0, index: 4)
+        computeEncoder.setBuffer(outputCountBuffer, offset: 0, index: 5)
+
+        // Set grid parameters
+        var params = gridParams
+        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 6)
+
+        // Set query ID
+        var queryIdVar = Int32(queryId)
+        computeEncoder.setBytes(&queryIdVar, length: MemoryLayout<Int32>.size, index: 7)
+
+        // Dispatch with 9 threads (3x3 neighboring cells)
+        let threadsPerGrid = MTLSize(width: 9, height: 1, depth: 1)
+        let threadsPerThreadgroup = MTLSize(width: 9, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+
+        // Read results
+        let neighborCount = Int(countPointer[0])
+        guard neighborCount > 0 else { return [] }
+
+        let neighborsPointer = outputNeighborsBuffer.contents().bindMemory(to: Int32.self, capacity: maxNeighbors)
+        let neighborIds = Array(UnsafeBufferPointer(start: neighborsPointer, count: min(neighborCount, maxNeighbors)))
+
+        return neighborIds.map { Int($0) }
+    }
+
+    /// Build persistent GPU grid for on-demand neighbor queries
+    internal func buildPersistentGPUGrid(
+        offlineCoordinates: [ProjectedCoordinate],
+        deviceIndices: [Int32],
+        epsilon: Double = 500.0
+    ) throws -> (gridParams: GridIndexParameters, grid: GPUGrid, coordsBuffer: MTLBuffer) {
+        guard !offlineCoordinates.isEmpty else {
+            throw MetalTransformError.insufficientData("No coordinates provided")
+        }
+
+        // Calculate bounds and grid parameters
+        let bounds = SpatialBounds.from(coordinates: offlineCoordinates)
+        let cellSize = Float(epsilon / sqrt(2.0)) // ~353m for 500m epsilon
+        let gridParams = GridIndexParameters(bounds: bounds, cellSize: cellSize, epsilon: Float(epsilon))
+
+        let gridSize = Int(gridParams.gridWidth * gridParams.gridHeight)
+
+        // Create coordinate buffer
+        let gpuCoords = offlineCoordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
+        let coordsBuffer = device.makeBuffer(
+            bytes: gpuCoords,
+            length: gpuCoords.count * MemoryLayout<SIMD2<Float>>.size,
+            options: .storageModeShared
+        )!
+
+        // Create GPU grid
+        let grid = try GPUGrid(device: device, gridSize: gridSize, totalPoints: offlineCoordinates.count)
+
+        // Build the grid using existing optimized algorithm
+        try executeGridCountKernel(coordsBuffer: coordsBuffer, grid: grid, gridParams: gridParams, coordinateCount: offlineCoordinates.count)
+
+        // CPU prefix sum to convert counts to offsets
+        let cellCountsPointer = grid.cellCounts.contents().bindMemory(to: Int32.self, capacity: gridSize)
+        let cellOffsetsPointer = grid.cellOffsets.contents().bindMemory(to: Int32.self, capacity: gridSize)
+
+        var runningSum: Int32 = 0
+        for i in 0..<gridSize {
+            cellOffsetsPointer[i] = runningSum
+            runningSum += cellCountsPointer[i]
+            cellCountsPointer[i] = 0 // Reset for build phase
+        }
+
+        // Build point lists per cell
+        try executeGridBuildKernel(coordsBuffer: coordsBuffer, grid: grid, gridParams: gridParams, coordinateCount: offlineCoordinates.count)
+
+        return (gridParams, grid, coordsBuffer)
+    }
+
+    /// Get or create pipeline state for a specific function (with caching)
+    private func getOrCreatePipelineState(functionName: String) throws -> MTLComputePipelineState {
+        guard let function = library.makeFunction(name: functionName) else {
+            throw MetalTransformError.functionNotFound(functionName)
+        }
+
+        do {
+            return try device.makeComputePipelineState(function: function)
+        } catch {
+            throw MetalTransformError.pipelineStateCreationFailed(error.localizedDescription)
+        }
+    }
+
+    /// Get or create the grid build pipeline state (legacy - kept for compatibility)
+    private func getOrCreateGridPipelineState() throws -> MTLComputePipelineState {
+        return try getOrCreatePipelineState(functionName: "buildGridIndex")
+    }
+
     // MARK: - Static Factory Methods
-    
+
     private static func createMetalLibrary(device: MTLDevice) throws -> MTLLibrary {
         let source = MetalShaderLibrary.coordinateTransformShaders
         
@@ -493,6 +964,100 @@ private struct UTMParameters {
     let centralMeridian: Float
     let falseEasting: Float
     let scaleFactor: Float
+}
+
+// MARK: - GPU Grid Index Structures
+
+/// GPU grid indexing parameters
+public struct GridIndexParameters {
+    let minX: Float
+    let minY: Float
+    let cellSize: Float
+    let gridWidth: Int32
+    let gridHeight: Int32
+    let epsilon: Float  // Search radius for neighbor queries
+
+    public init(bounds: SpatialBounds, cellSize: Float, epsilon: Float) {
+        self.minX = Float(bounds.minX)
+        self.minY = Float(bounds.minY)
+        self.cellSize = cellSize
+        self.gridWidth = Int32(ceil((bounds.maxX - bounds.minX) / Double(cellSize)))
+        self.gridHeight = Int32(ceil((bounds.maxY - bounds.minY) / Double(cellSize)))
+        self.epsilon = epsilon
+    }
+}
+
+/// GPU grid index result for a single device
+public struct GPUNeighborResult {
+    let deviceIndex: Int32  // Index of the device
+    let neighborCount: Int32  // Number of neighbors found
+    let cellX: Int32
+    let cellY: Int32
+}
+
+/// Spatial bounds helper structure
+public struct SpatialBounds {
+    public let minX, maxX, minY, maxY: Double
+
+    public init(minX: Double, maxX: Double, minY: Double, maxY: Double) {
+        self.minX = minX
+        self.maxX = maxX
+        self.minY = minY
+        self.maxY = maxY
+    }
+
+    /// Create bounds from projected coordinates with padding
+    public static func from(coordinates: [ProjectedCoordinate], padding: Double = 1000.0) -> SpatialBounds {
+        guard !coordinates.isEmpty else {
+            return SpatialBounds(minX: 0, maxX: 1000, minY: 0, maxY: 1000)
+        }
+
+        let minX = coordinates.map(\.x).min()! - padding
+        let maxX = coordinates.map(\.x).max()! + padding
+        let minY = coordinates.map(\.y).min()! - padding
+        let maxY = coordinates.map(\.y).max()! + padding
+
+        return SpatialBounds(minX: minX, maxX: maxX, minY: minY, maxY: maxY)
+    }
+}
+
+/// GPU grid structure for efficient neighbor search
+public struct GPUGrid {
+    let cellOffsets: MTLBuffer    // Int[gridWidth*gridHeight] - start index in pointIndices
+    let cellCounts: MTLBuffer     // Int[gridWidth*gridHeight] - num points in cell
+    let pointIndices: MTLBuffer   // Int[totalOffline] - sorted device indices by cell
+    let cellPositions: MTLBuffer  // Int[gridWidth*gridHeight] - temp for atomic append
+
+    init(device: MTLDevice, gridSize: Int, totalPoints: Int) throws {
+        guard let cellOffsetsBuffer = device.makeBuffer(
+            length: gridSize * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        ),
+        let cellCountsBuffer = device.makeBuffer(
+            length: gridSize * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        ),
+        let pointIndicesBuffer = device.makeBuffer(
+            length: totalPoints * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        ),
+        let cellPositionsBuffer = device.makeBuffer(
+            length: gridSize * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        ) else {
+            throw MetalTransformError.gpuExecutionFailed("Failed to create GPU grid buffers")
+        }
+
+        self.cellOffsets = cellOffsetsBuffer
+        self.cellCounts = cellCountsBuffer
+        self.pointIndices = pointIndicesBuffer
+        self.cellPositions = cellPositionsBuffer
+
+        // Initialize buffers to zero
+        memset(cellCountsBuffer.contents(), 0, gridSize * MemoryLayout<Int32>.size)
+        memset(cellOffsetsBuffer.contents(), 0, gridSize * MemoryLayout<Int32>.size)
+        memset(cellPositionsBuffer.contents(), 0, gridSize * MemoryLayout<Int32>.size)
+    }
 }
 
 // MARK: - Metal Shader Library
@@ -577,22 +1142,240 @@ kernel void utm_transform(
     uint id [[thread_position_in_grid]]
 ) {
     float2 latLon = input[id];
-    
+
     const float degToRad = 0x1.1df46ap-6f;
     float lat = latLon.x * degToRad;
     float lon = latLon.y * degToRad;
     float centralMeridianRad = params.centralMeridian * degToRad;
-    
+
     // UTM transformation
     float deltaLon = lon - centralMeridianRad;
     float cosLat = cos(lat);
-    
+
     float falseNorthing = (latLon.x < 0.0f) ? 10000000.0f : 0.0f;
-    
+
     float x = params.falseEasting + (params.scaleFactor * 6378137.0f * deltaLon * cosLat);
     float y = falseNorthing + (params.scaleFactor * 6378137.0f * lat);
-    
+
     output[id] = float2(x, y);
+}
+
+// MARK: - GPU Grid Index Kernel
+
+struct GridIndexParameters {
+    float minX;
+    float minY;
+    float cellSize;
+    int gridWidth;
+    int gridHeight;
+    float epsilon;
+};
+
+struct GPUNeighborResult {
+    int deviceIndex;    // Index of the device
+    int neighborCount;  // Number of neighbors found
+    int cellX;
+    int cellY;
+};
+
+// GPU Grid Pass 1: Count points per cell (atomic)
+kernel void gridCountPass(
+    const device float2* coords [[buffer(0)]],
+    device atomic_int* cellCounts [[buffer(1)]],
+    constant GridIndexParameters& params [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float2 p = coords[id];
+    int cx = int((p.x - params.minX) / params.cellSize);
+    int cy = int((p.y - params.minY) / params.cellSize);
+    cx = max(0, min(cx, params.gridWidth - 1));
+    cy = max(0, min(cy, params.gridHeight - 1));
+
+    int cellIdx = cy * params.gridWidth + cx;
+    atomic_fetch_add_explicit(&cellCounts[cellIdx], 1, memory_order_relaxed);
+}
+
+// GPU Grid Pass 2: Build sorted point lists per cell
+kernel void gridBuildPass(
+    const device float2* coords [[buffer(0)]],
+    device int* pointIndices [[buffer(1)]],
+    const device int* cellOffsets [[buffer(2)]],
+    device atomic_int* cellPositions [[buffer(3)]],
+    constant GridIndexParameters& params [[buffer(4)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float2 p = coords[id];
+    int cx = int((p.x - params.minX) / params.cellSize);
+    int cy = int((p.y - params.minY) / params.cellSize);
+    cx = max(0, min(cx, params.gridWidth - 1));
+    cy = max(0, min(cy, params.gridHeight - 1));
+
+    int cellIdx = cy * params.gridWidth + cx;
+    int pos = atomic_fetch_add_explicit(&cellPositions[cellIdx], 1, memory_order_relaxed);
+    pointIndices[cellOffsets[cellIdx] + pos] = int(id);
+}
+
+// GPU Grid-Based Neighbor Counting - O(N * avg_cell_size) instead of O(N²)
+kernel void countNeighborsGrid(
+    const device float2* coords [[buffer(0)]],
+    const device int* pointIndices [[buffer(1)]],
+    const device int* cellOffsets [[buffer(2)]],
+    const device int* cellCounts [[buffer(3)]],
+    device GPUNeighborResult* results [[buffer(4)]],
+    const device int* deviceIndices [[buffer(5)]],
+    constant GridIndexParameters& params [[buffer(6)]],
+    constant uint& totalCount [[buffer(7)]],
+    uint id [[thread_position_in_grid]]
+) {
+    if (id >= totalCount) return;
+
+    float2 coord = coords[id];
+    int deviceIndex = deviceIndices[id];
+
+    // Calculate grid cell for this device
+    int cx = int((coord.x - params.minX) / params.cellSize);
+    int cy = int((coord.y - params.minY) / params.cellSize);
+    cx = max(0, min(cx, params.gridWidth - 1));
+    cy = max(0, min(cy, params.gridHeight - 1));
+
+    int neighborCount = 0;
+    float epsilonSquared = params.epsilon * params.epsilon;
+
+    // Scan 3x3 neighborhood of cells (9-cell scan for epsilon coverage)
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int nx = cx + dx;
+            int ny = cy + dy;
+            if (nx < 0 || nx >= params.gridWidth || ny < 0 || ny >= params.gridHeight) continue;
+
+            int cellIdx = ny * params.gridWidth + nx;
+            int start = cellOffsets[cellIdx];
+            int count = cellCounts[cellIdx];
+
+            // Check all points in this neighboring cell
+            for (int j = 0; j < count; j++) {
+                int otherId = pointIndices[start + j];
+                if (otherId == int(id)) continue; // Skip self
+
+                float2 other = coords[otherId];
+                float dx_dist = coord.x - other.x;
+                float dy_dist = coord.y - other.y;
+                float distanceSquared = dx_dist * dx_dist + dy_dist * dy_dist;
+
+                if (distanceSquared <= epsilonSquared) {
+                    neighborCount++;
+                }
+            }
+        }
+    }
+
+    // Store results
+    results[id].deviceIndex = deviceIndex;
+    results[id].neighborCount = neighborCount;
+    results[id].cellX = cx;
+    results[id].cellY = cy;
+}
+
+// Legacy brute-force kernel (kept for fallback/testing)
+kernel void buildGridIndex(
+    const device float2* offlineCoords [[buffer(0)]],
+    const device int* deviceIndices [[buffer(1)]],
+    device GPUNeighborResult* results [[buffer(2)]],
+    constant GridIndexParameters& params [[buffer(3)]],
+    constant uint& totalCount [[buffer(4)]],
+    uint id [[thread_position_in_grid]]
+) {
+    if (id >= totalCount) return;
+
+    float2 coord = offlineCoords[id];
+    int deviceIndex = deviceIndices[id];
+
+    // Calculate grid cell for this device
+    int cellX = int((coord.x - params.minX) / params.cellSize);
+    int cellY = int((coord.y - params.minY) / params.cellSize);
+
+    // Clamp to grid bounds
+    cellX = max(0, min(cellX, params.gridWidth - 1));
+    cellY = max(0, min(cellY, params.gridHeight - 1));
+
+    // Count neighbors within epsilon radius (brute force for fallback)
+    int neighborCount = 0;
+    float epsilonSquared = params.epsilon * params.epsilon;
+
+    // Check all other devices
+    for (uint j = 0; j < totalCount; j++) {
+        if (j == id) continue;
+
+        float2 otherCoord = offlineCoords[j];
+        float dx = coord.x - otherCoord.x;
+        float dy = coord.y - otherCoord.y;
+        float distanceSquared = dx * dx + dy * dy;
+
+        if (distanceSquared <= epsilonSquared) {
+            neighborCount++;
+        }
+    }
+
+    // Store results
+    results[id].deviceIndex = deviceIndex;
+    results[id].neighborCount = neighborCount;
+    results[id].cellX = cellX;
+    results[id].cellY = cellY;
+}
+
+// On-demand neighbor search kernel for findNeighbors queries
+kernel void findNeighborsKernel(
+    const device float2* coords [[buffer(0)]],
+    const device int* pointIndices [[buffer(1)]],
+    const device int* cellOffsets [[buffer(2)]],
+    const device int* cellCounts [[buffer(3)]],
+    device int* outputNeighbors [[buffer(4)]],
+    device atomic_int* outputCount [[buffer(5)]],
+    constant GridIndexParameters& params [[buffer(6)]],
+    constant int& queryId [[buffer(7)]],
+    uint tid [[thread_position_in_grid]]
+) {
+    // Each thread processes one neighboring cell (9 threads total for 3x3 grid)
+    if (tid >= 9) return;
+
+    // Get query coordinate and compute its grid cell
+    float2 queryCoord = coords[queryId];
+    int cx = int((queryCoord.x - params.minX) / params.cellSize);
+    int cy = int((queryCoord.y - params.minY) / params.cellSize);
+
+    // Calculate which neighboring cell this thread processes
+    int dx = int(tid % 3) - 1; // -1, 0, 1
+    int dy = int(tid / 3) - 1; // -1, 0, 1
+    int nx = cx + dx;
+    int ny = cy + dy;
+
+    // Check bounds
+    if (nx < 0 || nx >= params.gridWidth || ny < 0 || ny >= params.gridHeight) return;
+
+    // Get cell data
+    int cellIdx = ny * params.gridWidth + nx;
+    int start = cellOffsets[cellIdx];
+    int count = cellCounts[cellIdx];
+
+    float epsilonSquared = params.epsilon * params.epsilon;
+
+    // Check all points in this cell
+    for (int j = 0; j < count; j++) {
+        int otherId = pointIndices[start + j];
+        if (otherId == queryId) continue; // Skip self
+
+        float2 otherCoord = coords[otherId];
+        float2 diff = queryCoord - otherCoord;
+        float distanceSquared = dot(diff, diff);
+
+        if (distanceSquared <= epsilonSquared) {
+            // Atomically add to output
+            int pos = atomic_fetch_add_explicit(outputCount, 1, memory_order_relaxed);
+            if (pos < 1000) { // Safety limit - adjust based on expected max neighbors
+                outputNeighbors[pos] = otherId;
+            }
+        }
+    }
 }
 """
 }
@@ -607,6 +1390,7 @@ public enum MetalTransformError: Error, LocalizedError {
     case functionNotFound(String)
     case pipelineStateCreationFailed(String)
     case gpuExecutionFailed(String)
+    case insufficientData(String)
     
     public var errorDescription: String? {
         switch self {
@@ -624,6 +1408,8 @@ public enum MetalTransformError: Error, LocalizedError {
             return "Failed to create Metal compute pipeline: \(details)"
         case .gpuExecutionFailed(let details):
             return "GPU execution failed: \(details)"
+        case .insufficientData(let details):
+            return "Insufficient data for GPU processing: \(details)"
         }
     }
 }

@@ -85,14 +85,6 @@ extension ContentView {
             EventCounter()
         }
 
-        ToolbarItem() {
-            Button("Test Spatial Clustering") {
-                Task {
-                    await testSpatialClustering()
-                }
-            }
-            .help("Run spatial clustering tests")
-        }
 
         ToolbarItem() {
             Button("View Clustering") {

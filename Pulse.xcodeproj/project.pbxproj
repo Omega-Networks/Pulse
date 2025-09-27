@@ -123,6 +123,8 @@
 		C97DEDB52E816E4F002898A7 /* PowerSenseToolbarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 762AEEBA6971484482E4B4C0 /* PowerSenseToolbarButton.swift */; };
 		C97DEDB62E816E4F002898A7 /* PowerSenseOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0BDEEBD6094CC4834A796F /* PowerSenseOverviewView.swift */; };
 		C97DEDBB2E822BF5002898A7 /* MapPolygonDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */; };
+		C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */; };
+		C9951ED02E8815380025C136 /* SpatialClusteringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */; };
 		C9BF5DA22E5B223900FD1AC3 /* PulseAppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */; };
 		C9FCA5172D153E4D00D9E851 /* Event.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9FCA5162D153E4700D9E851 /* Event.swift */; };
 /* End PBXBuildFile section */
@@ -265,6 +267,8 @@
 		C97C4F3B2ACB7270009F3795 /* PreviewSampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSampleData.swift; sourceTree = "<group>"; };
 		C97C4F3D2ACB7CEC009F3795 /* PreviewTrait.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewTrait.swift; sourceTree = "<group>"; };
 		C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapPolygonDemoView.swift; sourceTree = "<group>"; };
+		C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringActor.swift; sourceTree = "<group>"; };
+		C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringTests.swift; sourceTree = "<group>"; };
 		C9A2B32B2ACAA19D00C0BE08 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PulseAppIcon.icon; sourceTree = "<group>"; };
 		C9FCA5162D153E4700D9E851 /* Event.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Event.swift; sourceTree = "<group>"; };
@@ -415,6 +419,7 @@
 			children = (
 				C926516F2E71AFA2004564DD /* Development.xcconfig */,
 				C96191602ACA552F000198DB /* Pulse */,
+				C9951ECF2E8815380025C136 /* PulseTests */,
 				C961917E2ACA5530000198DB /* PulseUITests */,
 				C961915F2ACA552F000198DB /* Products */,
 			);
@@ -603,12 +608,21 @@
 			path = "Table Views";
 			sourceTree = "<group>";
 		};
+		C9951ECF2E8815380025C136 /* PulseTests */ = {
+			isa = PBXGroup;
+			children = (
+				C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */,
+			);
+			path = PulseTests;
+			sourceTree = "<group>";
+		};
 		C9EF519B2D3083F400D49DEA /* SwiftData Models */ = {
 			isa = PBXGroup;
 			children = (
 				C97136DA2E7966A90017CBF7 /* PowerSenseDevice.swift */,
 				C97136DB2E7966A90017CBF7 /* PowerSenseEvent.swift */,
 				C96191AD2ACA578C000198DB /* Region.swift */,
+				C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */,
 				C96191A12ACA5721000198DB /* Device.swift */,
 				C96191A32ACA572E000198DB /* DeviceRole.swift */,
 				C96191A52ACA573A000198DB /* DeviceType.swift */,
@@ -859,6 +873,7 @@
 				6FEC64EA5C3A4EBAA15D652B /* OutageMapView.swift in Sources */,
 				41B467B02C3C984C00B23BA8 /* DeviceBuilder.swift in Sources */,
 				41934BAF2BC8C552007DB27A /* MemberCell.swift in Sources */,
+				C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */,
 				C97136DF2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift in Sources */,
 				41763EDB2CB720DE005DEEFF /* StaticDevice.swift in Sources */,
 				C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */,
@@ -879,6 +894,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C9951ED02E8815380025C136 /* SpatialClusteringTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1172,8 +1188,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_IDENTIFIER).Tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1194,8 +1210,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_IDENTIFIER).Tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1215,8 +1231,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_IDENTIFIER).UITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1236,8 +1252,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_IDENTIFIER).UITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";

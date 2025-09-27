@@ -50,7 +50,7 @@ final class PowerSenseDevice {
     var lastUpdated: Date = Date()
 
     // MARK: - Location Properties (Privacy Sensitive)
-
+    // TODO: Need to be re-worked. Reduced precision... this whole class is excessive to be honest.
     /// Device latitude (stored with reduced precision for privacy)
     var latitude: Double = 0.0
 
@@ -342,10 +342,11 @@ extension PowerSenseDevice {
 // MARK: - SpatialDevice Protocol Conformance
 
 extension PowerSenseDevice: SpatialDevice {
-    // PowerSenseDevice already implements all required SpatialDevice properties:
-    // - deviceId: String ✓
-    // - latitude: Double ✓
-    // - longitude: Double ✓
-    // - isOffline: Bool? ✓
-    // No additional implementation needed
+    /// Convert to Sendable DTO for GPU processing
+    public func toDTO() -> PowerSenseDeviceDTO {
+        return PowerSenseDeviceDTO(from: self)
+    }
 }
+
+
+
