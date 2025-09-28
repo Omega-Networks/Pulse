@@ -4,8 +4,13 @@
 //
 //  Copyright © 2025–present Omega Networks Limited.
 //
-//  High-performance DBSCAN clustering algorithm implementation using GKQuadtree
-//  for O(n log n) neighbor queries instead of O(n²) brute force approach
+//  LEGACY CPU-BASED IMPLEMENTATION - MARKED FOR REMOVAL IN PHASE 2
+//
+//  This file uses GameplayKit's GKQuadtree for CPU-based spatial indexing
+//  and will be replaced with GPU-only DBSCAN implementation in Phase 2.
+//
+//  Phase 2 TODO: Remove this file and replace with GPU-only DBSCAN clustering
+//  using Metal compute shaders for full Apple Silicon optimization.
 //
 
 import Foundation

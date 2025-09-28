@@ -71,7 +71,9 @@ public enum ProjectionSystem: Equatable, Hashable, Sendable {
         case .webMercator:
             return 3857
         case .utm(let zone):
-            return 32600 + zone // Northern hemisphere UTM zones
+            // UTM EPSG codes: Northern hemisphere 32600+zone, Southern hemisphere 32700+zone
+            // TODO: Determine hemisphere from coordinates for proper EPSG code
+            return 32600 + zone // Assuming northern hemisphere (add hemisphere detection later)
         }
     }
 }
@@ -241,10 +243,11 @@ public final class CoordinateTransformer: Sendable {
         return (results, metrics)
     }
     
-    /// Batch inverse transform (GPU-accelerated)
+    /// Batch inverse transform (CPU fallback - scheduled for Phase 2 GPU implementation)
+    /// TODO Phase 2: Implement GPU inverse transformation for full GPU-only architecture
     public func batchInverseTransform(_ projectedCoordinates: [ProjectedCoordinate]) -> [CLLocationCoordinate2D] {
-        // TODO: Implement GPU inverse transformation if needed
-        // For now, falls back to CPU implementation
+        // Phase 1 cleanup note: Keeping CPU fallback until Phase 2 GPU-only DBSCAN implementation
+        // This will be replaced with GPU inverse transform kernels in Phase 2
         return projectedCoordinates.map { inverseTransformCPU($0) }
     }
     
@@ -526,7 +529,7 @@ public final class CoordinateTransformer: Sendable {
         // Phase 1: Count points per cell
         try executeGridCountKernel(coordsBuffer: coordsBuffer, grid: grid, gridParams: gridParams, coordinateCount: offlineCoordinates.count)
 
-        // Phase 2: CPU prefix sum to convert counts to offsets
+        // Phase 2: CPU prefix sum to convert counts to offsets (GPU prefix scan in Phase 2)
         let cellCountsPointer = grid.cellCounts.contents().bindMemory(to: Int32.self, capacity: gridSize)
         let cellOffsetsPointer = grid.cellOffsets.contents().bindMemory(to: Int32.self, capacity: gridSize)
         let cellPositionsPointer = grid.cellPositions.contents().bindMemory(to: Int32.self, capacity: gridSize)
@@ -700,6 +703,44 @@ public final class CoordinateTransformer: Sendable {
         }
     }
 
+    /// Execute grid count kernel with offline flags (Phase 1 of flag-aware grid build)
+    private func executeGridCountKernelWithFlags(
+        coordsBuffer: MTLBuffer,
+        offlineFlagsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        coordinateCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "gridCountPassWithFlags")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 2)
+
+        // Set grid parameters
+        var params = gridParams
+        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 3)
+
+        // Dispatch
+        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
     /// Execute grid build kernel (Phase 3 of optimized grid build)
     private func executeGridBuildKernel(
         coordsBuffer: MTLBuffer,
@@ -724,6 +765,92 @@ public final class CoordinateTransformer: Sendable {
         // Set grid parameters
         var params = gridParams
         computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 4)
+
+        // Dispatch
+        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Execute grid build kernel with offline flags (Phase 3 of flag-aware grid build)
+    private func executeGridBuildKernelWithFlags(
+        coordsBuffer: MTLBuffer,
+        offlineFlagsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        coordinateCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "gridBuildPassWithFlags")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 3)
+        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 4) // Reusing as positions (reset to 0 earlier)
+
+        // Set grid parameters
+        var params = gridParams
+        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 5)
+
+        // Dispatch
+        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    /// CRITICAL FIX: Execute grid build kernel with corrected global indices (Legacy)
+    private func executeGridBuildKernelCorrected(
+        coordsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        coordinateCount: Int,
+        localDeviceIndices: [Int32] // CRITICAL FIX: Local indices for offline-only coords buffer
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        // CRITICAL FIX: Use the provided local indices
+        let localIndicesBuffer = device.makeBuffer(
+            bytes: localDeviceIndices,
+            length: localDeviceIndices.count * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        )!
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "gridBuildPass")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 3) // Reusing as positions (reset to 0 earlier)
+        // Set grid parameters
+        var params = gridParams
+        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 4)
+        computeEncoder.setBuffer(localIndicesBuffer, offset: 0, index: 5) // CRITICAL FIX: Local indices for coords buffer consistency
 
         // Dispatch
         let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
@@ -854,38 +981,62 @@ public final class CoordinateTransformer: Sendable {
         return neighborIds.map { Int($0) }
     }
 
-    /// Build persistent GPU grid for on-demand neighbor queries
+    /// Build persistent GPU grid for on-demand neighbor queries with full coordinate indexing
     internal func buildPersistentGPUGrid(
-        offlineCoordinates: [ProjectedCoordinate],
-        deviceIndices: [Int32],
+        allCoordinates: [ProjectedCoordinate], // ALL device coordinates for full grid coverage
+        offlineFlags: [Bool], // Offline status for each device (same order as allCoordinates)
         epsilon: Double = 500.0
-    ) throws -> (gridParams: GridIndexParameters, grid: GPUGrid, coordsBuffer: MTLBuffer) {
-        guard !offlineCoordinates.isEmpty else {
+    ) throws -> (gridParams: GridIndexParameters, grid: GPUGrid, coordsBuffer: MTLBuffer, offlineFlagsBuffer: MTLBuffer) {
+        guard !allCoordinates.isEmpty else {
             throw MetalTransformError.insufficientData("No coordinates provided")
         }
 
-        // Calculate bounds and grid parameters
-        let bounds = SpatialBounds.from(coordinates: offlineCoordinates)
+        guard allCoordinates.count == offlineFlags.count else {
+            throw MetalTransformError.insufficientData("Coordinates and offline flags count mismatch")
+        }
+
+        print("🔧 GPU Grid Build: Starting with \(allCoordinates.count) total devices...")
+
+        // Calculate bounds and grid parameters from ALL coordinates for full coverage
+        let bounds = SpatialBounds.from(coordinates: allCoordinates)
         let cellSize = Float(epsilon / sqrt(2.0)) // ~353m for 500m epsilon
         let gridParams = GridIndexParameters(bounds: bounds, cellSize: cellSize, epsilon: Float(epsilon))
 
         let gridSize = Int(gridParams.gridWidth * gridParams.gridHeight)
+        print("   Grid dimensions: \(gridParams.gridWidth)x\(gridParams.gridHeight) = \(gridSize) cells")
 
-        // Create coordinate buffer
-        let gpuCoords = offlineCoordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
+        // Create coordinate buffer with ALL device coordinates
+        let gpuCoords = allCoordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
         let coordsBuffer = device.makeBuffer(
             bytes: gpuCoords,
             length: gpuCoords.count * MemoryLayout<SIMD2<Float>>.size,
             options: .storageModeShared
         )!
 
-        // Create GPU grid
-        let grid = try GPUGrid(device: device, gridSize: gridSize, totalPoints: offlineCoordinates.count)
+        // Create offline flags buffer for selective processing
+        let offlineFlagsBuffer = device.makeBuffer(
+            bytes: offlineFlags,
+            length: offlineFlags.count * MemoryLayout<Bool>.size,
+            options: .storageModeShared
+        )!
 
-        // Build the grid using existing optimized algorithm
-        try executeGridCountKernel(coordsBuffer: coordsBuffer, grid: grid, gridParams: gridParams, coordinateCount: offlineCoordinates.count)
+        // Create GPU grid sized for all devices
+        let grid = try GPUGrid(device: device, gridSize: gridSize, totalPoints: allCoordinates.count)
 
-        // CPU prefix sum to convert counts to offsets
+        let gridBuildStart = CFAbsoluteTimeGetCurrent()
+
+        // Phase 1: Count points per cell (with offline filtering)
+        print("   Phase 1: Counting offline points per cell...")
+        try executeGridCountKernelWithFlags(
+            coordsBuffer: coordsBuffer,
+            offlineFlagsBuffer: offlineFlagsBuffer,
+            grid: grid,
+            gridParams: gridParams,
+            coordinateCount: allCoordinates.count
+        )
+
+        // Phase 2: CPU prefix sum to convert counts to offsets (GPU prefix scan in Phase 2)
+        print("   Phase 2: Computing cell offsets...")
         let cellCountsPointer = grid.cellCounts.contents().bindMemory(to: Int32.self, capacity: gridSize)
         let cellOffsetsPointer = grid.cellOffsets.contents().bindMemory(to: Int32.self, capacity: gridSize)
 
@@ -893,13 +1044,23 @@ public final class CoordinateTransformer: Sendable {
         for i in 0..<gridSize {
             cellOffsetsPointer[i] = runningSum
             runningSum += cellCountsPointer[i]
-            cellCountsPointer[i] = 0 // Reset for build phase
+            cellCountsPointer[i] = 0 // Reset for build phase (reused as positions)
         }
 
-        // Build point lists per cell
-        try executeGridBuildKernel(coordsBuffer: coordsBuffer, grid: grid, gridParams: gridParams, coordinateCount: offlineCoordinates.count)
+        // Phase 3: Build point lists with offline filtering
+        print("   Phase 3: Building point indices (offline only)...")
+        try executeGridBuildKernelWithFlags(
+            coordsBuffer: coordsBuffer,
+            offlineFlagsBuffer: offlineFlagsBuffer,
+            grid: grid,
+            gridParams: gridParams,
+            coordinateCount: allCoordinates.count
+        )
 
-        return (gridParams, grid, coordsBuffer)
+        let gridBuildTime = CFAbsoluteTimeGetCurrent() - gridBuildStart
+        print("✅ GPU Grid Build: Completed in \(String(format: "%.3f", gridBuildTime))s")
+
+        return (gridParams, grid, coordsBuffer, offlineFlagsBuffer)
     }
 
     /// Get or create pipeline state for a specific function (with caching)
@@ -1086,7 +1247,7 @@ struct UTMParameters {
     float scaleFactor;
 };
 
-// NZTM Transformation Kernel - Optimized for Apple Silicon
+// NZTM Transformation Kernel
 kernel void nztm_transform(
     const device float2* input [[buffer(0)]],
     device float2* output [[buffer(1)]],
@@ -1195,15 +1356,17 @@ kernel void gridCountPass(
     atomic_fetch_add_explicit(&cellCounts[cellIdx], 1, memory_order_relaxed);
 }
 
-// GPU Grid Pass 2: Build sorted point lists per cell
-kernel void gridBuildPass(
+// GPU Grid Pass 1 with Flags: Count offline points per cell (atomic)
+kernel void gridCountPassWithFlags(
     const device float2* coords [[buffer(0)]],
-    device int* pointIndices [[buffer(1)]],
-    const device int* cellOffsets [[buffer(2)]],
-    device atomic_int* cellPositions [[buffer(3)]],
-    constant GridIndexParameters& params [[buffer(4)]],
+    const device bool* offlineFlags [[buffer(1)]],
+    device atomic_int* cellCounts [[buffer(2)]],
+    constant GridIndexParameters& params [[buffer(3)]],
     uint id [[thread_position_in_grid]]
 ) {
+    // Only process offline devices
+    if (!offlineFlags[id]) return;
+
     float2 p = coords[id];
     int cx = int((p.x - params.minX) / params.cellSize);
     int cy = int((p.y - params.minY) / params.cellSize);
@@ -1211,7 +1374,55 @@ kernel void gridBuildPass(
     cy = max(0, min(cy, params.gridHeight - 1));
 
     int cellIdx = cy * params.gridWidth + cx;
+    atomic_fetch_add_explicit(&cellCounts[cellIdx], 1, memory_order_relaxed);
+}
+
+// GPU Grid Pass 2: Build sorted point lists per cell
+kernel void gridBuildPass(
+    const device float2* coords [[buffer(0)]],
+    device int* pointIndices [[buffer(1)]],
+    const device int* cellOffsets [[buffer(2)]],
+    device atomic_int* cellPositions [[buffer(3)]],
+    constant GridIndexParameters& params [[buffer(4)]],
+    const device int* localIndices [[buffer(5)]], // CRITICAL FIX: Local device indices buffer
+    uint id [[thread_position_in_grid]]
+) {
+    float2 p = coords[id]; // id is local to offline devices (0..<offlineCount)
+    int cx = int((p.x - params.minX) / params.cellSize);
+    int cy = int((p.y - params.minY) / params.cellSize);
+    cx = max(0, min(cx, params.gridWidth - 1));
+    cy = max(0, min(cy, params.gridHeight - 1));
+
+    int cellIdx = cy * params.gridWidth + cx;
     int pos = atomic_fetch_add_explicit(&cellPositions[cellIdx], 1, memory_order_relaxed);
+
+    // CRITICAL FIX: Store the local index (should just be id for offline-only coords)
+    pointIndices[cellOffsets[cellIdx] + pos] = localIndices[id]; // This should just be = int(id)
+}
+
+// GPU Grid Pass 2 with Flags: Build sorted point lists per cell (offline only)
+kernel void gridBuildPassWithFlags(
+    const device float2* coords [[buffer(0)]],
+    const device bool* offlineFlags [[buffer(1)]],
+    device int* pointIndices [[buffer(2)]],
+    const device int* cellOffsets [[buffer(3)]],
+    device atomic_int* cellPositions [[buffer(4)]],
+    constant GridIndexParameters& params [[buffer(5)]],
+    uint id [[thread_position_in_grid]]
+) {
+    // Only process offline devices
+    if (!offlineFlags[id]) return;
+
+    float2 p = coords[id]; // id is global device index
+    int cx = int((p.x - params.minX) / params.cellSize);
+    int cy = int((p.y - params.minY) / params.cellSize);
+    cx = max(0, min(cx, params.gridWidth - 1));
+    cy = max(0, min(cy, params.gridHeight - 1));
+
+    int cellIdx = cy * params.gridWidth + cx;
+    int pos = atomic_fetch_add_explicit(&cellPositions[cellIdx], 1, memory_order_relaxed);
+
+    // Store the global device index for full coordinate buffer compatibility
     pointIndices[cellOffsets[cellIdx] + pos] = int(id);
 }
 

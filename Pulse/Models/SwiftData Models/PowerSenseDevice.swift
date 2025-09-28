@@ -134,14 +134,31 @@ final class PowerSenseDevice {
     // MARK: - Privacy and Aggregation Methods
 
     /// Update grid coordinates based on current location
-    /// Uses 100m x 100m grid cells as specified in requirements
+    /// Uses 10m x 10m grid cells with accurate projected coordinates
     private func updateGridCoordinates() {
-        // Convert lat/lon to grid coordinates (100m cells)
-        // Rough approximation: 1 degree lat ≈ 111km, 1 degree lon ≈ 111km * cos(lat)
-        let gridSize = 0.0009 // Approximately 100m in degrees at Wellington latitude
+        // Use proper coordinate transformation for accurate grid positioning
+        // Grid cells are 10m x 10m in projected coordinates
+        guard latitude != 0.0, longitude != 0.0 else {
+            self.gridX = 0
+            self.gridY = 0
+            return
+        }
 
-        self.gridX = Int(latitude / gridSize)
-        self.gridY = Int(longitude / gridSize)
+        // Transform to NZTM2000 projected coordinates for accurate distance calculations
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        do {
+            let transformer = try CoordinateTransformer(projectionSystem: .nztm2000)
+            let projected = transformer.transform(coordinate)
+
+            // Calculate grid coordinates with 10m cell size
+            let gridCellSize: Double = 10.0 // 10 meter grid cells
+            self.gridX = Int(projected.x / gridCellSize)
+            self.gridY = Int(projected.y / gridCellSize)
+        } catch {
+            // Fallback to center coordinates if transformation fails
+            self.gridX = 0
+            self.gridY = 0
+        }
     }
 
     /// Get CLLocation for mapping/distance calculations

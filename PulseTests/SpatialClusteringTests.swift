@@ -69,7 +69,7 @@ final class SpatialClusteringTests: XCTestCase {
         print("🔍 Testing neighbor search on clustered offline devices...")
 
         // Find a device from cluster 0 (Wellington CBD - should have neighbors)
-        guard let clusterDevice = offlineDevices.first(where: { $0.deviceId.hasPrefix("OUTAGE_0_") }) else {
+        guard let clusterDevice = offlineDevices.first(where: { $0.deviceId.hasPrefix("CLUSTER_0_") }) else {
             XCTFail("No offline device found in cluster 0")
             return
         }
@@ -101,6 +101,65 @@ final class SpatialClusteringTests: XCTestCase {
         }
 
         print("✅ GPU neighbor search test completed successfully!")
+    }
+
+    /// Test grid coordinate accuracy with projected meters
+    func testGridCoordinateAccuracy() async throws {
+        print("📐 Testing grid coordinate accuracy with projected meters...")
+
+        // Use Wellington test coordinates
+        let wellingtonLat = -41.2924
+        let wellingtonLon = 174.7787
+
+        // Create test device with Wellington coordinates
+        let testDevice = MockSpatialDevice(
+            deviceId: "test_grid_accuracy",
+            latitude: wellingtonLat,
+            longitude: wellingtonLon,
+            isOffline: false
+        )
+
+        // Transform to projected coordinates to validate
+        let coordinate = CLLocationCoordinate2D(latitude: wellingtonLat, longitude: wellingtonLon)
+        let projected = transformer.transform(coordinate)
+
+        // Calculate expected grid coordinates (10m cells)
+        let gridCellSize: Double = 10.0
+        let expectedGridX = Int(projected.x / gridCellSize)
+        let expectedGridY = Int(projected.y / gridCellSize)
+
+        print("   Original coordinates: (\(wellingtonLat), \(wellingtonLon))")
+        print("   Projected coordinates: (\(projected.x), \(projected.y))")
+        print("   Expected grid: (\(expectedGridX), \(expectedGridY))")
+
+        // Note: We can't directly test PowerSenseDevice.updateGridCoordinates() as it's private
+        // Instead, we test the calculation logic directly
+        XCTAssertTrue(abs(projected.x) > 1000, "NZTM2000 X coordinate should be substantial")
+        XCTAssertTrue(abs(projected.y) > 1000, "NZTM2000 Y coordinate should be substantial")
+
+        // Test cell size accuracy: devices 10m apart should be in adjacent cells
+        let nearbyLat = wellingtonLat + 0.00009 // ~10m north
+        let nearbyCoordinate = CLLocationCoordinate2D(latitude: nearbyLat, longitude: wellingtonLon)
+        let nearbyProjected = transformer.transform(nearbyCoordinate)
+
+        let nearbyGridX = Int(nearbyProjected.x / gridCellSize)
+        let nearbyGridY = Int(nearbyProjected.y / gridCellSize)
+
+        // Calculate actual distance between projected points
+        let distance = sqrt(pow(nearbyProjected.x - projected.x, 2) + pow(nearbyProjected.y - projected.y, 2))
+
+        print("   Nearby projected: (\(nearbyProjected.x), \(nearbyProjected.y))")
+        print("   Nearby grid: (\(nearbyGridX), \(nearbyGridY))")
+        print("   Actual distance: \(String(format: "%.2f", distance))m")
+
+        // Validate distance is approximately 10m (allowing for some projection error)
+        XCTAssertLessThan(abs(distance - 10.0), 2.0, "10m coordinate offset should result in ~10m projected distance")
+
+        // Grid cells should be different for 10m separation
+        let gridDistance = max(abs(nearbyGridX - expectedGridX), abs(nearbyGridY - expectedGridY))
+        XCTAssertGreaterThan(gridDistance, 0, "Devices 10m apart should be in different grid cells")
+
+        print("   ✅ Grid accuracy test passed!")
     }
 
     // MARK: - Mock Spatial Data Generation

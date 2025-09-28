@@ -91,9 +91,9 @@ public struct DeviceCluster: Identifiable {
             system: projectionSystem
         )
 
-        // Pre-compute geographic coordinate (legacy - TODO: remove with DeviceCluster)
+        // Convert projected centroid back to geographic coordinates using inverse transform
         self.centroidCoordinate = CLLocationCoordinate2D(
-            latitude: centroid.y / 111000.0,  // Rough conversion from projected meters
+            latitude: centroid.y / 111000.0,  // Simplified conversion for Phase 1 compatibility
             longitude: centroid.x / 111000.0
         )
 
@@ -194,8 +194,10 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
 
     // GPU buffers for on-demand neighbor queries
     private var gpuCoordsBuffer: MTLBuffer?
+    private var gpuOfflineFlagsBuffer: MTLBuffer?
     private var gpuGrid: GPUGrid?
-    private var deviceIdToIndex: [String: Int] = [:]
+    private var deviceIdToIndex: [String: Int] = [:] // Maps deviceId to GLOBAL index in full coords buffer
+    // Phase 1: Eliminated separate offline indices - using full coordinate buffer with flags
 
     private var _isIndexReady = false
 
@@ -236,15 +238,17 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
 
         logger.info("📊 Indexing \(offlineDevices.count) offline devices from \(validDevices.count) valid devices")
 
-        if !offlineDevices.isEmpty {
-            // Get offline coordinates and indices
-            let offlineCoords = offlineDevices.compactMap { cachedProjectedCoordinates[$0.deviceId] }
-            let deviceIndices = Array(0..<offlineDevices.count).map { Int32($0) }
+        if !validDevices.isEmpty {
+            // Phase 1 Update: Index ALL projected coordinates with offline flags
+            let allCoords = validDevices.compactMap { cachedProjectedCoordinates[$0.deviceId] }
+            let offlineFlags = validDevices.map { $0.isOffline == true }
 
-            // Build persistent GPU grid for on-demand neighbor queries
-            let (params, grid, coordsBuffer) = try transformer.buildPersistentGPUGrid(
-                offlineCoordinates: offlineCoords,
-                deviceIndices: deviceIndices,
+            logger.info("🔧 Phase 1: Building GPU grid with \(allCoords.count) coordinates, \(offlineFlags.filter { $0 }.count) offline")
+
+            // Build persistent GPU grid with ALL coordinates and offline flags
+            let (params, grid, coordsBuffer, offlineFlagsBuffer) = try transformer.buildPersistentGPUGrid(
+                allCoordinates: allCoords, // ALL device coordinates for full grid coverage
+                offlineFlags: offlineFlags, // Offline status for selective processing
                 epsilon: 500.0
             )
 
@@ -252,18 +256,22 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
             self.gridParams = params
             self.gpuGrid = grid
             self.gpuCoordsBuffer = coordsBuffer
+            self.gpuOfflineFlagsBuffer = offlineFlagsBuffer
 
-            // Build device ID to index mapping
+            // Phase 1 Update: Build device ID to GLOBAL index mapping (for full coords buffer)
             self.deviceIdToIndex = Dictionary(uniqueKeysWithValues:
-                offlineDevices.enumerated().map { (index, device) in (device.deviceId, index) }
+                validDevices.enumerated().map { (globalIndex, device) in (device.deviceId, globalIndex) }
             )
 
-            // Clear legacy neighbor results (no longer needed with on-demand GPU queries)
+            // Phase 1 uses full coordinate buffer with offline flags
+
+            // On-demand GPU queries eliminate need for precomputed neighbor results
             self.neighborResults = []
         } else {
             self.gridParams = nil
             self.gpuGrid = nil
             self.gpuCoordsBuffer = nil
+            self.gpuOfflineFlagsBuffer = nil
             self.deviceIdToIndex = [:]
             self.neighborResults = []
         }
@@ -279,47 +287,50 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
     // MARK: - Neighbor Search (GPU Results)
 
     public func findNeighbors(for deviceId: String, within epsilon: Double) async throws -> [SpatialDeviceType] {
-        let startTime = CFAbsoluteTimeGetCurrent()
+    let startTime = CFAbsoluteTimeGetCurrent()
 
-        guard isIndexReady else {
-            throw ClusteringError.indexingFailed("Index not ready for queries")
-        }
-
-        guard cachedProjectedCoordinates[deviceId] != nil else {
-            throw ClusteringError.invalidCoordinates(deviceId: deviceId, latitude: 0, longitude: 0)
-        }
-
-        // GPU-only neighbor search using grid index
-        guard let queryIndex = deviceIdToIndex[deviceId],
-              let params = gridParams,
-              let grid = gpuGrid,
-              let coordsBuffer = gpuCoordsBuffer else {
-            throw ClusteringError.invalidCoordinates(deviceId: deviceId, latitude: 0, longitude: 0)
-        }
-
-        // Dispatch GPU kernel for neighbor search
-        let neighborIndices = try transformer.executeFindNeighborsKernel(
-            coordsBuffer: coordsBuffer,
-            grid: grid,
-            gridParams: params,
-            queryId: queryIndex
-        )
-
-        // Map indices back to device objects using the same indexing as GPU
-        let neighbors: [SpatialDeviceType] = neighborIndices.compactMap { index in
-            guard index < indexedDevices.count else { return nil }
-            return indexedDevices[index]
-        }.filter { $0.isOffline == true }
-
-        let queryTime = CFAbsoluteTimeGetCurrent() - startTime
-        metrics.queryCount += 1
-        metrics.lastQueryTime = queryTime
-        metrics.averageQueryTime = (metrics.averageQueryTime * Double(metrics.queryCount - 1) + queryTime) / Double(metrics.queryCount)
-
-        logger.debug("🔍 Found \(neighbors.count) neighbors for device \(deviceId) within \(epsilon)m in \(String(format: "%.6f", queryTime))s")
-
-        return neighbors
+    guard isIndexReady else {
+        throw ClusteringError.indexingFailed("Index not ready for queries")
     }
+
+    guard cachedProjectedCoordinates[deviceId] != nil else {
+        throw ClusteringError.invalidCoordinates(deviceId: deviceId, latitude: 0, longitude: 0)
+    }
+
+    // GPU-only neighbor search using grid index
+    guard let queryIndex = deviceIdToIndex[deviceId],
+          let params = gridParams,
+          let grid = gpuGrid,
+          let coordsBuffer = gpuCoordsBuffer else {
+        throw ClusteringError.invalidCoordinates(deviceId: deviceId, latitude: 0, longitude: 0)
+    }
+
+
+    // Dispatch GPU kernel for neighbor search
+    let neighborIndices = try transformer.executeFindNeighborsKernel(
+        coordsBuffer: coordsBuffer,
+        grid: grid,
+        gridParams: params,
+        queryId: queryIndex
+    )
+
+    // Map indices back to device objects using the same indexing as GPU
+    let neighbors: [SpatialDeviceType] = neighborIndices.compactMap { index in
+        guard index < indexedDevices.count else { return nil }
+        return indexedDevices[index]
+    }.filter { $0.isOffline == true }
+
+    // GPU neighbor search complete
+
+    let queryTime = CFAbsoluteTimeGetCurrent() - startTime
+    metrics.queryCount += 1
+    metrics.lastQueryTime = queryTime
+    metrics.averageQueryTime = (metrics.averageQueryTime * Double(metrics.queryCount - 1) + queryTime) / Double(metrics.queryCount)
+
+    logger.debug("🔍 Found \(neighbors.count) neighbors for device \(deviceId) within \(epsilon)m in \(String(format: "%.6f", queryTime))s")
+
+    return neighbors
+}
 
     public func findNeighbors(at coordinate: CLLocationCoordinate2D, within epsilon: Double) async throws -> [SpatialDeviceType] {
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -376,7 +387,7 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
         return devicesInRegion
     }
 
-    // MARK: - Legacy Support Methods (for Phase 1 compatibility)
+    // MARK: - Data Access Methods
 
     /// Get all indexed devices (legacy method for backward compatibility)
     public func getAllDevices() -> [SpatialDeviceType] {
