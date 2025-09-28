@@ -38,9 +38,6 @@ struct MapView: View {
     @Query private var powerSenseEvents: [PowerSenseEvent]
     @Query private var powerSenseDevices: [PowerSenseDevice]
 
-    // PowerSense polygon overlay system
-    @State private var heatMapViewModel: HeatMapViewModel?
-
     // TEST ONLY: Device circle rendering (easily removable)
     @State private var showTestDeviceCircles = false // Set to false to disable
 
@@ -144,33 +141,8 @@ struct MapView: View {
                 logger.info("🏁 MapView onAppear - PowerSense overlay enabled: \(showPowerSenseOverlay)")
                 // Only initialize if PowerSense overlay is actually enabled
                 if showPowerSenseOverlay {
-                    initializePowerSenseViewModel()
                 } else {
                     logger.info("⏭️ Skipping PowerSense initialization - overlay disabled")
-                }
-            }
-            .onChange(of: powerSenseDevices) { _, _ in
-                if showPowerSenseOverlay {
-                    logger.debug("🔄 PowerSense devices changed - handling data change")
-                    handlePowerSenseDataChange()
-                } else {
-                    logger.debug("⏭️ PowerSense devices changed but overlay disabled - ignoring")
-                }
-            }
-            .onChange(of: powerSenseEvents) { _, _ in
-                if showPowerSenseOverlay {
-                    logger.debug("🔄 PowerSense events changed - handling data change")
-                    handlePowerSenseDataChange()
-                } else {
-                    logger.debug("⏭️ PowerSense events changed but overlay disabled - ignoring")
-                }
-            }
-            .onChange(of: showPowerSenseOverlay) { _, newValue in
-                if newValue {
-                    logger.info("🟢 PowerSense overlay enabled in MapView")
-                    initializePowerSenseViewModel()
-                } else {
-                    logger.info("🔴 PowerSense overlay disabled in MapView")
                 }
             }
     }
@@ -201,7 +173,6 @@ struct MapView: View {
     private var mapContent: some View {
         Map(position: $cameraPosition) {
             siteAnnotations
-            powerSensePolygons
         }
     }
 
@@ -216,17 +187,7 @@ struct MapView: View {
             }
         }
     }
-
-    @MapContentBuilder
-    private var powerSensePolygons: some MapContent {
-        if showPowerSenseOverlay, let viewModel = heatMapViewModel {
-            ForEach(viewModel.outagePolygons, id: \.id) { polygon in
-                MapPolygon(coordinates: polygon.coordinates)
-                    .foregroundStyle(polygonForegroundStyle(for: polygon))
-                    .tag(polygon.id)
-            }
-        }
-    }
+    
     @ViewBuilder
     private var mapControlsContent: some View {
         MapCompass()
@@ -358,66 +319,6 @@ struct MapView: View {
         default: // More than 10 minutes
             return .red
         }
-    }
-
-    // MARK: - PowerSense Polygon Styling
-
-    /// Simplified gradient with 4-stop gradient for MapKit compatibility (Phase 1 fix)
-    private func polygonForegroundStyle(for polygon: OutagePolygon) -> some ShapeStyle {
-        let opacities = polygon.simplifiedGradientOpacities
-
-        let colors = opacities.map { opacity in
-            polygon.confidenceColor.opacity(opacity)
-        }
-
-        return RadialGradient(
-            colors: colors,
-            center: .center,
-            startRadius: 0,
-            endRadius: 120 // Reduced from 250 for better MapKit rendering
-        )
-    }
-
-    // TEST ONLY: Device status color helper (easily removable)
-    private func testDeviceColor(for device: PowerSenseDevice) -> Color {
-        switch device.isOffline {
-        case true: return .red      // Device is offline/down
-        case false: return .green   // Device is online/up
-        case nil: return .blue      // Status unknown
-        }
-    }
-
-    // MARK: - View Model Management
-
-    /// Initialize PowerSense heat map view model with debugging
-    private func initializePowerSenseViewModel() {
-        guard heatMapViewModel == nil else {
-            logger.debug("🔄 HeatMapViewModel already initialized - skipping")
-            return
-        }
-
-        logger.info("🔧 Initializing PowerSense HeatMapViewModel for MapView integration")
-        logger.info("📊 Context: PowerSense overlay enabled: \(showPowerSenseOverlay)")
-        logger.info("📊 Data available: \(powerSenseDevices.count) devices, \(powerSenseEvents.count) events")
-
-        // Check if we should actually initialize
-        if !showPowerSenseOverlay {
-            logger.warning("⚠️ PowerSense overlay is DISABLED but initializePowerSenseViewModel was called!")
-        }
-
-        heatMapViewModel = HeatMapViewModel(modelContext: modelContext)
-
-        logger.info("📊 PowerSense overlay system ready")
-    }
-
-    /// Handle PowerSense data changes with debugging
-    private func handlePowerSenseDataChange() {
-        guard let viewModel = heatMapViewModel else { return }
-
-        logger.debug("🔄 PowerSense data changed - refreshing polygons")
-        logger.debug("📊 Current data: \(powerSenseDevices.count) devices, \(offlinePowerSenseDevices.count) offline")
-
-        viewModel.refreshPolygons()
     }
 }
 

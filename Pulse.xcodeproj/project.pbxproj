@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		199ADECD0DA44F6AA0EBAAB3 /* PowerSenseDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDF88230972E4B79804F5880 /* PowerSenseDataService.swift */; };
 		4100DB8C2ADCB9510098B58C /* ItemChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4100DB8B2ADCB9510098B58C /* ItemChart.swift */; };
 		4107D86C2C2CD7FC00632BE4 /* ContentView+Toolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4107D86B2C2CD7FC00632BE4 /* ContentView+Toolbar.swift */; };
 		4107D86E2C2CD9B700632BE4 /* InvoicesButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4107D86D2C2CD9B700632BE4 /* InvoicesButton.swift */; };
@@ -62,11 +61,6 @@
 		41DD37742D349F45009F37A0 /* TipManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41DD37732D349F45009F37A0 /* TipManager.swift */; };
 		41EBAF932CC5A650006E06A5 /* ShelfView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41EBAF922CC5A650006E06A5 /* ShelfView.swift */; };
 		41FE16212C0EA8F5002BF132 /* InterfacePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41FE16202C0EA8F5002BF132 /* InterfacePopover.swift */; };
-		6FEC64EA5C3A4EBAA15D652B /* OutageMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7052CAFDF26C45FE8C5B3CC4 /* OutageMapView.swift */; };
-		7A91D588E88E472992B10C33 /* PowerSenseAggregationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F06ADFE57D64C7DB680146D /* PowerSenseAggregationService.swift */; };
-		83F0A47999AF497DACAE3D96 /* OutagePolygon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4547600F66BE4EC2883478F6 /* OutagePolygon.swift */; };
-		8F732C378E0C441CA8FB563E /* PowerSenseDataViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F732C378E0C441CA8FB563D /* PowerSenseDataViewer.swift */; };
-		9D579F9008D54C3A8E37C228 /* HeatMapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E530E4021E524393B03D9B91 /* HeatMapViewModel.swift */; };
 		C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */; };
 		C96191622ACA552F000198DB /* PulseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191612ACA552F000198DB /* PulseApp.swift */; };
 		C96191642ACA552F000198DB /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191632ACA552F000198DB /* ContentView.swift */; };
@@ -121,7 +115,6 @@
 		C97C4F3C2ACB7270009F3795 /* PreviewSampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97C4F3B2ACB7270009F3795 /* PreviewSampleData.swift */; };
 		C97C4F3E2ACB7CEC009F3795 /* PreviewTrait.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97C4F3D2ACB7CEC009F3795 /* PreviewTrait.swift */; };
 		C97DEDB52E816E4F002898A7 /* PowerSenseToolbarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 762AEEBA6971484482E4B4C0 /* PowerSenseToolbarButton.swift */; };
-		C97DEDB62E816E4F002898A7 /* PowerSenseOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0BDEEBD6094CC4834A796F /* PowerSenseOverviewView.swift */; };
 		C97DEDBB2E822BF5002898A7 /* MapPolygonDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */; };
 		C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */; };
 		C9951ED02E8815380025C136 /* SpatialClusteringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */; };
@@ -147,8 +140,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		0E0BDEEBD6094CC4834A796F /* PowerSenseOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseOverviewView.swift; sourceTree = "<group>"; };
-		3F06ADFE57D64C7DB680146D /* PowerSenseAggregationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseAggregationService.swift; sourceTree = "<group>"; };
 		4100DB8B2ADCB9510098B58C /* ItemChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemChart.swift; sourceTree = "<group>"; };
 		4107D86B2C2CD7FC00632BE4 /* ContentView+Toolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView+Toolbar.swift"; sourceTree = "<group>"; };
 		4107D86D2C2CD9B700632BE4 /* InvoicesButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoicesButton.swift; sourceTree = "<group>"; };
@@ -203,11 +194,7 @@
 		41DD37732D349F45009F37A0 /* TipManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TipManager.swift; sourceTree = "<group>"; };
 		41EBAF922CC5A650006E06A5 /* ShelfView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfView.swift; sourceTree = "<group>"; };
 		41FE16202C0EA8F5002BF132 /* InterfacePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfacePopover.swift; sourceTree = "<group>"; };
-		4547600F66BE4EC2883478F6 /* OutagePolygon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutagePolygon.swift; sourceTree = "<group>"; };
-		7052CAFDF26C45FE8C5B3CC4 /* OutageMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutageMapView.swift; sourceTree = "<group>"; };
 		762AEEBA6971484482E4B4C0 /* PowerSenseToolbarButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseToolbarButton.swift; sourceTree = "<group>"; };
-		8F732C378E0C441CA8FB563D /* PowerSenseDataViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDataViewer.swift; sourceTree = "<group>"; };
-		BDF88230972E4B79804F5880 /* PowerSenseDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDataService.swift; sourceTree = "<group>"; };
 		C926516F2E71AFA2004564DD /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
 		C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceOverviewView.swift; sourceTree = "<group>"; };
 		C961915E2ACA552F000198DB /* Pulse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pulse.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -272,7 +259,6 @@
 		C9A2B32B2ACAA19D00C0BE08 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PulseAppIcon.icon; sourceTree = "<group>"; };
 		C9FCA5162D153E4700D9E851 /* Event.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Event.swift; sourceTree = "<group>"; };
-		E530E4021E524393B03D9B91 /* HeatMapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeatMapViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -407,9 +393,6 @@
 			isa = PBXGroup;
 			children = (
 				C963258B2E86BAE30018D2CD /* SpatialClusteringTestView.swift */,
-				0E0BDEEBD6094CC4834A796F /* PowerSenseOverviewView.swift */,
-				8F732C378E0C441CA8FB563D /* PowerSenseDataViewer.swift */,
-				7052CAFDF26C45FE8C5B3CC4 /* OutageMapView.swift */,
 			);
 			path = PowerSenseViews;
 			sourceTree = "<group>";
@@ -499,10 +482,6 @@
 				41A898FC2CC6F7E900856329 /* DeviceBay.swift */,
 				41703CA22CC9D9CB00FA5C03 /* Interface.swift */,
 				415F99452CD820B300845D15 /* SiteDataService.swift */,
-				3F06ADFE57D64C7DB680146D /* PowerSenseAggregationService.swift */,
-				BDF88230972E4B79804F5880 /* PowerSenseDataService.swift */,
-				4547600F66BE4EC2883478F6 /* OutagePolygon.swift */,
-				E530E4021E524393B03D9B91 /* HeatMapViewModel.swift */,
 				416EF8922D21E979001CD25B /* ChartDataProcessor.swift */,
 				41DD37732D349F45009F37A0 /* TipManager.swift */,
 			);
@@ -775,7 +754,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				C97DEDB52E816E4F002898A7 /* PowerSenseToolbarButton.swift in Sources */,
-				C97DEDB62E816E4F002898A7 /* PowerSenseOverviewView.swift in Sources */,
 				4181FEDF2CBF66CF00E4D035 /* RackUnitView.swift in Sources */,
 				C96191642ACA552F000198DB /* ContentView.swift in Sources */,
 				C96191DB2ACA5B2F000198DB /* EdgeView.swift in Sources */,
@@ -865,12 +843,6 @@
 				41B82EE92CACBC930019FDAD /* RackView.swift in Sources */,
 				410F372A2CABA58B008236ED /* Rack.swift in Sources */,
 				415F99462CD820B300845D15 /* SiteDataService.swift in Sources */,
-				7A91D588E88E472992B10C33 /* PowerSenseAggregationService.swift in Sources */,
-				199ADECD0DA44F6AA0EBAAB3 /* PowerSenseDataService.swift in Sources */,
-				8F732C378E0C441CA8FB563E /* PowerSenseDataViewer.swift in Sources */,
-				83F0A47999AF497DACAE3D96 /* OutagePolygon.swift in Sources */,
-				9D579F9008D54C3A8E37C228 /* HeatMapViewModel.swift in Sources */,
-				6FEC64EA5C3A4EBAA15D652B /* OutageMapView.swift in Sources */,
 				41B467B02C3C984C00B23BA8 /* DeviceBuilder.swift in Sources */,
 				41934BAF2BC8C552007DB27A /* MemberCell.swift in Sources */,
 				C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */,
