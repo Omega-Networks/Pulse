@@ -570,7 +570,7 @@ struct SpatialClusteringTestView: View {
                 radius: area.radius,
                 deviceCount: max(1, Int(Double(area.deviceCount) * Double(count) / 100.0)), // Scale based on count
                 outageRate: area.outageRate
-            )
+            ) 
         }
 
         return MockSpatialDataGenerator.generateClusteredDevices(

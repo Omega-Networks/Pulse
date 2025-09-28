@@ -176,9 +176,9 @@ actor SpatialClusteringActor {
 
     // MARK: - Private Methods
 
-    /// Modern GPU-accelerated clustering implementation
+    /// Modern GPU-accelerated clustering implementation using DBSCAN
     private func performModernClustering(devices: [PowerSenseDeviceDTO]) async throws -> [SimpleCluster] {
-        logger.debug("🔬 Performing GPU-accelerated clustering on \(devices.count) devices")
+        logger.debug("🔬 Performing GPU-accelerated DBSCAN clustering on \(devices.count) devices")
 
         // Filter to offline devices only for clustering
         let offlineDevices = devices.filter { $0.isOffline == true }
@@ -188,49 +188,91 @@ actor SpatialClusteringActor {
             return []
         }
 
-        // Use DBSCAN approach: find density-connected components
+        logger.info("🧠 Using GPU DBSCAN for \(offlineDevices.count) offline devices")
+
+        // Get GPU buffers from the spatial index (Apple Silicon - GPU integrated)
+        guard let gridParams = await indexer.getGridParameters(),
+              let gpuGrid = await indexer.getGPUGrid(),
+              let coordsBuffer = await indexer.getGPUCoordsBuffer(),
+              let offlineFlagsBuffer = await indexer.getGPUOfflineFlagsBuffer() else {
+            throw ClusteringError.clusteringFailed("Failed to access GPU buffers on Apple Silicon")
+        }
+
+        // Get the transformer from indexer for GPU DBSCAN
+        let transformer = await indexer.getTransformer()
+
+        // Configure DBSCAN parameters from config
+        let dbscanParams = DBSCANParameters(
+            epsilon: config.clusteringParameters.epsilon,
+            minPoints: config.clusteringParameters.minPoints,
+            aggregationThreshold: config.clusteringParameters.aggregationThreshold
+        )
+
+        // Perform GPU DBSCAN clustering
+        let dbscanResult = try transformer.performGPUDBSCAN(
+            coordsBuffer: coordsBuffer.buffer,
+            offlineFlagsBuffer: offlineFlagsBuffer.buffer,
+            grid: gpuGrid,
+            gridParams: gridParams,
+            dbscanParams: dbscanParams,
+            deviceCount: devices.count
+        )
+
+        logger.info("🚀 GPU DBSCAN completed: \(dbscanResult.clusterCount) clusters, \(dbscanResult.iterations) iterations, \(String(format: "%.3f", dbscanResult.processingTime * 1000))ms")
+
+        // Convert GPU labels to SimpleCluster objects
+        return try convertDBSCANResultToClusters(
+            dbscanResult: dbscanResult,
+            devices: devices,
+            aggregationThreshold: config.clusteringParameters.aggregationThreshold
+        )
+    }
+
+    /// Convert GPU DBSCAN results to SimpleCluster objects
+    private func convertDBSCANResultToClusters(
+        dbscanResult: DBSCANResult,
+        devices: [PowerSenseDeviceDTO],
+        aggregationThreshold: Int
+    ) throws -> [SimpleCluster] {
+
         var clusters: [SimpleCluster] = []
-        var visitedDevices: Set<String> = []
-        var clusterId = 0
+        var clusterDevicesMap: [Int32: [PowerSenseDeviceDTO]] = [:]
 
-        for device in offlineDevices {
-            guard !visitedDevices.contains(device.deviceId) else { continue }
+        // Group devices by cluster label (offline devices only)
+        for (index, device) in devices.enumerated() {
+            let label = dbscanResult.labels[index]
 
-            // Find all neighbors within epsilon
-            let neighbors = try await indexer.findNeighbors(
-                for: device.deviceId,
-                within: config.clusteringParameters.epsilon
-            )
-
-            // Check if this forms a cluster (minimum points requirement)
-            if neighbors.count >= config.clusteringParameters.minPoints {
-                // Expand cluster using density-connectivity
-                let clusterDevices = try await expandCluster(
-                    from: device,
-                    neighbors: neighbors,
-                    visited: &visitedDevices
-                )
-
-                // Apply privacy aggregation threshold
-                if clusterDevices.count >= config.clusteringParameters.aggregationThreshold {
-                    let cluster = createSimpleCluster(
-                        id: clusterId,
-                        devices: clusterDevices
-                    )
-                    clusters.append(cluster)
-                    clusterId += 1
-
-                    logger.debug("✅ Created cluster \(clusterId-1) with \(clusterDevices.count) devices")
-                } else {
-                    logger.debug("🔒 Cluster with \(clusterDevices.count) devices below aggregation threshold - filtered for privacy")
+            // Only process offline devices with valid cluster labels (not noise -1)
+            if device.isOffline == true && label != -1 {
+                if clusterDevicesMap[label] == nil {
+                    clusterDevicesMap[label] = []
                 }
+                clusterDevicesMap[label]?.append(device)
             }
         }
 
-        logger.info("📊 Generated \(clusters.count) clusters from \(offlineDevices.count) offline devices")
+        logger.debug("📊 GPU DBSCAN found \(clusterDevicesMap.count) raw clusters")
+
+        // Convert clusters that meet aggregation threshold
+        var clusterId = 0
+        for (label, clusterDevices) in clusterDevicesMap {
+            if clusterDevices.count >= aggregationThreshold {
+                let cluster = createSimpleCluster(
+                    id: clusterId,
+                    devices: clusterDevices
+                )
+                clusters.append(cluster)
+                clusterId += 1
+
+                logger.debug("✅ Created cluster \(clusterId-1) from GPU label \(label) with \(clusterDevices.count) devices")
+            } else {
+                logger.debug("🔒 GPU cluster \(label) with \(clusterDevices.count) devices below aggregation threshold - filtered for privacy")
+            }
+        }
+
+        logger.info("📈 GPU DBSCAN final result: \(clusters.count) clusters from \(dbscanResult.clusterCount) raw clusters")
         return clusters
     }
-
 
     /// Expand cluster using density-connectivity (DBSCAN algorithm)
     private func expandCluster(

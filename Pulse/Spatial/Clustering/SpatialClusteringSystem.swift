@@ -193,8 +193,8 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
     private let logger = Logger.spatialIndexing
 
     // GPU buffers for on-demand neighbor queries
-    private var gpuCoordsBuffer: MTLBuffer?
-    private var gpuOfflineFlagsBuffer: MTLBuffer?
+    private var gpuCoordsBuffer: SendableBuffer?
+    private var gpuOfflineFlagsBuffer: SendableBuffer?
     private var gpuGrid: GPUGrid?
     private var deviceIdToIndex: [String: Int] = [:] // Maps deviceId to GLOBAL index in full coords buffer
     // Phase 1: Eliminated separate offline indices - using full coordinate buffer with flags
@@ -255,8 +255,8 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
             // Store GPU structures for on-demand queries
             self.gridParams = params
             self.gpuGrid = grid
-            self.gpuCoordsBuffer = coordsBuffer
-            self.gpuOfflineFlagsBuffer = offlineFlagsBuffer
+            self.gpuCoordsBuffer = SendableBuffer(coordsBuffer)
+            self.gpuOfflineFlagsBuffer = SendableBuffer(offlineFlagsBuffer)
 
             // Phase 1 Update: Build device ID to GLOBAL index mapping (for full coords buffer)
             self.deviceIdToIndex = Dictionary(uniqueKeysWithValues:
@@ -308,7 +308,7 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
 
     // Dispatch GPU kernel for neighbor search
     let neighborIndices = try transformer.executeFindNeighborsKernel(
-        coordsBuffer: coordsBuffer,
+        coordsBuffer: coordsBuffer.buffer,
         grid: grid,
         gridParams: params,
         queryId: queryIndex
@@ -412,6 +412,28 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
     /// Get grid parameters
     public func getGridParameters() -> GridIndexParameters? {
         return gridParams
+    }
+
+    // MARK: - GPU Buffer Access (for testing and DBSCAN integration)
+
+    /// Get GPU coordinates buffer for DBSCAN processing
+    internal func getGPUCoordsBuffer() -> SendableBuffer? {
+        return gpuCoordsBuffer
+    }
+
+    /// Get GPU offline flags buffer for DBSCAN processing
+    internal func getGPUOfflineFlagsBuffer() -> SendableBuffer? {
+        return gpuOfflineFlagsBuffer
+    }
+
+    /// Get GPU grid structure for DBSCAN processing
+    internal func getGPUGrid() -> GPUGrid? {
+        return gpuGrid
+    }
+
+    /// Get coordinate transformer for DBSCAN processing
+    internal func getTransformer() -> CoordinateTransformer {
+        return transformer
     }
 
     // MARK: - Private Helpers

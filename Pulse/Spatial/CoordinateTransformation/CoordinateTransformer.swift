@@ -58,22 +58,24 @@ public struct ProjectedCoordinate: Sendable {
     }
 }
 
-/// Supported projection systems
+/// Supported projection systems for coordinate transformation
+///
+/// For open-source contributors: Add new projection systems here following the pattern.
+/// Each case must implement corresponding transform kernels in MetalShaderLibrary.
 public enum ProjectionSystem: Equatable, Hashable, Sendable {
     case nztm2000        // New Zealand Transverse Mercator (EPSG:2193)
-    case webMercator     // Web Mercator (EPSG:3857) - Global
-    case utm(zone: Int)  // UTM zones for high accuracy regional use
-    
+    case webMercator     // Web Mercator (EPSG:3857) - Global web mapping
+    case utm(zone: Int, isNorthern: Bool)  // UTM zones with hemisphere for regional accuracy
+
     public var epsgCode: Int {
         switch self {
         case .nztm2000:
             return 2193
         case .webMercator:
             return 3857
-        case .utm(let zone):
+        case .utm(let zone, let isNorthern):
             // UTM EPSG codes: Northern hemisphere 32600+zone, Southern hemisphere 32700+zone
-            // TODO: Determine hemisphere from coordinates for proper EPSG code
-            return 32600 + zone // Assuming northern hemisphere (add hemisphere detection later)
+            return isNorthern ? (32600 + zone) : (32700 + zone)
         }
     }
 }
@@ -101,9 +103,39 @@ public struct TransformationMetrics {
     }
 }
 
+/// GPU memory usage metrics for monitoring and optimization
+///
+/// For open-source contributors: Use this to track memory consumption
+/// and prevent GPU memory exhaustion on large datasets.
+public struct GPUMemoryUsage {
+    public let totalBufferMemory: Int      // Total buffer memory in bytes
+    public let coordsBufferMemory: Int     // Coordinate buffer memory in bytes
+    public let dbscanBufferMemory: Int     // DBSCAN-specific buffer memory in bytes
+    public let deviceCount: Int            // Number of devices being processed
+
+    /// Total memory usage in megabytes
+    public var totalMemoryMB: Double {
+        return Double(totalBufferMemory) / 1024.0 / 1024.0
+    }
+
+    /// Human-readable memory description for logging
+    public var description: String {
+        return "\(String(format: "%.1f", totalMemoryMB))MB total (\(deviceCount) devices)"
+    }
+}
+
 // MARK: - Main Metal GPU CoordinateTransformer
 
 /// GPU-accelerated coordinate transformation using Metal compute shaders
+///
+/// This class provides high-performance coordinate transformation and spatial clustering
+/// optimized for infrastructure monitoring applications like PowerSense outage detection.
+///
+/// For open-source contributors:
+/// - All GPU kernels are defined in MetalShaderLibrary
+/// - Use SendableBuffer wrapper for Swift 6 concurrency compliance
+/// - Performance is optimized for Apple Silicon (unified memory architecture)
+/// - DBSCAN clustering targets sub-50ms performance for 10k+ devices
 public final class CoordinateTransformer: Sendable {
     
     // MARK: - Metal Resources
@@ -366,7 +398,7 @@ public final class CoordinateTransformer: Sendable {
             return nztmPipelineState
         case .webMercator:
             return webMercatorPipelineState
-        case .utm(_):
+        case .utm(_, _):
             return utmPipelineState
         }
     }
@@ -389,12 +421,13 @@ public final class CoordinateTransformer: Sendable {
             )
             encoder.setBytes(&params, length: MemoryLayout<WebMercatorParameters>.size, index: 2)
             
-        case .utm(let zone):
+        case .utm(let zone, let isNorthern):
             var params = UTMParameters(
                 zone: Int32(zone),
                 centralMeridian: Float((zone - 1) * 6 - 177),
                 falseEasting: 500000.0,
-                scaleFactor: 0.9996
+                scaleFactor: 0.9996,
+                falseNorthing: isNorthern ? 0.0 : 10000000.0
             )
             encoder.setBytes(&params, length: MemoryLayout<UTMParameters>.size, index: 2)
         }
@@ -410,9 +443,10 @@ public final class CoordinateTransformer: Sendable {
             return .nztm2000
         }
         
-        // For other regions, determine appropriate UTM zone
+        // For other regions, determine appropriate UTM zone and hemisphere
         let utmZone = Int((center.longitude + 180) / 6) + 1
-        return .utm(zone: utmZone)
+        let isNorthern = center.latitude >= 0
+        return .utm(zone: utmZone, isNorthern: isNorthern)
     }
     
     // MARK: - CPU Fallback for Inverse Transform
@@ -423,8 +457,8 @@ public final class CoordinateTransformer: Sendable {
             return inverseTransformFromNZTM(projected)
         case .webMercator:
             return inverseTransformFromWebMercator(projected)
-        case .utm(let zone):
-            return inverseTransformFromUTM(projected, zone: zone)
+        case .utm(let zone, let isNorthern):
+            return inverseTransformFromUTM(projected, zone: zone, isNorthern: isNorthern)
         }
     }
     
@@ -442,10 +476,14 @@ public final class CoordinateTransformer: Sendable {
         return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
     
-    private func inverseTransformFromUTM(_ projected: ProjectedCoordinate, zone: Int) -> CLLocationCoordinate2D {
+    private func inverseTransformFromUTM(_ projected: ProjectedCoordinate, zone: Int, isNorthern: Bool) -> CLLocationCoordinate2D {
         let centralMeridian = Double((zone - 1) * 6 - 177) * .pi / 180.0
         let x = projected.x - 500000.0
-        let y = projected.y < 5000000.0 ? projected.y : projected.y - 10000000.0
+
+        // Handle southern hemisphere: subtract false northing (10,000,000m) if needed
+        let y = isNorthern ? projected.y : projected.y - 10000000.0
+
+        // Simplified inverse UTM transform
         let lat = y / (0.9996 * 6378137.0)
         let lon = centralMeridian + (x / (0.9996 * 6378137.0 * cos(lat)))
         return CLLocationCoordinate2D(latitude: lat * 180.0 / .pi, longitude: lon * 180.0 / .pi)
@@ -478,23 +516,13 @@ public final class CoordinateTransformer: Sendable {
         print("   Grid dimensions: \(gridParams.gridWidth)x\(gridParams.gridHeight) = \(gridSize) cells")
         print("   Cell size: \(cellSize)m, Search radius: \(epsilon)m")
 
-        // Choose algorithm based on optimization flag and dataset size
-        let shouldUseGrid = useGridOptimization && offlineCoordinates.count > 1000
-
-        if shouldUseGrid {
-            return try buildGridIndexOptimized(
-                offlineCoordinates: offlineCoordinates,
-                deviceIndices: deviceIndices,
-                gridParams: gridParams,
-                gridSize: gridSize
-            )
-        } else {
-            return try buildGridIndexBruteForce(
-                offlineCoordinates: offlineCoordinates,
-                deviceIndices: deviceIndices,
-                gridParams: gridParams
-            )
-        }
+        // Use GPU grid-based spatial indexing for optimal performance
+        return try buildGridIndexOptimized(
+            offlineCoordinates: offlineCoordinates,
+            deviceIndices: deviceIndices,
+            gridParams: gridParams,
+            gridSize: gridSize
+        )
     }
 
     /// Optimized grid-based neighbor counting - O(N * avg_cell_size)
@@ -530,9 +558,9 @@ public final class CoordinateTransformer: Sendable {
         try executeGridCountKernel(coordsBuffer: coordsBuffer, grid: grid, gridParams: gridParams, coordinateCount: offlineCoordinates.count)
 
         // Phase 2: CPU prefix sum to convert counts to offsets (GPU prefix scan in Phase 2)
-        let cellCountsPointer = grid.cellCounts.contents().bindMemory(to: Int32.self, capacity: gridSize)
-        let cellOffsetsPointer = grid.cellOffsets.contents().bindMemory(to: Int32.self, capacity: gridSize)
-        let cellPositionsPointer = grid.cellPositions.contents().bindMemory(to: Int32.self, capacity: gridSize)
+        let cellCountsPointer = grid.cellCounts.contents.bindMemory(to: Int32.self, capacity: gridSize)
+        let cellOffsetsPointer = grid.cellOffsets.contents.bindMemory(to: Int32.self, capacity: gridSize)
+        let cellPositionsPointer = grid.cellPositions.contents.bindMemory(to: Int32.self, capacity: gridSize)
 
         var runningSum: Int32 = 0
         for i in 0..<gridSize {
@@ -571,102 +599,6 @@ public final class CoordinateTransformer: Sendable {
         return (gridParams, neighborResults)
     }
 
-    /// Brute-force neighbor counting - O(N²) fallback for small datasets
-    private func buildGridIndexBruteForce(
-        offlineCoordinates: [ProjectedCoordinate],
-        deviceIndices: [Int32],
-        gridParams: GridIndexParameters
-    ) throws -> (gridParams: GridIndexParameters, neighborResults: [GPUNeighborResult]) {
-
-        print("   Using brute-force algorithm (small dataset)...")
-
-        // Convert coordinates to GPU format
-        let gpuCoords = offlineCoordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
-
-        // Create Metal buffers
-        let coordsBuffer = device.makeBuffer(
-            bytes: gpuCoords,
-            length: gpuCoords.count * MemoryLayout<SIMD2<Float>>.size,
-            options: .storageModeShared
-        )!
-
-        let indicesBuffer = device.makeBuffer(
-            bytes: deviceIndices,
-            length: deviceIndices.count * MemoryLayout<Int32>.size,
-            options: .storageModeShared
-        )!
-
-        let resultsBuffer = device.makeBuffer(
-            length: offlineCoordinates.count * MemoryLayout<GPUNeighborResult>.size,
-            options: .storageModeShared
-        )!
-
-        // Execute legacy brute-force kernel
-        try executeGridBuildKernel(
-            coordsBuffer: coordsBuffer,
-            indicesBuffer: indicesBuffer,
-            resultsBuffer: resultsBuffer,
-            gridParams: gridParams,
-            coordinateCount: offlineCoordinates.count
-        )
-
-        // Read results
-        let resultsPointer = resultsBuffer.contents().bindMemory(to: GPUNeighborResult.self, capacity: offlineCoordinates.count)
-        let neighborResults = Array(UnsafeBufferPointer(start: resultsPointer, count: offlineCoordinates.count))
-
-        let totalNeighbors = neighborResults.reduce(0) { $0 + Int($1.neighborCount) }
-        print("   ✅ Brute-force GPU index built: \(totalNeighbors) neighbor relationships")
-
-        return (gridParams, neighborResults)
-    }
-
-    /// Execute the GPU grid build kernel
-    private func executeGridBuildKernel(
-        coordsBuffer: MTLBuffer,
-        indicesBuffer: MTLBuffer,
-        resultsBuffer: MTLBuffer,
-        gridParams: GridIndexParameters,
-        coordinateCount: Int
-    ) throws {
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
-            throw MetalTransformError.commandBufferCreationFailed
-        }
-
-        // Create grid build pipeline if not exists (we'll add this to initialization)
-        let gridPipelineState = try getOrCreateGridPipelineState()
-        computeEncoder.setComputePipelineState(gridPipelineState)
-
-        // Set buffers
-        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)      // Offline coordinates
-        computeEncoder.setBuffer(indicesBuffer, offset: 0, index: 1)     // Device indices
-        computeEncoder.setBuffer(resultsBuffer, offset: 0, index: 2)     // Output results
-
-        // Set grid parameters
-        var params = gridParams
-        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 3)
-
-        // Set total count
-        var totalCount = UInt32(coordinateCount)
-        computeEncoder.setBytes(&totalCount, length: MemoryLayout<UInt32>.size, index: 4)
-
-        // Calculate thread distribution
-        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
-
-        // Dispatch compute shader
-        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-        computeEncoder.endEncoding()
-
-        // Execute synchronously
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-
-        // Check for GPU errors
-        if let error = commandBuffer.error {
-            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
-        }
-    }
-
     /// Execute grid count kernel (Phase 1 of optimized grid build)
     private func executeGridCountKernel(
         coordsBuffer: MTLBuffer,
@@ -684,7 +616,7 @@ public final class CoordinateTransformer: Sendable {
 
         // Set buffers
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
-        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.rawCellCounts, offset: 0, index: 1)
 
         // Set grid parameters
         var params = gridParams
@@ -722,7 +654,7 @@ public final class CoordinateTransformer: Sendable {
         // Set buffers
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
         computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 1)
-        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.rawCellCounts, offset: 0, index: 2)
 
         // Set grid parameters
         var params = gridParams
@@ -758,9 +690,9 @@ public final class CoordinateTransformer: Sendable {
 
         // Set buffers
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
-        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 1)
-        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 2)
-        computeEncoder.setBuffer(grid.cellPositions, offset: 0, index: 3)
+        computeEncoder.setBuffer(grid.rawPointIndices, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.rawCellOffsets, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.rawCellPositions, offset: 0, index: 3)
 
         // Set grid parameters
         var params = gridParams
@@ -798,9 +730,9 @@ public final class CoordinateTransformer: Sendable {
         // Set buffers
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
         computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 1)
-        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 2)
-        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 3)
-        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 4) // Reusing as positions (reset to 0 earlier)
+        computeEncoder.setBuffer(grid.rawPointIndices, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.rawCellOffsets, offset: 0, index: 3)
+        computeEncoder.setBuffer(grid.rawCellCounts, offset: 0, index: 4) // Reusing as positions (reset to 0 earlier)
 
         // Set grid parameters
         var params = gridParams
@@ -819,51 +751,6 @@ public final class CoordinateTransformer: Sendable {
         }
     }
 
-    /// CRITICAL FIX: Execute grid build kernel with corrected global indices (Legacy)
-    private func executeGridBuildKernelCorrected(
-        coordsBuffer: MTLBuffer,
-        grid: GPUGrid,
-        gridParams: GridIndexParameters,
-        coordinateCount: Int,
-        localDeviceIndices: [Int32] // CRITICAL FIX: Local indices for offline-only coords buffer
-    ) throws {
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
-            throw MetalTransformError.commandBufferCreationFailed
-        }
-
-        // CRITICAL FIX: Use the provided local indices
-        let localIndicesBuffer = device.makeBuffer(
-            bytes: localDeviceIndices,
-            length: localDeviceIndices.count * MemoryLayout<Int32>.size,
-            options: .storageModeShared
-        )!
-
-        let pipelineState = try getOrCreatePipelineState(functionName: "gridBuildPass")
-        computeEncoder.setComputePipelineState(pipelineState)
-
-        // Set buffers
-        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
-        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 1)
-        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 2)
-        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 3) // Reusing as positions (reset to 0 earlier)
-        // Set grid parameters
-        var params = gridParams
-        computeEncoder.setBytes(&params, length: MemoryLayout<GridIndexParameters>.size, index: 4)
-        computeEncoder.setBuffer(localIndicesBuffer, offset: 0, index: 5) // CRITICAL FIX: Local indices for coords buffer consistency
-
-        // Dispatch
-        let threadsPerGrid = MTLSize(width: coordinateCount, height: 1, depth: 1)
-        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-        computeEncoder.endEncoding()
-
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-
-        if let error = commandBuffer.error {
-            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
-        }
-    }
 
     /// Execute grid neighbor counting kernel (Phase 4 of optimized grid build)
     private func executeGridNeighborKernel(
@@ -884,9 +771,9 @@ public final class CoordinateTransformer: Sendable {
 
         // Set buffers
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
-        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 1)
-        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 2)
-        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 3)
+        computeEncoder.setBuffer(grid.rawPointIndices, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.rawCellOffsets, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.rawCellCounts, offset: 0, index: 3)
         computeEncoder.setBuffer(resultsBuffer, offset: 0, index: 4)
         computeEncoder.setBuffer(indicesBuffer, offset: 0, index: 5)
 
@@ -944,9 +831,9 @@ public final class CoordinateTransformer: Sendable {
 
         // Set buffers
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
-        computeEncoder.setBuffer(grid.pointIndices, offset: 0, index: 1)
-        computeEncoder.setBuffer(grid.cellOffsets, offset: 0, index: 2)
-        computeEncoder.setBuffer(grid.cellCounts, offset: 0, index: 3)
+        computeEncoder.setBuffer(grid.rawPointIndices, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.rawCellOffsets, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.rawCellCounts, offset: 0, index: 3)
         computeEncoder.setBuffer(outputNeighborsBuffer, offset: 0, index: 4)
         computeEncoder.setBuffer(outputCountBuffer, offset: 0, index: 5)
 
@@ -1037,8 +924,8 @@ public final class CoordinateTransformer: Sendable {
 
         // Phase 2: CPU prefix sum to convert counts to offsets (GPU prefix scan in Phase 2)
         print("   Phase 2: Computing cell offsets...")
-        let cellCountsPointer = grid.cellCounts.contents().bindMemory(to: Int32.self, capacity: gridSize)
-        let cellOffsetsPointer = grid.cellOffsets.contents().bindMemory(to: Int32.self, capacity: gridSize)
+        let cellCountsPointer = grid.cellCounts.contents.bindMemory(to: Int32.self, capacity: gridSize)
+        let cellOffsetsPointer = grid.cellOffsets.contents.bindMemory(to: Int32.self, capacity: gridSize)
 
         var runningSum: Int32 = 0
         for i in 0..<gridSize {
@@ -1063,6 +950,385 @@ public final class CoordinateTransformer: Sendable {
         return (gridParams, grid, coordsBuffer, offlineFlagsBuffer)
     }
 
+    /// Create DBSCAN buffers for GPU clustering (Phase 2)
+    internal func createDBSCANBuffers(deviceCount: Int) throws -> GPUDBSCANBuffers {
+        return try GPUDBSCANBuffers(device: device, deviceCount: deviceCount)
+    }
+
+    /// Perform GPU-accelerated DBSCAN clustering using Metal compute shaders
+    ///
+    /// This implements the complete DBSCAN algorithm on GPU with the following phases:
+    /// - Phase 1: Neighbor search with core point detection
+    /// - Phase 2a: Initialize cluster labels for core points
+    /// - Phase 2b: Iterative label propagation until convergence
+    /// - Phase 2c: Finalize labels with path compression
+    ///
+    /// For open-source contributors: This is the main entry point for GPU DBSCAN.
+    /// Requires spatial grid to be pre-built via buildPersistentGPUGrid()
+    internal func performGPUDBSCAN(
+        coordsBuffer: MTLBuffer,
+        offlineFlagsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        dbscanParams: DBSCANParameters,
+        deviceCount: Int
+    ) throws -> DBSCANResult {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        print("🧠 GPU DBSCAN: Starting clustering for \(deviceCount) devices...")
+        print("   Parameters: epsilon=\(dbscanParams.epsilon)m, minPoints=\(dbscanParams.minPoints), threshold=\(dbscanParams.aggregationThreshold)")
+
+        // Create DBSCAN buffers
+        let dbscanBuffers = try createDBSCANBuffers(deviceCount: deviceCount)
+
+        // Monitor GPU memory usage
+        let memoryUsage = getGPUMemoryUsage(deviceCount: deviceCount)
+        print("   🔧 GPU Memory: \(memoryUsage.description)")
+
+        // Phase 1: Neighbor search with core point detection
+        print("   Phase 1: Neighbor search and core point detection...")
+        let phase1Time = CFAbsoluteTimeGetCurrent()
+        try executeDBSCANNeighborSearchKernel(
+            coordsBuffer: coordsBuffer,
+            offlineFlagsBuffer: offlineFlagsBuffer,
+            grid: grid,
+            gridParams: gridParams,
+            dbscanParams: dbscanParams,
+            dbscanBuffers: dbscanBuffers,
+            deviceCount: deviceCount
+        )
+        let phase1Duration = CFAbsoluteTimeGetCurrent() - phase1Time
+
+        // Phase 2a: Initialize cluster labels for core points
+        print("   Phase 2a: Initialize cluster labels...")
+        let phase2aTime = CFAbsoluteTimeGetCurrent()
+        try executeDBSCANInitializeLabelsKernel(
+            offlineFlagsBuffer: offlineFlagsBuffer,
+            dbscanBuffers: dbscanBuffers,
+            deviceCount: deviceCount
+        )
+        let phase2aDuration = CFAbsoluteTimeGetCurrent() - phase2aTime
+
+        // Phase 2b: Iterative label propagation until convergence
+        print("   Phase 2b: Label propagation...")
+        let propagationTime = CFAbsoluteTimeGetCurrent()
+        let iterations = try executeDBSCANLabelPropagation(
+            coordsBuffer: coordsBuffer,
+            offlineFlagsBuffer: offlineFlagsBuffer,
+            grid: grid,
+            gridParams: gridParams,
+            dbscanParams: dbscanParams,
+            dbscanBuffers: dbscanBuffers,
+            deviceCount: deviceCount
+        )
+        let propagationDuration = CFAbsoluteTimeGetCurrent() - propagationTime
+
+        // Phase 2c: Finalize labels with path compression
+        print("   Phase 2c: Finalizing labels...")
+        let phase2cTime = CFAbsoluteTimeGetCurrent()
+        try executeDBSCANFinalizeLabelsKernel(
+            offlineFlagsBuffer: offlineFlagsBuffer,
+            dbscanBuffers: dbscanBuffers,
+            deviceCount: deviceCount
+        )
+        let phase2cDuration = CFAbsoluteTimeGetCurrent() - phase2cTime
+
+        // Extract results from GPU buffers
+        let processingTime = CFAbsoluteTimeGetCurrent() - startTime
+        let result = try extractDBSCANResults(
+            dbscanBuffers: dbscanBuffers,
+            offlineFlagsBuffer: offlineFlagsBuffer,
+            deviceCount: deviceCount,
+            iterations: iterations,
+            processingTime: processingTime
+        )
+
+        print("✅ GPU DBSCAN: Completed in \(String(format: "%.3f", processingTime * 1000))ms")
+        print("   Phase 1: \(String(format: "%.3f", phase1Duration * 1000))ms (neighbor search)")
+        print("   Phase 2a: \(String(format: "%.3f", phase2aDuration * 1000))ms (initialize labels)")
+        print("   Phase 2b: \(String(format: "%.3f", propagationDuration * 1000))ms (propagation, \(iterations) iterations)")
+        print("   Phase 2c: \(String(format: "%.3f", phase2cDuration * 1000))ms (finalize labels)")
+        print("   Results: \(result.clusterCount) clusters, \(result.corePoints) core points, \(result.noisePoints) noise")
+        print("   Memory: \(memoryUsage.description)")
+
+        return result
+    }
+
+    // MARK: - GPU Memory Monitoring
+
+    private func getGPUMemoryUsage(deviceCount: Int) -> GPUMemoryUsage {
+        // Calculate memory usage for typical DBSCAN buffers
+        let coordsBufferSize = deviceCount * MemoryLayout<SIMD2<Float>>.size
+        let dbscanBufferSize = calculateDBSCANBufferSize(deviceCount: deviceCount)
+
+        return GPUMemoryUsage(
+            totalBufferMemory: coordsBufferSize + dbscanBufferSize,
+            coordsBufferMemory: coordsBufferSize,
+            dbscanBufferMemory: dbscanBufferSize,
+            deviceCount: deviceCount
+        )
+    }
+
+    private func calculateDBSCANBufferSize(deviceCount: Int) -> Int {
+        let clusterLabelsSize = deviceCount * MemoryLayout<Int32>.size
+        let neighborCountsSize = deviceCount * MemoryLayout<Int32>.size
+        let corePointsSize = deviceCount * MemoryLayout<Bool>.size
+        let changedFlagSize = MemoryLayout<Int32>.size
+
+        return clusterLabelsSize + neighborCountsSize + corePointsSize + changedFlagSize
+    }
+
+    // MARK: - DBSCAN Kernel Execution Methods (Phase 2)
+
+    internal func executeDBSCANNeighborSearchKernel(
+        coordsBuffer: MTLBuffer,
+        offlineFlagsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        dbscanParams: DBSCANParameters,
+        dbscanBuffers: GPUDBSCANBuffers,
+        deviceCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "dbscanNeighborSearchKernel")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.rawPointIndices, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.rawCellOffsets, offset: 0, index: 3)
+        computeEncoder.setBuffer(grid.rawCellCounts, offset: 0, index: 4)
+        computeEncoder.setBuffer(dbscanBuffers.rawNeighborCounts, offset: 0, index: 5)
+        computeEncoder.setBuffer(dbscanBuffers.rawCorePoints, offset: 0, index: 6)
+
+        // Set parameters
+        var gridParamsVar = gridParams
+        computeEncoder.setBytes(&gridParamsVar, length: MemoryLayout<GridIndexParameters>.size, index: 7)
+        var dbscanParamsVar = dbscanParams
+        computeEncoder.setBytes(&dbscanParamsVar, length: MemoryLayout<DBSCANParameters>.size, index: 8)
+
+        // Dispatch threads
+        let threadsPerGrid = MTLSize(width: deviceCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    private func executeDBSCANInitializeLabelsKernel(
+        offlineFlagsBuffer: MTLBuffer,
+        dbscanBuffers: GPUDBSCANBuffers,
+        deviceCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "dbscanInitializeLabelsKernel")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(dbscanBuffers.rawCorePoints, offset: 0, index: 1)
+        computeEncoder.setBuffer(dbscanBuffers.rawClusterLabels, offset: 0, index: 2)
+        computeEncoder.setBuffer(dbscanBuffers.rawChangedFlag, offset: 0, index: 3)
+
+        // Dispatch threads
+        let threadsPerGrid = MTLSize(width: deviceCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    private func executeDBSCANLabelPropagation(
+        coordsBuffer: MTLBuffer,
+        offlineFlagsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        dbscanParams: DBSCANParameters,
+        dbscanBuffers: GPUDBSCANBuffers,
+        deviceCount: Int
+    ) throws -> Int {
+        let maxIterations = 50
+        var iterations = 0
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "dbscanLabelPropagationKernel")
+
+        print("   🔄 Starting DBSCAN label propagation (max \(maxIterations) iterations)...")
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        for iteration in 0..<maxIterations {
+            // Reset changed flag
+            memset(dbscanBuffers.changedFlag.contents, 0, MemoryLayout<Int32>.size)
+
+            guard let commandBuffer = commandQueue.makeCommandBuffer(),
+                  let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+                throw MetalTransformError.commandBufferCreationFailed
+            }
+
+            computeEncoder.setComputePipelineState(pipelineState)
+
+            // Set buffers
+            computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+            computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 1)
+            computeEncoder.setBuffer(dbscanBuffers.rawCorePoints, offset: 0, index: 2)
+            computeEncoder.setBuffer(grid.rawPointIndices, offset: 0, index: 3)
+            computeEncoder.setBuffer(grid.rawCellOffsets, offset: 0, index: 4)
+            computeEncoder.setBuffer(grid.rawCellCounts, offset: 0, index: 5)
+            computeEncoder.setBuffer(dbscanBuffers.rawClusterLabels, offset: 0, index: 6)
+            computeEncoder.setBuffer(dbscanBuffers.rawChangedFlag, offset: 0, index: 7)
+
+            // Set parameters
+            var gridParamsVar = gridParams
+            computeEncoder.setBytes(&gridParamsVar, length: MemoryLayout<GridIndexParameters>.size, index: 8)
+            var dbscanParamsVar = dbscanParams
+            computeEncoder.setBytes(&dbscanParamsVar, length: MemoryLayout<DBSCANParameters>.size, index: 9)
+
+            // Dispatch threads
+            let threadsPerGrid = MTLSize(width: deviceCount, height: 1, depth: 1)
+            computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+            computeEncoder.endEncoding()
+
+            commandBuffer.commit()
+            commandBuffer.waitUntilCompleted()
+
+            if let error = commandBuffer.error {
+                throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+            }
+
+            // Check convergence
+            let changedFlagPointer = dbscanBuffers.changedFlag.contents.bindMemory(to: Int32.self, capacity: 1)
+            let changed = changedFlagPointer[0]
+
+            iterations = iteration + 1
+
+            // Log progress periodically for long-running clusters
+            if iteration > 0 && iteration % 10 == 0 {
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                print("      Iteration \(iteration): labels still propagating (\(String(format: "%.1f", elapsed * 1000))ms elapsed)")
+            }
+
+            if changed == 0 {
+                break // Converged
+            }
+        }
+
+        let propagationTime = CFAbsoluteTimeGetCurrent() - startTime
+
+        if iterations >= maxIterations {
+            print("   ⚠️  WARNING: DBSCAN label propagation reached maximum iterations (\(maxIterations)) without convergence")
+            print("      This may indicate complex clustering topology or inadequate epsilon/minPoints parameters")
+            print("      Processing time: \(String(format: "%.3f", propagationTime * 1000))ms")
+        } else {
+            print("   ✅ DBSCAN label propagation converged in \(iterations) iterations (\(String(format: "%.3f", propagationTime * 1000))ms)")
+        }
+
+        return iterations
+    }
+
+    private func executeDBSCANFinalizeLabelsKernel(
+        offlineFlagsBuffer: MTLBuffer,
+        dbscanBuffers: GPUDBSCANBuffers,
+        deviceCount: Int
+    ) throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "dbscanFinalizeLabelsKernel")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        // Set buffers
+        computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(dbscanBuffers.rawClusterLabels, offset: 0, index: 1)
+
+        // Dispatch threads
+        let threadsPerGrid = MTLSize(width: deviceCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    private func extractDBSCANResults(
+        dbscanBuffers: GPUDBSCANBuffers,
+        offlineFlagsBuffer: MTLBuffer,
+        deviceCount: Int,
+        iterations: Int,
+        processingTime: Double
+    ) throws -> DBSCANResult {
+        // Read labels from GPU buffer
+        let labelsPointer = dbscanBuffers.clusterLabels.contents.bindMemory(to: Int32.self, capacity: deviceCount)
+        let labels = Array(UnsafeBufferPointer(start: labelsPointer, count: deviceCount))
+
+        // Read core points flag
+        let corePointsPointer = dbscanBuffers.corePoints.contents.bindMemory(to: Bool.self, capacity: deviceCount)
+        let corePointsFlags = Array(UnsafeBufferPointer(start: corePointsPointer, count: deviceCount))
+
+        // Read offline flags
+        let offlineFlagsPointer = offlineFlagsBuffer.contents().bindMemory(to: Bool.self, capacity: deviceCount)
+        let offlineFlags = Array(UnsafeBufferPointer(start: offlineFlagsPointer, count: deviceCount))
+
+        // Count statistics
+        var uniqueLabels = Set<Int32>()
+        var noisePoints = 0
+        var corePoints = 0
+
+        for i in 0..<deviceCount {
+            if offlineFlags[i] {
+                if labels[i] == -1 {
+                    noisePoints += 1
+                } else {
+                    uniqueLabels.insert(labels[i])
+                }
+
+                if corePointsFlags[i] {
+                    corePoints += 1
+                }
+            }
+        }
+
+        let clusterCount = uniqueLabels.count
+
+        // Calculate memory usage
+        let labelBufferSize = deviceCount * MemoryLayout<Int32>.size
+        let boolBufferSize = deviceCount * MemoryLayout<Bool>.size
+        let totalMemory = labelBufferSize * 3 + boolBufferSize * 2 + MemoryLayout<Int32>.size
+
+        return DBSCANResult(
+            labels: labels,
+            clusterCount: clusterCount,
+            noisePoints: noisePoints,
+            corePoints: corePoints,
+            iterations: iterations,
+            processingTime: processingTime,
+            memoryUsed: totalMemory
+        )
+    }
+
     /// Get or create pipeline state for a specific function (with caching)
     private func getOrCreatePipelineState(functionName: String) throws -> MTLComputePipelineState {
         guard let function = library.makeFunction(name: functionName) else {
@@ -1076,10 +1342,6 @@ public final class CoordinateTransformer: Sendable {
         }
     }
 
-    /// Get or create the grid build pipeline state (legacy - kept for compatibility)
-    private func getOrCreateGridPipelineState() throws -> MTLComputePipelineState {
-        return try getOrCreatePipelineState(functionName: "buildGridIndex")
-    }
 
     // MARK: - Static Factory Methods
 
@@ -1125,12 +1387,13 @@ private struct UTMParameters {
     let centralMeridian: Float
     let falseEasting: Float
     let scaleFactor: Float
+    let falseNorthing: Float
 }
 
 // MARK: - GPU Grid Index Structures
 
 /// GPU grid indexing parameters
-public struct GridIndexParameters {
+public struct GridIndexParameters: Sendable {
     let minX: Float
     let minY: Float
     let cellSize: Float
@@ -1149,7 +1412,7 @@ public struct GridIndexParameters {
 }
 
 /// GPU grid index result for a single device
-public struct GPUNeighborResult {
+public struct GPUNeighborResult: Sendable {
     let deviceIndex: Int32  // Index of the device
     let neighborCount: Int32  // Number of neighbors found
     let cellX: Int32
@@ -1157,7 +1420,7 @@ public struct GPUNeighborResult {
 }
 
 /// Spatial bounds helper structure
-public struct SpatialBounds {
+public struct SpatialBounds: Sendable {
     public let minX, maxX, minY, maxY: Double
 
     public init(minX: Double, maxX: Double, minY: Double, maxY: Double) {
@@ -1183,11 +1446,11 @@ public struct SpatialBounds {
 }
 
 /// GPU grid structure for efficient neighbor search
-public struct GPUGrid {
-    let cellOffsets: MTLBuffer    // Int[gridWidth*gridHeight] - start index in pointIndices
-    let cellCounts: MTLBuffer     // Int[gridWidth*gridHeight] - num points in cell
-    let pointIndices: MTLBuffer   // Int[totalOffline] - sorted device indices by cell
-    let cellPositions: MTLBuffer  // Int[gridWidth*gridHeight] - temp for atomic append
+public struct GPUGrid: Sendable {
+    let cellOffsets: SendableBuffer    // Int[gridWidth*gridHeight] - start index in pointIndices
+    let cellCounts: SendableBuffer     // Int[gridWidth*gridHeight] - num points in cell
+    let pointIndices: SendableBuffer   // Int[totalOffline] - sorted device indices by cell
+    let cellPositions: SendableBuffer  // Int[gridWidth*gridHeight] - temp for atomic append
 
     init(device: MTLDevice, gridSize: Int, totalPoints: Int) throws {
         guard let cellOffsetsBuffer = device.makeBuffer(
@@ -1209,16 +1472,107 @@ public struct GPUGrid {
             throw MetalTransformError.gpuExecutionFailed("Failed to create GPU grid buffers")
         }
 
-        self.cellOffsets = cellOffsetsBuffer
-        self.cellCounts = cellCountsBuffer
-        self.pointIndices = pointIndicesBuffer
-        self.cellPositions = cellPositionsBuffer
+        self.cellOffsets = SendableBuffer(cellOffsetsBuffer)
+        self.cellCounts = SendableBuffer(cellCountsBuffer)
+        self.pointIndices = SendableBuffer(pointIndicesBuffer)
+        self.cellPositions = SendableBuffer(cellPositionsBuffer)
 
         // Initialize buffers to zero
         memset(cellCountsBuffer.contents(), 0, gridSize * MemoryLayout<Int32>.size)
         memset(cellOffsetsBuffer.contents(), 0, gridSize * MemoryLayout<Int32>.size)
         memset(cellPositionsBuffer.contents(), 0, gridSize * MemoryLayout<Int32>.size)
     }
+
+    // Helper methods to unwrap for kernel use
+    var rawCellOffsets: MTLBuffer { cellOffsets.buffer }
+    var rawCellCounts: MTLBuffer { cellCounts.buffer }
+    var rawPointIndices: MTLBuffer { pointIndices.buffer }
+    var rawCellPositions: MTLBuffer { cellPositions.buffer }
+}
+
+// MARK: - GPU DBSCAN Structures (Phase 2)
+
+/// DBSCAN parameters for GPU clustering
+public struct DBSCANParameters: Sendable {
+    let epsilon: Float              // Search radius in projected meters
+    let minPoints: Int32            // Minimum points to form a cluster
+    let aggregationThreshold: Int32  // Privacy threshold for cluster filtering
+
+    public init(epsilon: Double = 500.0, minPoints: Int = 3, aggregationThreshold: Int = 5) {
+        self.epsilon = Float(epsilon)
+        self.minPoints = Int32(minPoints)
+        self.aggregationThreshold = Int32(aggregationThreshold)
+    }
+}
+
+/// GPU DBSCAN clustering result
+public struct DBSCANResult: Sendable {
+    public let labels: [Int32]              // Cluster labels (-1 for noise)
+    public let clusterCount: Int            // Number of valid clusters found
+    public let noisePoints: Int             // Number of noise points
+    public let corePoints: Int              // Number of core points
+    public let iterations: Int              // Iterations to convergence
+    public let processingTime: Double       // Total GPU processing time
+    public let memoryUsed: Int             // GPU memory used in bytes
+
+    public init(labels: [Int32], clusterCount: Int, noisePoints: Int, corePoints: Int,
+                iterations: Int, processingTime: Double, memoryUsed: Int) {
+        self.labels = labels
+        self.clusterCount = clusterCount
+        self.noisePoints = noisePoints
+        self.corePoints = corePoints
+        self.iterations = iterations
+        self.processingTime = processingTime
+        self.memoryUsed = memoryUsed
+    }
+}
+
+/// GPU buffers for DBSCAN clustering
+public struct GPUDBSCANBuffers: Sendable {
+    let clusterLabels: SendableBuffer    // Int32[deviceCount] - cluster IDs (-1 for noise)
+    let corePoints: SendableBuffer       // Bool[deviceCount] - marks core points
+    let neighborCounts: SendableBuffer   // Int32[deviceCount] - neighbor counts per point
+    let changedFlag: SendableBuffer      // atomic_int - convergence detection flag
+    let tempLabels: SendableBuffer       // Int32[deviceCount] - temporary labels for updates
+
+    init(device: MTLDevice, deviceCount: Int) throws {
+        let labelBufferLength = deviceCount * MemoryLayout<Int32>.size
+        let boolBufferLength = deviceCount * MemoryLayout<Bool>.size
+        let flagBufferLength = MemoryLayout<Int32>.size
+
+        guard let clusterLabelsBuffer = device.makeBuffer(
+                length: labelBufferLength, options: .storageModeShared),
+              let corePointsBuffer = device.makeBuffer(
+                length: boolBufferLength, options: .storageModeShared),
+              let neighborCountsBuffer = device.makeBuffer(
+                length: labelBufferLength, options: .storageModeShared),
+              let changedFlagBuffer = device.makeBuffer(
+                length: flagBufferLength, options: .storageModeShared),
+              let tempLabelsBuffer = device.makeBuffer(
+                length: labelBufferLength, options: .storageModeShared) else {
+            throw MetalTransformError.gpuExecutionFailed("Failed to create DBSCAN buffers")
+        }
+
+        self.clusterLabels = SendableBuffer(clusterLabelsBuffer)
+        self.corePoints = SendableBuffer(corePointsBuffer)
+        self.neighborCounts = SendableBuffer(neighborCountsBuffer)
+        self.changedFlag = SendableBuffer(changedFlagBuffer)
+        self.tempLabels = SendableBuffer(tempLabelsBuffer)
+
+        // Initialize buffers
+        memset(clusterLabelsBuffer.contents(), -1, labelBufferLength)  // -1 for noise/unprocessed
+        memset(corePointsBuffer.contents(), 0, boolBufferLength)       // false for non-core
+        memset(neighborCountsBuffer.contents(), 0, labelBufferLength)  // zero neighbors initially
+        memset(changedFlagBuffer.contents(), 0, flagBufferLength)      // no changes initially
+        memset(tempLabelsBuffer.contents(), -1, labelBufferLength)     // -1 for temp labels
+    }
+
+    // Helper methods to unwrap for kernel use
+    var rawClusterLabels: MTLBuffer { clusterLabels.buffer }
+    var rawCorePoints: MTLBuffer { corePoints.buffer }
+    var rawNeighborCounts: MTLBuffer { neighborCounts.buffer }
+    var rawChangedFlag: MTLBuffer { changedFlag.buffer }
+    var rawTempLabels: MTLBuffer { tempLabels.buffer }
 }
 
 // MARK: - Metal Shader Library
@@ -1245,6 +1599,22 @@ struct UTMParameters {
     float centralMeridian;
     float falseEasting;
     float scaleFactor;
+    float falseNorthing;
+};
+
+// MARK: - DBSCAN GPU Structures (Phase 2)
+
+struct DBSCANParameters {
+    float epsilon;
+    int minPoints;
+    int aggregationThreshold;
+};
+
+struct GPUNeighborResult {
+    int deviceIndex;    // Index of the device
+    int neighborCount;  // Number of neighbors found
+    int cellX;
+    int cellY;
 };
 
 // NZTM Transformation Kernel
@@ -1309,14 +1679,13 @@ kernel void utm_transform(
     float lon = latLon.y * degToRad;
     float centralMeridianRad = params.centralMeridian * degToRad;
 
-    // UTM transformation
+    // UTM transformation using proper hemisphere handling
     float deltaLon = lon - centralMeridianRad;
     float cosLat = cos(lat);
 
-    float falseNorthing = (latLon.x < 0.0f) ? 10000000.0f : 0.0f;
-
+    // Use falseNorthing from parameters (0 for northern, 10000000 for southern hemisphere)
     float x = params.falseEasting + (params.scaleFactor * 6378137.0f * deltaLon * cosLat);
-    float y = falseNorthing + (params.scaleFactor * 6378137.0f * lat);
+    float y = params.falseNorthing + (params.scaleFactor * 6378137.0f * lat);
 
     output[id] = float2(x, y);
 }
@@ -1330,13 +1699,6 @@ struct GridIndexParameters {
     int gridWidth;
     int gridHeight;
     float epsilon;
-};
-
-struct GPUNeighborResult {
-    int deviceIndex;    // Index of the device
-    int neighborCount;  // Number of neighbors found
-    int cellX;
-    int cellY;
 };
 
 // GPU Grid Pass 1: Count points per cell (atomic)
@@ -1487,52 +1849,6 @@ kernel void countNeighborsGrid(
     results[id].cellY = cy;
 }
 
-// Legacy brute-force kernel (kept for fallback/testing)
-kernel void buildGridIndex(
-    const device float2* offlineCoords [[buffer(0)]],
-    const device int* deviceIndices [[buffer(1)]],
-    device GPUNeighborResult* results [[buffer(2)]],
-    constant GridIndexParameters& params [[buffer(3)]],
-    constant uint& totalCount [[buffer(4)]],
-    uint id [[thread_position_in_grid]]
-) {
-    if (id >= totalCount) return;
-
-    float2 coord = offlineCoords[id];
-    int deviceIndex = deviceIndices[id];
-
-    // Calculate grid cell for this device
-    int cellX = int((coord.x - params.minX) / params.cellSize);
-    int cellY = int((coord.y - params.minY) / params.cellSize);
-
-    // Clamp to grid bounds
-    cellX = max(0, min(cellX, params.gridWidth - 1));
-    cellY = max(0, min(cellY, params.gridHeight - 1));
-
-    // Count neighbors within epsilon radius (brute force for fallback)
-    int neighborCount = 0;
-    float epsilonSquared = params.epsilon * params.epsilon;
-
-    // Check all other devices
-    for (uint j = 0; j < totalCount; j++) {
-        if (j == id) continue;
-
-        float2 otherCoord = offlineCoords[j];
-        float dx = coord.x - otherCoord.x;
-        float dy = coord.y - otherCoord.y;
-        float distanceSquared = dx * dx + dy * dy;
-
-        if (distanceSquared <= epsilonSquared) {
-            neighborCount++;
-        }
-    }
-
-    // Store results
-    results[id].deviceIndex = deviceIndex;
-    results[id].neighborCount = neighborCount;
-    results[id].cellX = cellX;
-    results[id].cellY = cellY;
-}
 
 // On-demand neighbor search kernel for findNeighbors queries
 kernel void findNeighborsKernel(
@@ -1586,6 +1902,209 @@ kernel void findNeighborsKernel(
                 outputNeighbors[pos] = otherId;
             }
         }
+    }
+}
+
+// MARK: - DBSCAN GPU Kernels (Phase 2)
+
+// DBSCAN Phase 1: Neighbor search with core point detection
+// Fused kernel that counts neighbors and marks core points in one pass
+kernel void dbscanNeighborSearchKernel(
+    const device float2* coords [[buffer(0)]],              // All device coordinates
+    const device bool* offlineFlags [[buffer(1)]],          // Offline status flags
+    const device int* pointIndices [[buffer(2)]],           // Grid point indices
+    const device int* cellOffsets [[buffer(3)]],            // Grid cell offsets
+    const device int* cellCounts [[buffer(4)]],             // Grid cell counts
+    device int* neighborCounts [[buffer(5)]],               // Output: neighbor counts
+    device bool* corePoints [[buffer(6)]],                  // Output: core point flags
+    constant GridIndexParameters& gridParams [[buffer(7)]], // Grid parameters
+    constant DBSCANParameters& dbscanParams [[buffer(8)]],  // DBSCAN parameters
+    uint id [[thread_position_in_grid]]
+) {
+    // Only process offline devices
+    if (!offlineFlags[id]) {
+        neighborCounts[id] = 0;
+        corePoints[id] = false;
+        return;
+    }
+
+    float2 coord = coords[id];
+
+    // Calculate grid cell for this device
+    int cx = int((coord.x - gridParams.minX) / gridParams.cellSize);
+    int cy = int((coord.y - gridParams.minY) / gridParams.cellSize);
+    cx = max(0, min(cx, gridParams.gridWidth - 1));
+    cy = max(0, min(cy, gridParams.gridHeight - 1));
+
+    int neighborCount = 0;
+    float epsilonSquared = dbscanParams.epsilon * dbscanParams.epsilon;
+
+    // Scan 3x3 neighborhood of cells for neighbors
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int nx = cx + dx;
+            int ny = cy + dy;
+            if (nx < 0 || nx >= gridParams.gridWidth || ny < 0 || ny >= gridParams.gridHeight) continue;
+
+            int cellIdx = ny * gridParams.gridWidth + nx;
+            int start = cellOffsets[cellIdx];
+            int count = cellCounts[cellIdx];
+
+            // Check all points in this neighboring cell
+            for (int j = 0; j < count; j++) {
+                int otherId = pointIndices[start + j];
+                if (otherId == int(id)) continue; // Skip self
+
+                // Only count offline neighbors (density-connected clustering)
+                if (!offlineFlags[otherId]) continue;
+
+                float2 otherCoord = coords[otherId];
+                float dx_dist = coord.x - otherCoord.x;
+                float dy_dist = coord.y - otherCoord.y;
+                float distanceSquared = dx_dist * dx_dist + dy_dist * dy_dist;
+
+                if (distanceSquared <= epsilonSquared) {
+                    neighborCount++;
+                }
+            }
+        }
+    }
+
+    // Store neighbor count and determine if this is a core point
+    neighborCounts[id] = neighborCount;
+    corePoints[id] = (neighborCount >= dbscanParams.minPoints);
+}
+
+// DBSCAN Phase 2a: Initialize cluster labels for core points
+kernel void dbscanInitializeLabelsKernel(
+    const device bool* offlineFlags [[buffer(0)]],          // Offline status flags
+    const device bool* corePoints [[buffer(1)]],            // Core point flags
+    device int* clusterLabels [[buffer(2)]],                // Output: initial cluster labels
+    device atomic_int* changedFlag [[buffer(3)]],           // Changed flag for convergence
+    uint id [[thread_position_in_grid]]
+) {
+    if (!offlineFlags[id]) {
+        clusterLabels[id] = -1; // Non-offline devices are noise
+        return;
+    }
+
+    if (corePoints[id]) {
+        // Core points get their own ID as initial cluster label
+        clusterLabels[id] = int(id);
+        atomic_store_explicit(changedFlag, 1, memory_order_relaxed); // Mark as changed for first iteration
+    } else {
+        // Non-core points start as noise (-1)
+        clusterLabels[id] = -1;
+    }
+}
+
+// DBSCAN Phase 2b: Label propagation with union-find
+// Iteratively propagate cluster labels through offline connections
+kernel void dbscanLabelPropagationKernel(
+    const device float2* coords [[buffer(0)]],              // All device coordinates
+    const device bool* offlineFlags [[buffer(1)]],          // Offline status flags
+    const device bool* corePoints [[buffer(2)]],            // Core point flags
+    const device int* pointIndices [[buffer(3)]],           // Grid point indices
+    const device int* cellOffsets [[buffer(4)]],            // Grid cell offsets
+    const device int* cellCounts [[buffer(5)]],             // Grid cell counts
+    device atomic_int* clusterLabels [[buffer(6)]],         // Cluster labels (atomic for updates)
+    device atomic_int* changedFlag [[buffer(7)]],           // Changed flag for convergence
+    constant GridIndexParameters& gridParams [[buffer(8)]], // Grid parameters
+    constant DBSCANParameters& dbscanParams [[buffer(9)]],  // DBSCAN parameters
+    uint id [[thread_position_in_grid]]
+) {
+    // Only process offline devices
+    if (!offlineFlags[id]) return;
+
+    int currentLabel = atomic_load_explicit(&clusterLabels[id], memory_order_relaxed);
+
+    // Skip if this device is still noise and not a core point
+    if (currentLabel == -1 && !corePoints[id]) return;
+
+    float2 coord = coords[id];
+
+    // Calculate grid cell for this device
+    int cx = int((coord.x - gridParams.minX) / gridParams.cellSize);
+    int cy = int((coord.y - gridParams.minY) / gridParams.cellSize);
+    cx = max(0, min(cx, gridParams.gridWidth - 1));
+    cy = max(0, min(cy, gridParams.gridHeight - 1));
+
+    float epsilonSquared = dbscanParams.epsilon * dbscanParams.epsilon;
+    int minLabel = currentLabel == -1 ? INT_MAX : currentLabel;
+
+    // Scan 3x3 neighborhood for connected components
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int nx = cx + dx;
+            int ny = cy + dy;
+            if (nx < 0 || nx >= gridParams.gridWidth || ny < 0 || ny >= gridParams.gridHeight) continue;
+
+            int cellIdx = ny * gridParams.gridWidth + nx;
+            int start = cellOffsets[cellIdx];
+            int count = cellCounts[cellIdx];
+
+            // Check all points in this neighboring cell
+            for (int j = 0; j < count; j++) {
+                int otherId = pointIndices[start + j];
+                if (otherId == int(id)) continue; // Skip self
+
+                // Only connect through offline devices
+                if (!offlineFlags[otherId]) continue;
+
+                float2 otherCoord = coords[otherId];
+                float dx_dist = coord.x - otherCoord.x;
+                float dy_dist = coord.y - otherCoord.y;
+                float distanceSquared = dx_dist * dx_dist + dy_dist * dy_dist;
+
+                if (distanceSquared <= epsilonSquared) {
+                    int otherLabel = atomic_load_explicit(&clusterLabels[otherId], memory_order_relaxed);
+
+                    // Union-find: merge clusters by finding minimum label
+                    if (otherLabel != -1 && otherLabel < minLabel) {
+                        minLabel = otherLabel;
+                    }
+
+                    // For non-core points, adopt label from any connected core point
+                    if (!corePoints[id] && corePoints[otherId] && otherLabel != -1) {
+                        minLabel = min(minLabel == INT_MAX ? otherLabel : minLabel, otherLabel);
+                    }
+                }
+            }
+        }
+    }
+
+    // Update label if we found a better (smaller) one
+    if (minLabel != INT_MAX && minLabel != currentLabel) {
+        int oldLabel = atomic_exchange_explicit(&clusterLabels[id], minLabel, memory_order_relaxed);
+        if (oldLabel != minLabel) {
+            atomic_store_explicit(changedFlag, 1, memory_order_relaxed);
+        }
+    }
+}
+
+// DBSCAN Phase 2c: Finalize labels with path compression
+kernel void dbscanFinalizeLabelsKernel(
+    const device bool* offlineFlags [[buffer(0)]],          // Offline status flags
+    device int* clusterLabels [[buffer(1)]],                // Cluster labels to finalize
+    uint id [[thread_position_in_grid]]
+) {
+    if (!offlineFlags[id]) {
+        clusterLabels[id] = -1; // Ensure non-offline devices are noise
+        return;
+    }
+
+    int label = clusterLabels[id];
+    if (label == -1) return; // Already noise
+
+    // Path compression: follow chain to find root label
+    int root = label;
+    while (root != int(id) && clusterLabels[root] != root && clusterLabels[root] != -1) {
+        root = clusterLabels[root];
+    }
+
+    // Update with compressed path
+    if (root != label) {
+        clusterLabels[id] = root;
     }
 }
 """
