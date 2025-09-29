@@ -38,6 +38,12 @@ struct MapView: View {
     @Query private var powerSenseEvents: [PowerSenseEvent]
     @Query private var powerSenseDevices: [PowerSenseDevice]
 
+    // Phase 3: GPU-accelerated spatial clustering for outage visualization
+    @State private var spatialClusters: [DeviceCluster] = []
+    @State private var isClusteringInProgress = false
+    @State private var showOutagePolygons = true
+    @State private var lastClusteringTime: Date?
+
     // TEST ONLY: Device circle rendering (easily removable)
     @State private var showTestDeviceCircles = false // Set to false to disable
 
@@ -141,8 +147,32 @@ struct MapView: View {
                 logger.info("🏁 MapView onAppear - PowerSense overlay enabled: \(showPowerSenseOverlay)")
                 // Only initialize if PowerSense overlay is actually enabled
                 if showPowerSenseOverlay {
+                    Task {
+                        await performSpatialClustering()
+                    }
                 } else {
                     logger.info("⏭️ Skipping PowerSense initialization - overlay disabled")
+                }
+            }
+            .onChange(of: showPowerSenseOverlay) { _, isEnabled in
+                logger.info("🔄 PowerSense overlay toggled: \(isEnabled)")
+                if isEnabled {
+                    Task {
+                        await performSpatialClustering()
+                    }
+                } else {
+                    // Clear clusters when overlay is disabled
+                    spatialClusters = []
+                    logger.info("🧹 Cleared spatial clusters - overlay disabled")
+                }
+            }
+            .onChange(of: offlinePowerSenseDevices.count) { _, newCount in
+                // Re-cluster when offline device count changes
+                logger.info("📱 Offline device count changed: \(newCount)")
+                if showPowerSenseOverlay && newCount > 0 {
+                    Task {
+                        await performSpatialClustering()
+                    }
                 }
             }
     }
@@ -173,6 +203,11 @@ struct MapView: View {
     private var mapContent: some View {
         Map(position: $cameraPosition) {
             siteAnnotations
+
+            // Phase 3: Render outage polygons from spatial clustering
+            if showOutagePolygons && showPowerSenseOverlay {
+                outagePolygonOverlays
+            }
         }
     }
 
@@ -187,7 +222,70 @@ struct MapView: View {
             }
         }
     }
-    
+
+    // MARK: - Phase 3 Outage Polygon Overlays
+
+    @MapContentBuilder
+    private var outagePolygonOverlays: some MapContent {
+        ForEach(spatialClusters.indices, id: \.self) { index in
+            let cluster = spatialClusters[index]
+            if let polygon = cluster.polygon, cluster.hullVertices.count >= 3 {
+                MapPolygon(polygon)
+                    .foregroundStyle(polygonStyle(for: cluster))
+                    .stroke(strokeStyle(for: cluster), lineWidth: strokeWidth(for: cluster))
+            } else if cluster.hullVertices.count >= 3 {
+                // Debug: cluster has hull vertices but no polygon
+                let _ = logger.debug("🚨 Cluster \(index) has \(cluster.hullVertices.count) hull vertices but no polygon for rendering")
+            }
+        }
+    }
+
+    // MARK: - Phase 3 Styling Functions
+
+    private func polygonStyle(for cluster: DeviceCluster) -> Color {
+        // Style based on confidence and severity
+        let alpha = min(0.8, max(0.2, cluster.confidenceRating)) // 20%-80% opacity based on confidence
+
+        switch cluster.severity {
+        case .critical:
+            return Color.red.opacity(alpha)
+        case .major:
+            return Color.orange.opacity(alpha)
+        case .moderate:
+            return Color.yellow.opacity(alpha)
+        case .minor:
+            return Color.blue.opacity(alpha)
+        }
+    }
+
+    private func strokeStyle(for cluster: DeviceCluster) -> Color {
+        // Darker stroke for better visibility
+        switch cluster.severity {
+        case .critical:
+            return Color.red.opacity(0.9)
+        case .major:
+            return Color.orange.opacity(0.9)
+        case .moderate:
+            return Color.yellow.opacity(0.9)
+        case .minor:
+            return Color.blue.opacity(0.9)
+        }
+    }
+
+    private func strokeWidth(for cluster: DeviceCluster) -> CGFloat {
+        // Thicker strokes for higher confidence and severity
+        let baseWidth: CGFloat = 1.5
+        let confidenceMultiplier = 1.0 + cluster.confidenceRating // 1.0-2.0 range
+        let severityMultiplier: CGFloat = switch cluster.severity {
+        case .critical: 2.0
+        case .major: 1.5
+        case .moderate: 1.2
+        case .minor: 1.0
+        }
+
+        return baseWidth * CGFloat(confidenceMultiplier) * severityMultiplier
+    }
+
     @ViewBuilder
     private var mapControlsContent: some View {
         MapCompass()
@@ -307,10 +405,10 @@ struct MapView: View {
         guard let lastUpdate = lastUpdate else {
             return .gray // Default color if no update is available
         }
-        
+
         let now = Date()
         let timeDifference = now.timeIntervalSince(lastUpdate)
-        
+
         switch timeDifference {
         case let diff where diff < 300: // Less than 5 minutes
             return .green
@@ -318,6 +416,92 @@ struct MapView: View {
             return .orange
         default: // More than 10 minutes
             return .red
+        }
+    }
+
+    // MARK: - Phase 3 Spatial Clustering Integration
+
+    private func performSpatialClustering() async {
+        guard !isClusteringInProgress else {
+            logger.info("⏸️ Spatial clustering already in progress, skipping")
+            return
+        }
+
+        let offlineDevices = offlinePowerSenseDevices
+        let totalDevices = powerSenseDevices.count
+        let onlineDevices = onlinePowerSenseDevices.count
+        let unknownDevices = unknownStatusDevices.count
+
+        logger.info("📊 PowerSense Device Status - Total: \(totalDevices), Online: \(onlineDevices), Offline: \(offlineDevices.count), Unknown: \(unknownDevices)")
+
+        guard !offlineDevices.isEmpty else {
+            logger.info("📍 No offline devices found for clustering (need devices with isOffline = true)")
+            await MainActor.run {
+                spatialClusters = []
+            }
+            return
+        }
+
+        logger.info("🚀 Starting spatial clustering for \(offlineDevices.count) offline devices")
+
+        await MainActor.run {
+            isClusteringInProgress = true
+        }
+
+        do {
+            let clusteringActor = try SpatialClusteringActor(
+                modelContainer: modelContext.container,
+                config: SpatialClusteringConfig.default
+            )
+
+            // Perform GPU-accelerated clustering with Phase 3 hull computation
+            let result = try await clusteringActor.clusterAllDevices()
+
+            // Use DeviceCluster results with polygon data from Phase 3
+            let clusters = result.clusters
+
+            await MainActor.run {
+                self.spatialClusters = clusters
+                self.isClusteringInProgress = false
+                self.lastClusteringTime = Date()
+
+                logger.info("✅ Spatial clustering completed: \(clusters.count) clusters generated")
+
+                // Log cluster statistics
+                let totalDevicesInClusters = clusters.reduce(0) { $0 + $1.deviceCount }
+                let avgConfidence = clusters.isEmpty ? 0.0 : clusters.map(\.confidenceRating).reduce(0, +) / Double(clusters.count)
+                let clustersWithPolygons = clusters.filter { $0.polygon != nil }.count
+
+                logger.info("📊 Cluster stats - Total devices: \(totalDevicesInClusters), Avg confidence: \(String(format: "%.2f", avgConfidence))")
+                logger.info("🗺️ Polygon stats - \(clustersWithPolygons)/\(clusters.count) clusters have polygons for rendering")
+
+                // Debug: Print coordinate bounds for first few clusters
+                if !clusters.isEmpty {
+                    logger.info("🗺️ Cluster coordinate ranges:")
+                    for (index, cluster) in clusters.prefix(3).enumerated() {
+                        if !cluster.hullVertices.isEmpty {
+                            let lats = cluster.hullVertices.map(\.latitude)
+                            let lons = cluster.hullVertices.map(\.longitude)
+                            let minLat = lats.min() ?? 0, maxLat = lats.max() ?? 0
+                            let minLon = lons.min() ?? 0, maxLon = lons.max() ?? 0
+                            logger.info("   Cluster \(index): lat[\(String(format: "%.3f", minLat)), \(String(format: "%.3f", maxLat))] lon[\(String(format: "%.3f", minLon)), \(String(format: "%.3f", maxLon))]")
+                        }
+                    }
+                }
+
+                // Debug individual clusters
+                for (index, cluster) in clusters.enumerated() {
+                    logger.debug("📍 Cluster \(index): \(cluster.deviceCount) devices, \(cluster.hullVertices.count) hull vertices, polygon: \(cluster.polygon != nil ? "✓" : "✗")")
+                }
+            }
+
+        } catch {
+            logger.error("❌ Spatial clustering failed: \(error.localizedDescription)")
+
+            await MainActor.run {
+                isClusteringInProgress = false
+                // Keep existing clusters on error rather than clearing
+            }
         }
     }
 }

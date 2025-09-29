@@ -21,6 +21,7 @@
 //
 
 public import CoreLocation
+import MapKit
 import OSLog
 import Metal
 
@@ -36,7 +37,7 @@ public protocol SpatialDevice {
 
 // MARK: - Spatial Clustering Types
 
-public struct DeviceCluster: Identifiable {
+public struct DeviceCluster: Identifiable, @unchecked Sendable {
     public let id: Int
     public let clusterId: Int
     public let devices: [any SpatialDevice]
@@ -50,7 +51,14 @@ public struct DeviceCluster: Identifiable {
     // Confidence metrics for cluster quality assessment
     public let confidenceRating: Double    // 0.0 to 1.0 (offline devices / total devices in cluster area)
     public let totalDevicesInArea: Int     // Total devices considered for this cluster
-    
+
+    // Phase 3: Visualization polygons for MapKit rendering
+    internal let polygon: MKPolygon?         // Convex hull polygon for map overlays
+    public let hullVertices: [CLLocationCoordinate2D] // Raw hull vertices for debugging/export
+
+    // Computed property for MapView compatibility
+    public var deviceCount: Int { devices.count }
+
     public enum ClusterSeverity: Sendable {
         case minor      // 3-9 devices
         case moderate   // 10-49 devices
@@ -67,7 +75,7 @@ public struct DeviceCluster: Identifiable {
         }
     }
     
-    public init(clusterId: Int, devices: [any SpatialDevice], projectedCoordinates: [ProjectedCoordinate], projectionSystem: ProjectionSystem, confidenceRating: Double = 1.0, totalDevicesInArea: Int = 0) {
+    public init(clusterId: Int, devices: [any SpatialDevice], projectedCoordinates: [ProjectedCoordinate], projectionSystem: ProjectionSystem, confidenceRating: Double = 1.0, totalDevicesInArea: Int = 0, hullVertices: [CLLocationCoordinate2D] = []) {
         self.id = clusterId
         self.clusterId = clusterId
         self.devices = devices
@@ -79,6 +87,8 @@ public struct DeviceCluster: Identifiable {
             self.boundingBox = BoundingBox(minX: 0, maxX: 0, minY: 0, maxY: 0, projectionSystem: projectionSystem)
             self.centroidCoordinate = CLLocationCoordinate2D()
             self.severity = .minor
+            self.hullVertices = []
+            self.polygon = nil
             return
         }
 
@@ -119,6 +129,15 @@ public struct DeviceCluster: Identifiable {
             self.severity = .major
         default:
             self.severity = .critical
+        }
+
+        // Phase 3: Initialize hull vertices and polygon
+        self.hullVertices = hullVertices
+        if hullVertices.count >= 3 {
+            // Create MKPolygon from hull vertices (ensure clockwise for proper rendering)
+            self.polygon = MKPolygon(coordinates: hullVertices, count: hullVertices.count)
+        } else {
+            self.polygon = nil
         }
     }
 }

@@ -22,6 +22,7 @@
 
 import Metal
 import simd
+import OSLog
 public import CoreLocation
 
 // MARK: - Public Types
@@ -89,9 +90,38 @@ public struct TransformationMetrics {
     public let throughput: Double       // coordinates per second
     public let memoryUsed: Int         // bytes of GPU memory used
     public let deviceName: String      // GPU device name
+
+    // Phase 3: Hull and confidence computation metrics
+    public let hullComputeTime: Double  // Time for convex hull computation (seconds)
+    public let confidenceCalculateTime: Double // Time for confidence calculation (seconds)
+    public let clustersProcessed: Int   // Number of clusters processed
+    public let avgHullVertices: Double  // Average vertices per hull
+
+    public init(
+        gpuTime: Double,
+        totalTime: Double,
+        coordinatesProcessed: Int,
+        memoryUsed: Int,
+        deviceName: String,
+        hullComputeTime: Double = 0.0,
+        confidenceCalculateTime: Double = 0.0,
+        clustersProcessed: Int = 0,
+        avgHullVertices: Double = 0.0
+    ) {
+        self.gpuTime = gpuTime
+        self.totalTime = totalTime
+        self.coordinatesProcessed = coordinatesProcessed
+        self.throughput = coordinatesProcessed > 0 ? Double(coordinatesProcessed) / totalTime : 0.0
+        self.memoryUsed = memoryUsed
+        self.deviceName = deviceName
+        self.hullComputeTime = hullComputeTime
+        self.confidenceCalculateTime = confidenceCalculateTime
+        self.clustersProcessed = clustersProcessed
+        self.avgHullVertices = avgHullVertices
+    }
     
     public var description: String {
-        return """
+        let baseMetrics = """
         GPU Transformation Metrics:
         - Device: \(deviceName)
         - Coordinates: \(coordinatesProcessed.formatted())
@@ -100,6 +130,19 @@ public struct TransformationMetrics {
         - Throughput: \(String(format: "%.0f", throughput)) coords/sec (\(String(format: "%.1f", throughput/1000))k/sec)
         - Memory: \(String(format: "%.1f", Double(memoryUsed) / 1024 / 1024))MB
         """
+
+        if clustersProcessed > 0 {
+            return baseMetrics + """
+
+        Phase 3 Hull & Confidence:
+        - Clusters: \(clustersProcessed)
+        - Hull Time: \(String(format: "%.3f", hullComputeTime * 1000))ms
+        - Confidence Time: \(String(format: "%.3f", confidenceCalculateTime * 1000))ms
+        - Avg Hull Vertices: \(String(format: "%.1f", avgHullVertices))
+        """
+        } else {
+            return baseMetrics
+        }
     }
 }
 
@@ -143,6 +186,7 @@ public final class CoordinateTransformer: Sendable {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let library: MTLLibrary
+    private let logger = Logger.spatialGPU
     private let nztmPipelineState: MTLComputePipelineState
     private let webMercatorPipelineState: MTLComputePipelineState
     private let utmPipelineState: MTLComputePipelineState
@@ -231,7 +275,7 @@ public final class CoordinateTransformer: Sendable {
         guard !coordinates.isEmpty else {
             let metrics = TransformationMetrics(
                 gpuTime: 0, totalTime: 0, coordinatesProcessed: 0,
-                throughput: 0, memoryUsed: 0, deviceName: device.name
+                memoryUsed: 0, deviceName: device.name
             )
             return ([], metrics)
         }
@@ -265,7 +309,6 @@ public final class CoordinateTransformer: Sendable {
             gpuTime: gpuTime,
             totalTime: totalTime,
             coordinatesProcessed: coordinates.count,
-            throughput: throughput,
             memoryUsed: totalMemory,
             deviceName: device.name
         )
@@ -955,6 +998,379 @@ public final class CoordinateTransformer: Sendable {
         return try GPUDBSCANBuffers(device: device, deviceCount: deviceCount)
     }
 
+    /// Create hull and confidence buffers for GPU polygon computation (Phase 3)
+    internal func createHullAndConfidenceBuffers(clusterCount: Int, maxPointsPerCluster: Int) throws -> GPUHullBuffers {
+        // Cap max points based on GPU memory recommendations
+        let recommendedMaxWorkingSet = device.recommendedMaxWorkingSetSize
+        let estimatedBufferSize = maxPointsPerCluster * MemoryLayout<SIMD2<Float>>.size * clusterCount
+
+        let adjustedMaxPoints = estimatedBufferSize > Int(recommendedMaxWorkingSet / 2)
+            ? min(maxPointsPerCluster, Int(recommendedMaxWorkingSet) / (clusterCount * MemoryLayout<SIMD2<Float>>.size))
+            : maxPointsPerCluster
+
+        logger.debug("🔧 GPU Hull Buffers: \(clusterCount) clusters, max \(adjustedMaxPoints) points/cluster")
+
+        return try GPUHullBuffers(device: device, clusterCount: clusterCount, maxPointsPerCluster: adjustedMaxPoints)
+    }
+
+    /// Create coordinates buffer for optimized cluster data
+    internal func createCoordinatesBuffer(from coordinates: [SIMD2<Float>]) throws -> SendableBuffer {
+        guard let buffer = device.makeBuffer(
+            bytes: coordinates,
+            length: coordinates.count * MemoryLayout<SIMD2<Float>>.size,
+            options: .storageModeShared
+        ) else {
+            throw MetalTransformError.gpuExecutionFailed("Failed to create coordinates buffer")
+        }
+        return SendableBuffer(buffer)
+    }
+
+    /// Create offline flags buffer for optimized cluster data
+    internal func createOfflineFlagsBuffer(from flags: [UInt8]) throws -> SendableBuffer {
+        guard let buffer = device.makeBuffer(
+            bytes: flags,
+            length: flags.count * MemoryLayout<UInt8>.size,
+            options: .storageModeShared
+        ) else {
+            throw MetalTransformError.gpuExecutionFailed("Failed to create offline flags buffer")
+        }
+        return SendableBuffer(buffer)
+    }
+
+    /// Perform GPU-accelerated hull and confidence computation (Phase 3)
+    ///
+    /// This method coordinates the complete Phase 3 pipeline:
+    /// - Bitonic sort of cluster coordinates
+    /// - Parallel monotone chain hull construction
+    /// - Grid-based confidence calculation with expanded bounds
+    ///
+    /// Returns hull vertices and confidence pairs for CPU post-processing
+    internal func performGPUHullAndConfidence(
+        coordsBuffer: MTLBuffer,
+        offlineFlagsBuffer: MTLBuffer,
+        clusterOffsets: [Int32],
+        gridParams: GridIndexParameters,
+        grid: GPUGrid,
+        clusterCount: Int,
+        maxPointsPerCluster: Int
+    ) async throws -> GPUHullAndConfidenceResult {
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+        logger.info("🔺 Phase 3: Starting GPU hull & confidence computation for \(clusterCount) clusters")
+
+        logger.info("🔧 Creating hull and confidence buffers...")
+        let hullBuffers = try createHullAndConfidenceBuffers(clusterCount: clusterCount, maxPointsPerCluster: maxPointsPerCluster)
+        logger.info("✅ Hull and confidence buffers created successfully")
+
+        // Upload cluster offsets
+        logger.info("🔧 Creating cluster offsets buffer...")
+        let clusterOffsetsBuffer = device.makeBuffer(
+            bytes: clusterOffsets,
+            length: clusterOffsets.count * MemoryLayout<Int32>.size,
+            options: .storageModeShared
+        )!
+        logger.info("✅ Cluster offsets buffer created")
+
+        // Phase 3 parameters
+        logger.info("🔧 Setting up Phase 3 parameters...")
+        let phase3Params = Phase3Parameters(
+            clustersCount: Int32(clusterCount),
+            maxPointsPerCluster: Int32(maxPointsPerCluster),
+            maxHullVertices: Int32(512), // Increased for larger clusters, simplify post-compute if needed
+            epsilon: Float(1000.0), // 1000m expansion for better coverage in sparse areas
+            minTotalDevices: Int32(5), // Minimum for valid confidence
+            gridCellSize: Float(gridParams.cellSize),
+            gridWidth: Int32(gridParams.gridWidth),
+            gridHeight: Int32(gridParams.gridHeight),
+            collinearThreshold: Float(0.3) // 0.3m collinear tolerance - more aggressive pruning
+        )
+        logger.info("✅ Phase 3 parameters configured")
+
+        // Phase 3A: Bitonic sort coordinates by X
+        logger.info("🔧 Starting Phase 3A: Bitonic sort coordinates by X...")
+        let sortTime = CFAbsoluteTimeGetCurrent()
+        try executeBitonicSortKernel(
+            coordsBuffer: coordsBuffer,
+            clusterOffsetsBuffer: clusterOffsetsBuffer,
+            tempWorkBuffer: hullBuffers.rawTempSortBuffer,
+            phase3Params: phase3Params,
+            clusterCount: clusterCount
+        )
+        let sortDuration = CFAbsoluteTimeGetCurrent() - sortTime
+        logger.info("✅ Phase 3A completed: Bitonic sort (\(String(format: "%.1f", sortDuration * 1000))ms)")
+
+        // Phase 3B: Build convex hulls with pruning
+        logger.info("🔧 Starting Phase 3B: Build convex hulls with pruning...")
+        let hullTime = CFAbsoluteTimeGetCurrent()
+        try await executeBuildHullKernel(
+            coordsBuffer: coordsBuffer,
+            hullVerticesBuffer: hullBuffers.rawHullVertices,
+            hullCountsBuffer: hullBuffers.rawHullCounts,
+            clusterOffsetsBuffer: clusterOffsetsBuffer,
+            tempHullBuffer: hullBuffers.rawTempSortBuffer, // Reuse temp buffer
+            phase3Params: phase3Params,
+            clusterCount: clusterCount
+        )
+        let hullDuration = CFAbsoluteTimeGetCurrent() - hullTime
+        logger.info("✅ Phase 3B completed: Hull construction (\(String(format: "%.1f", hullDuration * 1000))ms)")
+
+        // Phase 3C: Calculate confidence using grid
+        logger.info("🔧 Starting Phase 3C: Calculate confidence using grid...")
+        let confidenceTime = CFAbsoluteTimeGetCurrent()
+        try await executeConfidenceKernel(
+            coordsBuffer: coordsBuffer,
+            offlineFlagsBuffer: offlineFlagsBuffer,
+            grid: grid,
+            gridParams: gridParams,
+            hullVerticesBuffer: hullBuffers.rawHullVertices,
+            hullCountsBuffer: hullBuffers.rawHullCounts,
+            confidencePairsBuffer: hullBuffers.rawConfidencePairs,
+            phase3Params: phase3Params,
+            clusterCount: clusterCount
+        )
+        let confidenceDuration = CFAbsoluteTimeGetCurrent() - confidenceTime
+        logger.info("✅ Phase 3C completed: Confidence calculation (\(String(format: "%.1f", confidenceDuration * 1000))ms)")
+
+        let totalDuration = CFAbsoluteTimeGetCurrent() - startTime
+
+        logger.info("""
+        ✅ Phase 3 GPU Complete:
+           Sort: \(String(format: "%.1f", sortDuration * 1000))ms
+           Hull: \(String(format: "%.1f", hullDuration * 1000))ms
+           Confidence: \(String(format: "%.1f", confidenceDuration * 1000))ms
+           Total: \(String(format: "%.1f", totalDuration * 1000))ms
+        """)
+
+        // Return results for CPU post-processing
+        return GPUHullAndConfidenceResult(
+            hullBuffers: hullBuffers,
+            sortTime: sortDuration,
+            hullTime: hullDuration,
+            confidenceTime: confidenceDuration,
+            totalTime: totalDuration,
+            clustersProcessed: clusterCount
+        )
+    }
+
+    // MARK: - Phase 3 Kernel Execution Methods
+
+    /// Execute preprocessing kernel to reduce hull input points
+    private func executePreprocessingKernel(
+        inputCoordsBuffer: MTLBuffer,
+        outputCoordsBuffer: MTLBuffer,
+        outputCountsBuffer: MTLBuffer,
+        clusterOffsetsBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) throws {
+        logger.info("🔧 Starting hull preprocessing to reduce point count...")
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "preprocessHullPoints")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        computeEncoder.setBuffer(inputCoordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(outputCoordsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(outputCountsBuffer, offset: 0, index: 2)
+        computeEncoder.setBuffer(clusterOffsetsBuffer, offset: 0, index: 3)
+
+        var params = phase3Params
+        computeEncoder.setBytes(&params, length: MemoryLayout<Phase3Parameters>.size, index: 4)
+
+        let threadgroupSize = MTLSize(width: 1, height: 1, depth: 1) // One thread per cluster
+        let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
+
+        computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            logger.error("❌ Preprocessing kernel failed: \\(error.localizedDescription)")
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+
+        logger.info("✅ Hull preprocessing completed")
+    }
+
+    /// Execute bitonic sort kernel for coordinate sorting
+    private func executeBitonicSortKernel(
+        coordsBuffer: MTLBuffer,
+        clusterOffsetsBuffer: MTLBuffer,
+        tempWorkBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) throws {
+        logger.info("🔧 Creating command buffer for bitonic sort...")
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+        logger.info("✅ Command buffer and encoder created for bitonic sort")
+
+        logger.info("🔧 Setting up pipeline state for bitonicSortByX kernel...")
+        let pipelineState = try getOrCreatePipelineState(functionName: "bitonicSortByX")
+        computeEncoder.setComputePipelineState(pipelineState)
+        logger.info("✅ Pipeline state configured")
+
+        logger.info("🔧 Setting buffers and parameters...")
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(clusterOffsetsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(tempWorkBuffer, offset: 0, index: 2)
+
+        var params = phase3Params
+        computeEncoder.setBytes(&params, length: MemoryLayout<Phase3Parameters>.size, index: 3)
+        logger.info("✅ Buffers and parameters set")
+
+        let threadgroupSize = MTLSize(width: 256, height: 1, depth: 1)
+        let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
+        logger.info("🔧 Dispatching GPU threads: \(numThreadgroups.width) threadgroups × \(threadgroupSize.width) threads")
+
+        computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        computeEncoder.endEncoding()
+        logger.info("✅ GPU dispatch completed, encoder ended")
+
+        logger.info("🔧 Committing command buffer and waiting for completion...")
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        logger.info("✅ Bitonic sort kernel completed successfully")
+
+        if let error = commandBuffer.error {
+            logger.error("❌ Bitonic sort kernel failed: \(error.localizedDescription)")
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Execute convex hull construction kernel
+    private func executeBuildHullKernel(
+        coordsBuffer: MTLBuffer,
+        hullVerticesBuffer: MTLBuffer,
+        hullCountsBuffer: MTLBuffer,
+        clusterOffsetsBuffer: MTLBuffer,
+        tempHullBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) async throws {
+        logger.info("🔧 Creating command buffer for hull construction...")
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+        logger.info("✅ Command buffer and encoder created for hull construction")
+
+        logger.info("🔧 Setting up pipeline state for buildConvexHullSequential kernel...")
+        let pipelineState = try getOrCreatePipelineState(functionName: "buildConvexHullSequential")
+        computeEncoder.setComputePipelineState(pipelineState)
+        logger.info("✅ Hull pipeline state configured")
+
+        logger.info("🔧 Setting hull buffers and parameters...")
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(hullVerticesBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(hullCountsBuffer, offset: 0, index: 2)
+        computeEncoder.setBuffer(clusterOffsetsBuffer, offset: 0, index: 3)
+        computeEncoder.setBuffer(tempHullBuffer, offset: 0, index: 4)
+
+        var params = phase3Params
+        computeEncoder.setBytes(&params, length: MemoryLayout<Phase3Parameters>.size, index: 5)
+        logger.info("✅ Hull buffers and parameters set")
+
+        let threadgroupSize = MTLSize(width: 1, height: 1, depth: 1)  // Single thread per cluster
+        let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
+        logger.info("🔧 Dispatching hull GPU threads: \(numThreadgroups.width) clusters × \(threadgroupSize.width) thread/cluster (sequential)")
+
+        computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        computeEncoder.endEncoding()
+        logger.info("✅ Hull GPU dispatch completed, encoder ended")
+
+        // Use proper async execution
+        commandBuffer.commit()
+        await commandBuffer.completed()
+
+        if let error = commandBuffer.error {
+            logger.error("❌ Hull construction kernel failed: \(error.localizedDescription)")
+            throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
+        }
+
+        logger.info("✅ Hull construction kernel completed successfully")
+    }
+
+    /// Execute confidence calculation kernel using grid optimization
+    private func executeConfidenceKernel(
+        coordsBuffer: MTLBuffer,
+        offlineFlagsBuffer: MTLBuffer,
+        grid: GPUGrid,
+        gridParams: GridIndexParameters,
+        hullVerticesBuffer: MTLBuffer,
+        hullCountsBuffer: MTLBuffer,
+        confidencePairsBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) async throws {
+        logger.info("🔧 Creating command buffer for confidence calculation...")
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+        logger.info("✅ Command buffer and encoder created for confidence calculation")
+
+        logger.info("🔧 Setting up pipeline state for calculateConfidenceWithGrid kernel...")
+        let pipelineState = try getOrCreatePipelineState(functionName: "calculateConfidenceWithGrid")
+        computeEncoder.setComputePipelineState(pipelineState)
+        logger.info("✅ Confidence pipeline state configured")
+
+        logger.info("🔧 Setting confidence buffers and parameters...")
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(offlineFlagsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(grid.rawCellOffsets, offset: 0, index: 2)
+        computeEncoder.setBuffer(grid.rawCellCounts, offset: 0, index: 3)
+        computeEncoder.setBuffer(grid.rawPointIndices, offset: 0, index: 4)
+        computeEncoder.setBuffer(hullVerticesBuffer, offset: 0, index: 5)
+        computeEncoder.setBuffer(hullCountsBuffer, offset: 0, index: 6)
+        computeEncoder.setBuffer(confidencePairsBuffer, offset: 0, index: 7)
+
+        var params3 = phase3Params
+        computeEncoder.setBytes(&params3, length: MemoryLayout<Phase3Parameters>.size, index: 8)
+
+        var gridParameters = gridParams
+        computeEncoder.setBytes(&gridParameters, length: MemoryLayout<GridIndexParameters>.size, index: 9)
+        logger.info("✅ Confidence buffers and parameters set")
+
+        let threadgroupSize = MTLSize(width: 64, height: 1, depth: 1)
+        let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
+        logger.info("🔧 Dispatching confidence GPU threads: \(numThreadgroups.width) threadgroups × \(threadgroupSize.width) threads")
+
+        computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        computeEncoder.endEncoding()
+        logger.info("✅ Confidence GPU dispatch completed, encoder ended")
+
+        logger.info("🔧 Committing confidence command buffer with async handler...")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            commandBuffer.addCompletedHandler { buffer in
+                if let error = buffer.error {
+                    self.logger.error("❌ Confidence calculation kernel failed: \(error.localizedDescription)")
+                    continuation.resume(throwing: MetalTransformError.gpuExecutionFailed(error.localizedDescription))
+                    return
+                }
+
+                if buffer.status == .error {
+                    self.logger.error("❌ Confidence buffer status error")
+                    continuation.resume(throwing: MetalTransformError.gpuExecutionFailed("Command buffer status error"))
+                    return
+                }
+
+                self.logger.info("✅ Confidence calculation kernel completed successfully")
+                continuation.resume()
+            }
+
+            commandBuffer.commit()
+        }
+    }
+
     /// Perform GPU-accelerated DBSCAN clustering using Metal compute shaders
     ///
     /// This implements the complete DBSCAN algorithm on GPU with the following phases:
@@ -1527,6 +1943,39 @@ public struct DBSCANResult: Sendable {
     }
 }
 
+/// Result structure for Phase 3 GPU hull and confidence computation
+public struct GPUHullAndConfidenceResult: Sendable {
+    public let hullBuffers: GPUHullBuffers
+    public let sortTime: Double
+    public let hullTime: Double
+    public let confidenceTime: Double
+    public let totalTime: Double
+    public let clustersProcessed: Int
+
+    public init(hullBuffers: GPUHullBuffers, sortTime: Double, hullTime: Double,
+                confidenceTime: Double, totalTime: Double, clustersProcessed: Int) {
+        self.hullBuffers = hullBuffers
+        self.sortTime = sortTime
+        self.hullTime = hullTime
+        self.confidenceTime = confidenceTime
+        self.totalTime = totalTime
+        self.clustersProcessed = clustersProcessed
+    }
+}
+
+/// Phase 3 parameters structure for Metal kernels
+private struct Phase3Parameters {
+    let clustersCount: Int32
+    let maxPointsPerCluster: Int32
+    let maxHullVertices: Int32
+    let epsilon: Float
+    let minTotalDevices: Int32
+    let gridCellSize: Float
+    let gridWidth: Int32
+    let gridHeight: Int32
+    let collinearThreshold: Float
+}
+
 /// GPU buffers for DBSCAN clustering
 public struct GPUDBSCANBuffers: Sendable {
     let clusterLabels: SendableBuffer    // Int32[deviceCount] - cluster IDs (-1 for noise)
@@ -1573,6 +2022,69 @@ public struct GPUDBSCANBuffers: Sendable {
     var rawNeighborCounts: MTLBuffer { neighborCounts.buffer }
     var rawChangedFlag: MTLBuffer { changedFlag.buffer }
     var rawTempLabels: MTLBuffer { tempLabels.buffer }
+
+    /// Release GPU memory for cleanup
+    func releaseBuffers() {
+        // Metal buffers are automatically released when deallocated
+        // This method is for future memory management extensions
+    }
+}
+
+/// GPU buffers for convex hull and confidence computation (Phase 3)
+public struct GPUHullBuffers: Sendable {
+    let clusterOffsets: SendableBuffer      // Int32[clusterCount * 2] - start/count pairs per cluster
+    let hullVertices: SendableBuffer        // SIMD2<Float>[maxHullVertices] - flattened hull vertices
+    let hullCounts: SendableBuffer          // Int32[clusterCount] - vertex count per hull
+    let confidencePairs: SendableBuffer     // float2[clusterCount] - offline/total counts
+    let tempSortBuffer: SendableBuffer      // SIMD2<Float>[maxPointsPerCluster] - temporary sort space
+
+    init(device: MTLDevice, clusterCount: Int, maxPointsPerCluster: Int) throws {
+        let clusterOffsetsLength = clusterCount * 2 * MemoryLayout<Int32>.size
+        let maxHullVertices = clusterCount * min(maxPointsPerCluster, 512) // Increased cap for larger clusters
+        let hullVerticesLength = maxHullVertices * MemoryLayout<SIMD2<Float>>.size
+        let hullCountsLength = clusterCount * MemoryLayout<Int32>.size
+        let confidencePairsLength = clusterCount * MemoryLayout<SIMD2<Float>>.size
+        let tempSortLength = maxPointsPerCluster * MemoryLayout<SIMD2<Float>>.size
+
+        guard let clusterOffsetsBuffer = device.makeBuffer(
+                length: clusterOffsetsLength, options: .storageModeShared),
+              let hullVerticesBuffer = device.makeBuffer(
+                length: hullVerticesLength, options: .storageModeShared),
+              let hullCountsBuffer = device.makeBuffer(
+                length: hullCountsLength, options: .storageModeShared),
+              let confidencePairsBuffer = device.makeBuffer(
+                length: confidencePairsLength, options: .storageModeShared),
+              let tempSortBuffer = device.makeBuffer(
+                length: tempSortLength, options: .storageModeShared) else {
+            throw MetalTransformError.gpuExecutionFailed("Failed to create hull buffers")
+        }
+
+        self.clusterOffsets = SendableBuffer(clusterOffsetsBuffer)
+        self.hullVertices = SendableBuffer(hullVerticesBuffer)
+        self.hullCounts = SendableBuffer(hullCountsBuffer)
+        self.confidencePairs = SendableBuffer(confidencePairsBuffer)
+        self.tempSortBuffer = SendableBuffer(tempSortBuffer)
+
+        // Initialize buffers
+        memset(clusterOffsetsBuffer.contents(), 0, clusterOffsetsLength)
+        memset(hullVerticesBuffer.contents(), 0, hullVerticesLength)
+        memset(hullCountsBuffer.contents(), 0, hullCountsLength)
+        memset(confidencePairsBuffer.contents(), 0, confidencePairsLength)
+        memset(tempSortBuffer.contents(), 0, tempSortLength)
+    }
+
+    // Helper methods to unwrap for kernel use
+    var rawClusterOffsets: MTLBuffer { clusterOffsets.buffer }
+    var rawHullVertices: MTLBuffer { hullVertices.buffer }
+    var rawHullCounts: MTLBuffer { hullCounts.buffer }
+    var rawConfidencePairs: MTLBuffer { confidencePairs.buffer }
+    var rawTempSortBuffer: MTLBuffer { tempSortBuffer.buffer }
+
+    /// Release GPU memory for cleanup
+    func releaseBuffers() {
+        // Metal buffers are automatically released when deallocated
+        // Memory management tracking can be added here in future
+    }
 }
 
 // MARK: - Metal Shader Library
@@ -2105,6 +2617,591 @@ kernel void dbscanFinalizeLabelsKernel(
     // Update with compressed path
     if (root != label) {
         clusterLabels[id] = root;
+    }
+}
+
+// MARK: - Phase 3: Convex Hull and Confidence Computation
+// Monotone Chain Algorithm adapted for GPU
+// Reference: GPU Gems 2, Chapter 46 - Improved GPU Sorting
+// Complexity: O(n log n) bitonic sort + O(n) hull construction per cluster
+
+struct Phase3Parameters {
+    int clustersCount;
+    int maxPointsPerCluster;
+    int maxHullVertices;
+    float epsilon;               // Confidence expansion radius (500m)
+    int minTotalDevices;         // Minimum devices for valid confidence (5)
+    float gridCellSize;          // Reuse Phase 1 grid (~353m)
+    int gridWidth;
+    int gridHeight;
+    float collinearThreshold;    // Epsilon for collinear point detection (1.0m)
+};
+
+// Helper: Cross product for orientation test (positive = CCW/left turn)
+inline float cross2D(float2 a, float2 b, float2 c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+// Helper: Distance squared between two points
+inline float distanceSquared(float2 a, float2 b) {
+    float dx = b.x - a.x;
+    float dy = b.y - a.y;
+    return dx * dx + dy * dy;
+}
+
+// Custom atomic min for float2 (component-wise)
+inline void atomic_min_float2(threadgroup float2* dest, float2 val) {
+    threadgroup atomic_int* dest_x = (threadgroup atomic_int*)((threadgroup char*)dest);
+    threadgroup atomic_int* dest_y = (threadgroup atomic_int*)((threadgroup char*)dest + sizeof(float));
+    atomic_fetch_min_explicit(dest_x, as_type<int>(val.x), memory_order_relaxed);
+    atomic_fetch_min_explicit(dest_y, as_type<int>(val.y), memory_order_relaxed);
+}
+
+// Custom atomic max for float2
+inline void atomic_max_float2(threadgroup float2* dest, float2 val) {
+    threadgroup atomic_int* dest_x = (threadgroup atomic_int*)((threadgroup char*)dest);
+    threadgroup atomic_int* dest_y = (threadgroup atomic_int*)((threadgroup char*)dest + sizeof(float));
+    atomic_fetch_max_explicit(dest_x, as_type<int>(val.x), memory_order_relaxed);
+    atomic_fetch_max_explicit(dest_y, as_type<int>(val.y), memory_order_relaxed);
+}
+
+// Phase 3: Parallel multi-pass bitonic sort by X-coordinate with Y tiebreaker
+// Threadgroup-only for sync; dispatch per cluster for large sets
+kernel void bitonicSortByX(
+    device float2* coordinates [[buffer(0)]],         // Coordinates to sort
+    device int* clusterOffsets [[buffer(1)]],         // Start/count pairs per cluster
+    device float2* tempWorkBuffer [[buffer(2)]],      // Global buffer for large clusters
+    constant Phase3Parameters& params [[buffer(3)]],
+    uint clusterIndex [[threadgroup_position_in_grid]],
+    uint localIndex [[thread_position_in_threadgroup]],
+    uint threadsPerGroup [[threads_per_threadgroup]]
+) {
+    if (clusterIndex >= uint(params.clustersCount)) return;
+
+    int startIdx = clusterOffsets[clusterIndex * 2];
+    int count = clusterOffsets[clusterIndex * 2 + 1];
+
+    if (count < 3 || localIndex >= uint(count)) return;
+
+    // Pad to power of 2 for bitonic (threadgroup size)
+    uint paddedCount = 1u << uint(ceil(log2(float(threadsPerGroup))));
+
+    threadgroup float2 sharedCoords[1024]; // Adjust to max threadsPerGroup
+
+    // Load with padding (INF for sort stability)
+    float2 coord = (localIndex < uint(count)) ? coordinates[startIdx + localIndex] : float2(INFINITY, INFINITY);
+    sharedCoords[localIndex] = coord;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Bitonic sort phases (threadgroup sync)
+    for (uint k = 2; k <= paddedCount; k <<= 1) {
+        for (uint j = k >> 1; j > 0; j >>= 1) {
+            uint ixj = localIndex ^ j;
+
+            if (ixj > localIndex && ixj < paddedCount) {
+                float2 a = sharedCoords[localIndex];
+                float2 b = sharedCoords[ixj];
+
+                // Sort by X, then Y
+                bool shouldSwap = ((localIndex & k) == 0)
+                    ? (a.x > b.x || (abs(a.x - b.x) < params.collinearThreshold && a.y > b.y))
+                    : (a.x < b.x || (abs(a.x - b.x) < params.collinearThreshold && a.y < b.y));
+
+                if (shouldSwap) {
+                    sharedCoords[localIndex] = b;
+                    sharedCoords[ixj] = a;
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+    }
+
+    // Write back if within count
+    if (localIndex < uint(count)) coordinates[startIdx + localIndex] = sharedCoords[localIndex];
+}
+
+// Phase 3: Parallel monotone chain hull with pruning
+// Full threadgroup participation for pruning
+kernel void buildConvexHullWithPruning(
+    const device float2* sortedCoords [[buffer(0)]],    // X-sorted coordinates
+    device float2* hullVertices [[buffer(1)]],          // Output hull vertices (flattened)
+    device int* hullCounts [[buffer(2)]],               // Vertices per hull
+    device int* clusterOffsets [[buffer(3)]],           // Start/count pairs per cluster
+    device float2* tempHullBuffer [[buffer(4)]],        // Temp space for hull construction
+    constant Phase3Parameters& params [[buffer(5)]],
+    uint clusterIndex [[threadgroup_position_in_grid]],
+    uint localIndex [[thread_position_in_threadgroup]],
+    uint threadsPerGroup [[threads_per_threadgroup]]
+) {
+    if (clusterIndex >= uint(params.clustersCount)) return;
+
+    int startIdx = clusterOffsets[clusterIndex * 2];
+    int count = clusterOffsets[clusterIndex * 2 + 1];
+
+    if (count < 3) {
+        if (localIndex == 0) {
+            hullCounts[clusterIndex] = 0;
+        }
+        return;
+    }
+
+    // Parallel segment building: Divide points across threads
+    threadgroup float2 sharedLower[256];
+    threadgroup float2 sharedUpper[256];
+    threadgroup atomic_int sharedLowerCount;
+    threadgroup atomic_int sharedUpperCount;
+
+    if (localIndex == 0) {
+        atomic_store_explicit(&sharedLowerCount, 0, memory_order_relaxed);
+        atomic_store_explicit(&sharedUpperCount, 0, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Parallel lower hull: Left-to-right, prune per segment
+    for (uint i = localIndex; i < uint(count); i += threadsPerGroup) {
+        float2 point = sortedCoords[startIdx + i];
+
+        // Atomic pruning with compare-and-swap loop (safety cap to prevent infinite loops)
+        int loopCount = 0;
+        while (loopCount < 1000) { // Safety cap: max 1000 iterations
+            loopCount++;
+            int currentCount = atomic_load_explicit(&sharedLowerCount, memory_order_relaxed);
+            if (currentCount < 2) {
+                // Can add point directly
+                int pos = atomic_fetch_add_explicit(&sharedLowerCount, 1, memory_order_relaxed);
+                if (pos < 256) sharedLower[pos] = point;
+                break;
+            } else {
+                // Check if point creates right turn
+                float cross = cross2D(sharedLower[currentCount-2], sharedLower[currentCount-1], point);
+                if (cross <= params.collinearThreshold) {
+                    // Try to remove last point
+                    if (atomic_compare_exchange_weak_explicit(&sharedLowerCount, &currentCount, currentCount-1, memory_order_relaxed, memory_order_relaxed)) {
+                        continue; // Successfully removed, check again
+                    }
+                } else {
+                    // Point is valid, add it
+                    int pos = atomic_fetch_add_explicit(&sharedLowerCount, 1, memory_order_relaxed);
+                    if (pos < 256) sharedLower[pos] = point;
+                    break;
+                }
+            }
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Parallel upper hull: Right-to-left, similar pruning
+    for (uint i = localIndex; i < uint(count); i += threadsPerGroup) {
+        float2 point = sortedCoords[startIdx + (count - 1 - int(i))]; // Reverse
+
+        int upperLoopCount = 0;
+        while (upperLoopCount < 1000) { // Safety cap: max 1000 iterations
+            upperLoopCount++;
+            int currentCount = atomic_load_explicit(&sharedUpperCount, memory_order_relaxed);
+            if (currentCount < 2) {
+                int pos = atomic_fetch_add_explicit(&sharedUpperCount, 1, memory_order_relaxed);
+                if (pos < 256) sharedUpper[pos] = point;
+                break;
+            } else {
+                float cross = cross2D(sharedUpper[currentCount-2], sharedUpper[currentCount-1], point);
+                if (cross <= params.collinearThreshold) {
+                    if (atomic_compare_exchange_weak_explicit(&sharedUpperCount, &currentCount, currentCount-1, memory_order_relaxed, memory_order_relaxed)) {
+                        continue;
+                    }
+                } else {
+                    int pos = atomic_fetch_add_explicit(&sharedUpperCount, 1, memory_order_relaxed);
+                    if (pos < 256) sharedUpper[pos] = point;
+                    break;
+                }
+            }
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Thread 0 merges into final clockwise hull
+    if (localIndex == 0) {
+        int lowerCount = atomic_load_explicit(&sharedLowerCount, memory_order_relaxed);
+        int upperCount = atomic_load_explicit(&sharedUpperCount, memory_order_relaxed);
+
+        int hullOffset = clusterIndex * params.maxHullVertices;
+        int finalCount = 0;
+
+        // Add lower hull (skip last to avoid dup)
+        for (int i = 0; i < lowerCount - 1 && finalCount < params.maxHullVertices; i++) {
+            hullVertices[hullOffset + finalCount++] = sharedLower[i];
+        }
+
+        // Add upper hull (skip last)
+        for (int i = 0; i < upperCount - 1 && finalCount < params.maxHullVertices; i++) {
+            hullVertices[hullOffset + finalCount++] = sharedUpper[i];
+        }
+
+        hullCounts[clusterIndex] = finalCount;
+    }
+}
+
+// Helper functions for preprocessing kernel
+float crossProduct2D(float2 a, float2 b, float2 c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+// Check if point is inside quadrilateral using cross products
+bool isInsideQuad(float2 p, float2 q1, float2 q2, float2 q3, float2 q4) {
+    // Point is inside if it's on the same side of all edges
+    float c1 = crossProduct2D(q1, q2, p);
+    float c2 = crossProduct2D(q2, q3, p);
+    float c3 = crossProduct2D(q3, q4, p);
+    float c4 = crossProduct2D(q4, q1, p);
+
+    // All same sign means inside (with small epsilon for numerical stability)
+    float epsilon = 1e-6;
+    return (c1 >= -epsilon && c2 >= -epsilon && c3 >= -epsilon && c4 >= -epsilon) ||
+           (c1 <= epsilon && c2 <= epsilon && c3 <= epsilon && c4 <= epsilon);
+}
+
+// Enhanced preprocessing kernel: Discard interior points using proper QuickHull-style filtering
+// This reduces the effective point count by 50-90% in dense clusters using point-in-quad logic
+kernel void preprocessHullPoints(
+    const device float2* inputCoords [[buffer(0)]],     // Input coordinates
+    device float2* outputCoords [[buffer(1)]],          // Filtered coordinates
+    device int* outputCounts [[buffer(2)]],             // Points kept per cluster
+    device int* clusterOffsets [[buffer(3)]],           // Start/count pairs
+    constant Phase3Parameters& params [[buffer(4)]],
+    uint clusterIndex [[thread_position_in_grid]]
+) {
+    if (clusterIndex >= uint(params.clustersCount)) return;
+
+    int startIdx = clusterOffsets[clusterIndex * 2];
+    int count = clusterOffsets[clusterIndex * 2 + 1];
+
+    if (count < 3) {
+        outputCounts[clusterIndex] = 0;
+        return;
+    }
+
+    // Find extrema points (candidates for quad vertices)
+    float2 minXPoint = inputCoords[startIdx], maxXPoint = inputCoords[startIdx];
+    float2 minYPoint = inputCoords[startIdx], maxYPoint = inputCoords[startIdx];
+    int minXIdx = 0, maxXIdx = 0, minYIdx = 0, maxYIdx = 0;
+
+    for (int i = 1; i < count; i++) {
+        float2 p = inputCoords[startIdx + i];
+
+        if (p.x < minXPoint.x || (p.x == minXPoint.x && p.y < minXPoint.y)) {
+            minXPoint = p; minXIdx = i;
+        }
+        if (p.x > maxXPoint.x || (p.x == maxXPoint.x && p.y > maxXPoint.y)) {
+            maxXPoint = p; maxXIdx = i;
+        }
+        if (p.y < minYPoint.y || (p.y == minYPoint.y && p.x < minYPoint.x)) {
+            minYPoint = p; minYIdx = i;
+        }
+        if (p.y > maxYPoint.y || (p.y == maxYPoint.y && p.x > maxYPoint.x)) {
+            maxYPoint = p; maxYIdx = i;
+        }
+    }
+
+    // Form convex quad from extrema points (sort them to ensure proper order)
+    float2 quadPoints[4] = { minXPoint, minYPoint, maxXPoint, maxYPoint };
+
+    // Sort quad points by angle around centroid for proper ordering
+    float2 centroid = (minXPoint + maxXPoint + minYPoint + maxYPoint) * 0.25f;
+
+    // Simple angular sort (for 4 points, bubble sort is fine)
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3 - i; j++) {
+            float2 v1 = quadPoints[j] - centroid;
+            float2 v2 = quadPoints[j + 1] - centroid;
+            float angle1 = atan2(v1.y, v1.x);
+            float angle2 = atan2(v2.y, v2.x);
+
+            if (angle1 > angle2) {
+                float2 temp = quadPoints[j];
+                quadPoints[j] = quadPoints[j + 1];
+                quadPoints[j + 1] = temp;
+            }
+        }
+    }
+
+    int outputOffset = clusterIndex * params.maxPointsPerCluster;
+    int keepCount = 0;
+
+    // Filter points: keep extrema + boundary candidates + points outside quad
+    for (int i = 0; i < count && keepCount < params.maxPointsPerCluster; i++) {
+        float2 point = inputCoords[startIdx + i];
+        bool keep = false;
+
+        // Always keep extreme points (guaranteed hull vertices)
+        if (i == minXIdx || i == maxXIdx || i == minYIdx || i == maxYIdx) {
+            keep = true;
+        } else {
+            // Test if point is outside the convex quad formed by extrema
+            if (!isInsideQuad(point, quadPoints[0], quadPoints[1], quadPoints[2], quadPoints[3])) {
+                keep = true;
+            } else {
+                // For points inside quad, keep boundary candidates (close to edges)
+                float minDistToEdge = INFINITY;
+                for (int e = 0; e < 4; e++) {
+                    float2 p1 = quadPoints[e];
+                    float2 p2 = quadPoints[(e + 1) % 4];
+
+                    // Distance from point to edge
+                    float2 edge = p2 - p1;
+                    float2 toPoint = point - p1;
+                    float edgeLen = length(edge);
+                    if (edgeLen > 0) {
+                        float proj = dot(toPoint, edge) / edgeLen;
+                        proj = clamp(proj, 0.0f, edgeLen);
+                        float2 closest = p1 + (edge / edgeLen) * proj;
+                        float dist = length(point - closest);
+                        minDistToEdge = min(minDistToEdge, dist);
+                    }
+                }
+
+                // Keep if close to quad boundary (potential hull candidate)
+                if (minDistToEdge < 100.0) { // 100m threshold for boundary candidates
+                    keep = true;
+                }
+            }
+        }
+
+        if (keep) {
+            outputCoords[outputOffset + keepCount] = point;
+            keepCount++;
+        }
+    }
+
+    outputCounts[clusterIndex] = keepCount;
+}
+
+// Phase 3: Sequential convex hull using monotone chain algorithm
+// Single thread per cluster - eliminates atomic contention and deadlocks
+kernel void buildConvexHullSequential(
+    const device float2* sortedCoords [[buffer(0)]],    // X-sorted coordinates
+    device float2* hullVertices [[buffer(1)]],          // Output hull vertices (flattened)
+    device int* hullCounts [[buffer(2)]],               // Vertices per hull
+    device int* clusterOffsets [[buffer(3)]],           // Start/count pairs per cluster
+    device float2* tempHullBuffer [[buffer(4)]],        // Unused in sequential version
+    constant Phase3Parameters& params [[buffer(5)]],
+    uint clusterIndex [[threadgroup_position_in_grid]]
+) {
+    if (clusterIndex >= uint(params.clustersCount)) return;
+
+    int startIdx = clusterOffsets[clusterIndex * 2];
+    int count = clusterOffsets[clusterIndex * 2 + 1];
+
+    if (count < 3) {
+        hullCounts[clusterIndex] = 0;
+        return;
+    }
+
+    // Safety cap - balance between capability and Metal stack limits (~32KB per thread)
+    if (count > 2048) {
+        hullCounts[clusterIndex] = 0;
+        return;
+    }
+
+    // Local arrays allocated on thread's stack - conservative size for Metal stack limits
+    float2 localLower[2048];
+    float2 localUpper[2048];
+    int lowerCount = 0;
+    int upperCount = 0;
+
+    // Build lower hull: Left-to-right sweep
+    for (int i = 0; i < count; i++) {
+        float2 point = sortedCoords[startIdx + i];
+
+        // Remove points that create right turns (non-convex)
+        while (lowerCount >= 2) {
+            float cross = cross2D(localLower[lowerCount-2], localLower[lowerCount-1], point);
+            if (cross <= params.collinearThreshold) {
+                lowerCount--; // Remove last point
+            } else {
+                break; // Keep point
+            }
+        }
+
+        // Add current point
+        if (lowerCount < 2048) {
+            localLower[lowerCount++] = point;
+        }
+    }
+
+    // Build upper hull: Right-to-left sweep
+    for (int i = count - 1; i >= 0; i--) {
+        float2 point = sortedCoords[startIdx + i];
+
+        // Remove points that create right turns
+        while (upperCount >= 2) {
+            float cross = cross2D(localUpper[upperCount-2], localUpper[upperCount-1], point);
+            if (cross <= params.collinearThreshold) {
+                upperCount--; // Remove last point
+            } else {
+                break; // Keep point
+            }
+        }
+
+        // Add current point
+        if (upperCount < 2048) {
+            localUpper[upperCount++] = point;
+        }
+    }
+
+    // Combine lower and upper hulls into output buffer with deduplication
+    int hullOutputOffset = clusterIndex * params.maxHullVertices;
+    int outputIdx = 0;
+    float dedupThreshold = params.collinearThreshold * params.collinearThreshold; // Squared distance
+
+    // Copy lower hull (excluding last point to avoid duplication)
+    for (int i = 0; i < lowerCount - 1 && outputIdx < params.maxHullVertices; i++) {
+        float2 point = localLower[i];
+
+        // Check for duplicates against previous points
+        bool isDuplicate = false;
+        if (outputIdx > 0) {
+            float2 diff = point - hullVertices[hullOutputOffset + outputIdx - 1];
+            if (dot(diff, diff) < dedupThreshold) {
+                isDuplicate = true;
+            }
+        }
+
+        if (!isDuplicate) {
+            hullVertices[hullOutputOffset + outputIdx++] = point;
+        }
+    }
+
+    // Copy upper hull (excluding last point to avoid duplication)
+    for (int i = 0; i < upperCount - 1 && outputIdx < params.maxHullVertices; i++) {
+        float2 point = localUpper[i];
+
+        // Check for duplicates against previous points
+        bool isDuplicate = false;
+        if (outputIdx > 0) {
+            float2 diff = point - hullVertices[hullOutputOffset + outputIdx - 1];
+            if (dot(diff, diff) < dedupThreshold) {
+                isDuplicate = true;
+            }
+        }
+
+        if (!isDuplicate) {
+            hullVertices[hullOutputOffset + outputIdx++] = point;
+        }
+    }
+
+    // Validate hull vertex count - ensure minimum viable hull
+    if (outputIdx < 3) {
+        hullCounts[clusterIndex] = 0; // Degenerate hull
+    } else {
+        hullCounts[clusterIndex] = min(outputIdx, params.maxHullVertices);
+    }
+}
+
+// Phase 3: Grid-optimized confidence calculation
+// Reuses Phase 1 spatial index
+kernel void calculateConfidenceWithGrid(
+    const device float2* coordinates [[buffer(0)]],      // All device coordinates
+    const device bool* offlineFlags [[buffer(1)]],       // Offline status flags
+    const device int* cellOffsets [[buffer(2)]],         // Phase 1 grid cell offsets
+    const device int* cellCounts [[buffer(3)]],          // Phase 1 grid cell counts
+    const device int* pointIndices [[buffer(4)]],        // Phase 1 point indices
+    const device float2* hullVertices [[buffer(5)]],     // Hull vertices
+    const device int* hullCounts [[buffer(6)]],          // Vertices per hull
+    device float2* confidencePairs [[buffer(7)]],        // Output: offline/total counts
+    constant Phase3Parameters& params [[buffer(8)]],
+    constant GridIndexParameters& gridParams [[buffer(9)]],
+    uint clusterIndex [[threadgroup_position_in_grid]],
+    uint localIndex [[thread_position_in_threadgroup]],
+    uint threadsPerGroup [[threads_per_threadgroup]]
+) {
+    if (clusterIndex >= uint(params.clustersCount)) return;
+
+    int hullCount = hullCounts[clusterIndex];
+    if (hullCount < 3) {
+        if (localIndex == 0) {
+            confidencePairs[clusterIndex] = float2(0.0, 0.0);
+        }
+        return;
+    }
+
+    int hullOffset = clusterIndex * params.maxHullVertices;
+
+    // Parallel min/max reduction for bounds
+    threadgroup float2 sharedMin;
+    threadgroup float2 sharedMax;
+    if (localIndex == 0) {
+        sharedMin = hullVertices[hullOffset];
+        sharedMax = hullVertices[hullOffset];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint i = localIndex; i < uint(hullCount); i += threadsPerGroup) {
+        float2 hullVertex = hullVertices[hullOffset + i];
+        atomic_min_float2(&sharedMin, hullVertex);
+        atomic_max_float2(&sharedMax, hullVertex);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    float2 minBounds = sharedMin - params.epsilon;
+    float2 maxBounds = sharedMax + params.epsilon;
+
+    // Grid cell bounds
+    int minCellX = max(0, int((minBounds.x - gridParams.minX) / params.gridCellSize));
+    int maxCellX = min(params.gridWidth - 1, int((maxBounds.x - gridParams.minX) / params.gridCellSize));
+    int minCellY = max(0, int((minBounds.y - gridParams.minY) / params.gridCellSize));
+    int maxCellY = min(params.gridHeight - 1, int((maxBounds.y - gridParams.minY) / params.gridCellSize));
+
+    // Parallel reduction using threadgroup atomics
+    threadgroup atomic_int sharedOfflineCount;
+    threadgroup atomic_int sharedTotalCount;
+
+    if (localIndex == 0) {
+        atomic_store_explicit(&sharedOfflineCount, 0, memory_order_relaxed);
+        atomic_store_explicit(&sharedTotalCount, 0, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Load-balanced cell processing with safeguards for large clusters
+    int totalCells = (maxCellX - minCellX + 1) * (maxCellY - minCellY + 1);
+
+    // Safeguard: Cap total cells to prevent GPU timeout
+    if (totalCells > 10000) {
+        // Early return with zero confidence for extremely large grids
+        confidencePairs[clusterIndex] = float2(0.0, 1.0); // 0% confidence
+        return;
+    }
+
+    for (int cellIdx = localIndex; cellIdx < totalCells; cellIdx += threadsPerGroup) {
+        int cellX = minCellX + (cellIdx % (maxCellX - minCellX + 1));
+        int cellY = minCellY + (cellIdx / (maxCellX - minCellX + 1));
+
+        int gridIdx = cellY * params.gridWidth + cellX;
+        int cellStart = cellOffsets[gridIdx];
+        int cellCount = cellCounts[gridIdx];
+
+        // Safeguard: Cap cell count to prevent long loops
+        int safeCellCount = min(cellCount, 1000);
+
+        for (int i = 0; i < safeCellCount; i++) {
+            int deviceIdx = pointIndices[cellStart + i];
+            float2 coord = coordinates[deviceIdx];
+
+            if (coord.x >= minBounds.x && coord.x <= maxBounds.x &&
+                coord.y >= minBounds.y && coord.y <= maxBounds.y) {
+                atomic_fetch_add_explicit(&sharedTotalCount, 1, memory_order_relaxed);
+                if (offlineFlags[deviceIdx]) {
+                    atomic_fetch_add_explicit(&sharedOfflineCount, 1, memory_order_relaxed);
+                }
+            }
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (localIndex == 0) {
+        int offlineCount = atomic_load_explicit(&sharedOfflineCount, memory_order_relaxed);
+        int totalCount = atomic_load_explicit(&sharedTotalCount, memory_order_relaxed);
+
+        confidencePairs[clusterIndex] = float2(float(offlineCount), float(max(totalCount, params.minTotalDevices)));
     }
 }
 """

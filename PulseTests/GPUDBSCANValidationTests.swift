@@ -354,6 +354,303 @@ final class GPUDBSCANValidationTests: XCTestCase {
 
         return [offlineDevice, onlineDevice]
     }
+
+    // MARK: - Phase 3: Hull and Confidence Validation Tests
+
+    /// Test Phase 3: Convex hull computation and validation
+    func testConvexHullGeneration() async throws {
+        print("🧪 Phase 3: Testing convex hull generation...")
+
+        // Create irregular cluster (pentagon shape + internal points)
+        let testDevices = createIrregularTestCluster()
+        print("   Created \(testDevices.count) test devices in irregular pattern")
+
+        let spatialIndex = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
+        try await spatialIndex.buildIndex(devices: testDevices)
+
+        guard let gridParams = await spatialIndex.getGridParameters(),
+              let gpuGrid = await spatialIndex.getGPUGrid(),
+              let coordsBuffer = await spatialIndex.getGPUCoordsBuffer(),
+              let offlineFlagsBuffer = await spatialIndex.getGPUOfflineFlagsBuffer() else {
+            XCTFail("Failed to get required GPU components")
+            return
+        }
+
+        // Mock cluster offsets (all devices in one cluster)
+        let clusterOffsets: [Int32] = [0, Int32(testDevices.count)]
+
+        // Perform GPU hull computation
+        let hullResult = try transformer.performGPUHullAndConfidence(
+            coordsBuffer: coordsBuffer.buffer,
+            offlineFlagsBuffer: offlineFlagsBuffer.buffer,
+            clusterOffsets: clusterOffsets,
+            gridParams: gridParams,
+            grid: gpuGrid,
+            clusterCount: 1,
+            maxPointsPerCluster: testDevices.count
+        )
+
+        print("   ✅ Hull computation completed in \(String(format: "%.1f", hullResult.totalTime * 1000))ms")
+
+        // Validate hull results
+        let hullCountsPointer = hullResult.hullBuffers.hullCounts.contents.bindMemory(to: Int32.self, capacity: 1)
+        let hullCount = Int(hullCountsPointer[0])
+
+        XCTAssertGreaterThan(hullCount, 2, "Hull should have at least 3 vertices")
+        XCTAssertLessThanOrEqual(hullCount, testDevices.count, "Hull should not have more vertices than input points")
+
+        // Validate convexity (all cross products should be positive for clockwise)
+        let maxHullVertices = 100
+        let hullVerticesPointer = hullResult.hullBuffers.hullVertices.contents.bindMemory(to: SIMD2<Float>.self, capacity: maxHullVertices)
+        let hullVertices = Array(UnsafeBufferPointer(start: hullVerticesPointer, count: hullCount))
+
+        var isConvex = true
+        for i in 0..<hullCount {
+            let p1 = hullVertices[i]
+            let p2 = hullVertices[(i + 1) % hullCount]
+            let p3 = hullVertices[(i + 2) % hullCount]
+
+            let cross = (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)
+            if cross <= 0 {
+                isConvex = false
+                print("   ⚠️ Non-convex turn at vertex \(i): cross = \(cross)")
+            }
+        }
+
+        XCTAssertTrue(isConvex, "Hull should be convex (all turns should be in same direction)")
+        print("   ✅ Hull convexity validation passed")
+
+        // Validate hull area is reasonable (should be smaller than bounding box)
+        let hullArea = calculatePolygonArea(hullVertices.map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) })
+        XCTAssertGreaterThan(hullArea, 0, "Hull should have positive area")
+
+        print("   📊 Hull metrics: \(hullCount) vertices, area: \(String(format: "%.3f", hullArea))")
+    }
+
+    /// Test Phase 3: Confidence score calculation
+    func testConfidenceCalculation() async throws {
+        print("🧪 Phase 3: Testing confidence calculation...")
+
+        let testDevices = createDenseOfflineCluster()
+        print("   Created \(testDevices.count) devices for confidence testing")
+
+        let spatialIndex = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
+        try await spatialIndex.buildIndex(devices: testDevices)
+
+        guard let gridParams = await spatialIndex.getGridParameters(),
+              let gpuGrid = await spatialIndex.getGPUGrid(),
+              let coordsBuffer = await spatialIndex.getGPUCoordsBuffer(),
+              let offlineFlagsBuffer = await spatialIndex.getGPUOfflineFlagsBuffer() else {
+            XCTFail("Failed to get required GPU components")
+            return
+        }
+
+        let clusterOffsets: [Int32] = [0, Int32(testDevices.count)]
+
+        let hullResult = try transformer.performGPUHullAndConfidence(
+            coordsBuffer: coordsBuffer.buffer,
+            offlineFlagsBuffer: offlineFlagsBuffer.buffer,
+            clusterOffsets: clusterOffsets,
+            gridParams: gridParams,
+            grid: gpuGrid,
+            clusterCount: 1,
+            maxPointsPerCluster: testDevices.count
+        )
+
+        // Validate confidence scores
+        let confidencePairsPointer = hullResult.hullBuffers.confidencePairs.contents.bindMemory(to: SIMD2<Float>.self, capacity: 1)
+        let confidencePair = confidencePairsPointer[0]
+
+        let offlineCount = Int(confidencePair.x)
+        let totalCount = Int(confidencePair.y)
+        let confidence = totalCount > 0 ? Double(offlineCount) / Double(totalCount) : 0.0
+
+        XCTAssertGreaterThan(offlineCount, 0, "Should find offline devices")
+        XCTAssertGreaterThanOrEqual(totalCount, offlineCount, "Total should be >= offline count")
+        XCTAssertGreaterThanOrEqual(confidence, 0.0, "Confidence should be non-negative")
+        XCTAssertLessThanOrEqual(confidence, 1.0, "Confidence should not exceed 1.0")
+
+        // For dense offline cluster, confidence should be high
+        XCTAssertGreaterThan(confidence, 0.8, "Dense offline cluster should have high confidence")
+
+        print("   📊 Confidence metrics: \(offlineCount)/\(totalCount) = \(String(format: "%.3f", confidence))")
+        print("   ✅ Confidence calculation validation passed")
+    }
+
+    /// Test Phase 3: End-to-end performance validation
+    func testPhase3Performance() async throws {
+        print("🧪 Phase 3: Testing end-to-end performance...")
+
+        // Create large test dataset
+        let testDevices = createLargeTestDataset(deviceCount: 1000)
+        print("   Created \(testDevices.count) devices for performance testing")
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        let spatialIndex = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
+        try await spatialIndex.buildIndex(devices: testDevices)
+
+        guard let gridParams = await spatialIndex.getGridParameters(),
+              let gpuGrid = await spatialIndex.getGPUGrid(),
+              let coordsBuffer = await spatialIndex.getGPUCoordsBuffer(),
+              let offlineFlagsBuffer = await spatialIndex.getGPUOfflineFlagsBuffer() else {
+            XCTFail("Failed to get required GPU components")
+            return
+        }
+
+        // Simulate multiple clusters
+        let clusterCount = 5
+        var clusterOffsets: [Int32] = []
+        let devicesPerCluster = testDevices.count / clusterCount
+
+        for i in 0..<clusterCount {
+            clusterOffsets.append(Int32(i * devicesPerCluster))
+            clusterOffsets.append(Int32(devicesPerCluster))
+        }
+
+        let hullResult = try transformer.performGPUHullAndConfidence(
+            coordsBuffer: coordsBuffer.buffer,
+            offlineFlagsBuffer: offlineFlagsBuffer.buffer,
+            clusterOffsets: clusterOffsets,
+            gridParams: gridParams,
+            grid: gpuGrid,
+            clusterCount: clusterCount,
+            maxPointsPerCluster: devicesPerCluster
+        )
+
+        let totalTime = CFAbsoluteTimeGetCurrent() - startTime
+
+        // Performance assertions
+        XCTAssertLessThan(hullResult.totalTime, 0.1, "Phase 3 should complete in <100ms")
+        XCTAssertLessThan(totalTime, 0.5, "End-to-end should complete in <500ms")
+
+        print("   ⏱️ Performance metrics:")
+        print("      Sort: \(String(format: "%.1f", hullResult.sortTime * 1000))ms")
+        print("      Hull: \(String(format: "%.1f", hullResult.hullTime * 1000))ms")
+        print("      Confidence: \(String(format: "%.1f", hullResult.confidenceTime * 1000))ms")
+        print("      Total Phase 3: \(String(format: "%.1f", hullResult.totalTime * 1000))ms")
+        print("      End-to-end: \(String(format: "%.1f", totalTime * 1000))ms")
+        print("   ✅ Performance validation passed")
+    }
+
+    // MARK: - Phase 3 Helper Methods
+
+    /// Create irregular test cluster (pentagon + internal points)
+    private func createIrregularTestCluster() -> [MockSpatialDevice] {
+        var devices: [MockSpatialDevice] = []
+
+        // Pentagon vertices around Wellington (NZTM coordinates approximation)
+        let center = (-41.2865, 174.7762) // Wellington
+        let pentagonPoints = [
+            (center.0 - 0.01, center.1 - 0.01),   // SW
+            (center.0 + 0.01, center.1 - 0.01),   // SE
+            (center.0 + 0.015, center.1 + 0.005), // NE
+            (center.0 - 0.005, center.1 + 0.015), // NW
+            (center.0 - 0.015, center.1 + 0.005)  // W
+        ]
+
+        // Add pentagon vertices
+        for (i, point) in pentagonPoints.enumerated() {
+            devices.append(MockSpatialDevice(
+                deviceId: "pentagon_\(i)",
+                latitude: point.0,
+                longitude: point.1,
+                isOffline: true
+            ))
+        }
+
+        // Add internal points
+        devices.append(MockSpatialDevice(
+            deviceId: "internal_1",
+            latitude: center.0,
+            longitude: center.1,
+            isOffline: true
+        ))
+
+        devices.append(MockSpatialDevice(
+            deviceId: "internal_2",
+            latitude: center.0 - 0.005,
+            longitude: center.1 + 0.005,
+            isOffline: true
+        ))
+
+        return devices
+    }
+
+    /// Create dense offline cluster for confidence testing
+    private func createDenseOfflineCluster() -> [MockSpatialDevice] {
+        var devices: [MockSpatialDevice] = []
+        let center = (-41.2865, 174.7762)
+
+        // Dense grid of offline devices
+        for i in 0..<5 {
+            for j in 0..<5 {
+                let lat = center.0 + Double(i) * 0.002
+                let lon = center.1 + Double(j) * 0.002
+                devices.append(MockSpatialDevice(
+                    deviceId: "dense_\(i)_\(j)",
+                    latitude: lat,
+                    longitude: lon,
+                    isOffline: true
+                ))
+            }
+        }
+
+        // Add some online devices around the cluster
+        for k in 0..<10 {
+            let angle = Double(k) * 0.628 // ~36 degrees apart
+            let radius = 0.01
+            let lat = center.0 + radius * cos(angle)
+            let lon = center.1 + radius * sin(angle)
+            devices.append(MockSpatialDevice(
+                deviceId: "online_\(k)",
+                latitude: lat,
+                longitude: lon,
+                isOffline: false
+            ))
+        }
+
+        return devices
+    }
+
+    /// Create large test dataset for performance validation
+    private func createLargeTestDataset(deviceCount: Int) -> [MockSpatialDevice] {
+        var devices: [MockSpatialDevice] = []
+        let center = (-41.2865, 174.7762)
+
+        for i in 0..<deviceCount {
+            let angle = Double(i) * 0.01
+            let radius = Double(i % 100) * 0.0001
+            let lat = center.0 + radius * cos(angle)
+            let lon = center.1 + radius * sin(angle)
+            let isOffline = i % 3 == 0 // ~33% offline
+
+            devices.append(MockSpatialDevice(
+                deviceId: "large_\(i)",
+                latitude: lat,
+                longitude: lon,
+                isOffline: isOffline
+            ))
+        }
+
+        return devices
+    }
+
+    /// Calculate polygon area using shoelace formula
+    private func calculatePolygonArea(_ points: [CGPoint]) -> Double {
+        guard points.count >= 3 else { return 0.0 }
+
+        var area: Double = 0.0
+        let n = points.count
+
+        for i in 0..<n {
+            let j = (i + 1) % n
+            area += Double(points[i].x * points[j].y)
+            area -= Double(points[j].x * points[i].y)
+        }
+
+        return abs(area) / 2.0
+    }
 }
 
 // MARK: - MockSpatialDevice for Testing

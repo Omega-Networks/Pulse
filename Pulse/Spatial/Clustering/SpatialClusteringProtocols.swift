@@ -124,16 +124,30 @@ public struct ClusteringParameters: Sendable {
     public let aggregationThreshold: Int   // Minimum devices per cluster for privacy
     public let maxDevices: Int             // Maximum devices to process
 
+    // Phase 3: Confidence and hull parameters
+    public let minConfidence: Double       // Minimum confidence threshold (0.0-1.0)
+    public let minTotalDevices: Int        // Minimum total devices for confidence calculation
+    public let enableHullComputation: Bool // Enable convex hull generation
+    public let maxHullVertices: Int        // Maximum vertices per hull (performance cap)
+
     public init(
         epsilon: Double = 500.0,
         minPoints: Int = 3,
         aggregationThreshold: Int = 5,
-        maxDevices: Int = 2_000_000
+        maxDevices: Int = 2_000_000,
+        minConfidence: Double = 0.5,
+        minTotalDevices: Int = 5,
+        enableHullComputation: Bool = true,
+        maxHullVertices: Int = 500
     ) {
         self.epsilon = epsilon
         self.minPoints = minPoints
         self.aggregationThreshold = aggregationThreshold
         self.maxDevices = maxDevices
+        self.minConfidence = minConfidence
+        self.minTotalDevices = minTotalDevices
+        self.enableHullComputation = enableHullComputation
+        self.maxHullVertices = maxHullVertices
     }
 
     public static let `default` = ClusteringParameters()
@@ -151,6 +165,15 @@ public struct ClusteringParameters: Sendable {
         }
         guard maxDevices > 0 else {
             throw ClusteringError.configurationInvalid(parameter: "maxDevices", value: "\(maxDevices)")
+        }
+        guard minConfidence >= 0.0 && minConfidence <= 1.0 else {
+            throw ClusteringError.configurationInvalid(parameter: "minConfidence", value: "\(minConfidence)")
+        }
+        guard minTotalDevices > 0 else {
+            throw ClusteringError.configurationInvalid(parameter: "minTotalDevices", value: "\(minTotalDevices)")
+        }
+        guard maxHullVertices > 2 else {
+            throw ClusteringError.configurationInvalid(parameter: "maxHullVertices", value: "\(maxHullVertices)")
         }
     }
 }
