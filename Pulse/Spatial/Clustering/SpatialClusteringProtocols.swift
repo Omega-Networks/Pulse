@@ -131,7 +131,7 @@ public struct ClusteringParameters: Sendable {
     public let maxHullVertices: Int        // Maximum vertices per hull (performance cap)
 
     public init(
-        epsilon: Double = 500.0,
+        epsilon: Double = 250.0,  // Reduced from 500m to 250m for smaller, more granular clusters
         minPoints: Int = 3,
         aggregationThreshold: Int = 5,
         maxDevices: Int = 2_000_000,

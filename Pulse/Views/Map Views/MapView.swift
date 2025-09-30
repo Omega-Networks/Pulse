@@ -227,15 +227,11 @@ struct MapView: View {
 
     @MapContentBuilder
     private var outagePolygonOverlays: some MapContent {
-        ForEach(spatialClusters.indices, id: \.self) { index in
-            let cluster = spatialClusters[index]
-            if let polygon = cluster.polygon, cluster.hullVertices.count >= 3 {
+        ForEach(spatialClusters.filter { $0.polygon != nil && $0.hullVertices.count >= 3 }) { cluster in
+            if let polygon = cluster.polygon {
                 MapPolygon(polygon)
                     .foregroundStyle(polygonStyle(for: cluster))
                     .stroke(strokeStyle(for: cluster), lineWidth: strokeWidth(for: cluster))
-            } else if cluster.hullVertices.count >= 3 {
-                // Debug: cluster has hull vertices but no polygon
-                let _ = logger.debug("🚨 Cluster \(index) has \(cluster.hullVertices.count) hull vertices but no polygon for rendering")
             }
         }
     }
@@ -460,40 +456,46 @@ struct MapView: View {
             // Use DeviceCluster results with polygon data from Phase 3
             let clusters = result.clusters
 
+            // Compute statistics off the main thread to avoid UI blocking
+            let statsStartTime = CFAbsoluteTimeGetCurrent()
+            let totalDevicesInClusters = clusters.reduce(0) { $0 + $1.deviceCount }
+            let avgConfidence = clusters.isEmpty ? 0.0 : clusters.map(\.confidenceRating).reduce(0, +) / Double(clusters.count)
+            let clustersWithPolygons = clusters.filter { $0.polygon != nil }.count
+            let statsTime = CFAbsoluteTimeGetCurrent() - statsStartTime
+
+            logger.info("✅ Spatial clustering completed: \(clusters.count) clusters generated")
+            logger.info("📊 Cluster stats - Total devices: \(totalDevicesInClusters), Avg confidence: \(String(format: "%.2f", avgConfidence))")
+            logger.info("🗺️ Polygon stats - \(clustersWithPolygons)/\(clusters.count) clusters have polygons for rendering")
+            logger.info("⏱️ Statistics computation: \(String(format: "%.1f", statsTime * 1000))ms")
+
+            // Debug: Print coordinate bounds for first few clusters (off main thread)
+            if !clusters.isEmpty {
+                logger.info("🗺️ Cluster coordinate ranges:")
+                for (index, cluster) in clusters.prefix(3).enumerated() {
+                    if !cluster.hullVertices.isEmpty {
+                        let lats = cluster.hullVertices.map(\.latitude)
+                        let lons = cluster.hullVertices.map(\.longitude)
+                        let minLat = lats.min() ?? 0, maxLat = lats.max() ?? 0
+                        let minLon = lons.min() ?? 0, maxLon = lons.max() ?? 0
+                        logger.info("   Cluster \(index): lat[\(String(format: "%.3f", minLat)), \(String(format: "%.3f", maxLat))] lon[\(String(format: "%.3f", minLon)), \(String(format: "%.3f", maxLon))]")
+                    }
+                }
+            }
+
+            // Debug individual clusters (off main thread)
+            for (index, cluster) in clusters.enumerated() {
+                logger.debug("📍 Cluster \(index): \(cluster.deviceCount) devices, \(cluster.hullVertices.count) hull vertices, polygon: \(cluster.polygon != nil ? "✓" : "✗")")
+            }
+
+                    // Update UI on main thread with minimal processing
+            let uiUpdateStartTime = CFAbsoluteTimeGetCurrent()
             await MainActor.run {
                 self.spatialClusters = clusters
                 self.isClusteringInProgress = false
                 self.lastClusteringTime = Date()
-
-                logger.info("✅ Spatial clustering completed: \(clusters.count) clusters generated")
-
-                // Log cluster statistics
-                let totalDevicesInClusters = clusters.reduce(0) { $0 + $1.deviceCount }
-                let avgConfidence = clusters.isEmpty ? 0.0 : clusters.map(\.confidenceRating).reduce(0, +) / Double(clusters.count)
-                let clustersWithPolygons = clusters.filter { $0.polygon != nil }.count
-
-                logger.info("📊 Cluster stats - Total devices: \(totalDevicesInClusters), Avg confidence: \(String(format: "%.2f", avgConfidence))")
-                logger.info("🗺️ Polygon stats - \(clustersWithPolygons)/\(clusters.count) clusters have polygons for rendering")
-
-                // Debug: Print coordinate bounds for first few clusters
-                if !clusters.isEmpty {
-                    logger.info("🗺️ Cluster coordinate ranges:")
-                    for (index, cluster) in clusters.prefix(3).enumerated() {
-                        if !cluster.hullVertices.isEmpty {
-                            let lats = cluster.hullVertices.map(\.latitude)
-                            let lons = cluster.hullVertices.map(\.longitude)
-                            let minLat = lats.min() ?? 0, maxLat = lats.max() ?? 0
-                            let minLon = lons.min() ?? 0, maxLon = lons.max() ?? 0
-                            logger.info("   Cluster \(index): lat[\(String(format: "%.3f", minLat)), \(String(format: "%.3f", maxLat))] lon[\(String(format: "%.3f", minLon)), \(String(format: "%.3f", maxLon))]")
-                        }
-                    }
-                }
-
-                // Debug individual clusters
-                for (index, cluster) in clusters.enumerated() {
-                    logger.debug("📍 Cluster \(index): \(cluster.deviceCount) devices, \(cluster.hullVertices.count) hull vertices, polygon: \(cluster.polygon != nil ? "✓" : "✗")")
-                }
             }
+            let uiUpdateTime = CFAbsoluteTimeGetCurrent() - uiUpdateStartTime
+            logger.info("⏱️ UI update time: \(String(format: "%.1f", uiUpdateTime * 1000))ms")
 
         } catch {
             logger.error("❌ Spatial clustering failed: \(error.localizedDescription)")
