@@ -130,6 +130,10 @@ public struct ClusteringParameters: Sendable {
     public let enableHullComputation: Bool // Enable convex hull generation
     public let maxHullVertices: Int        // Maximum vertices per hull (performance cap)
 
+    // Phase 4: Concave hull parameters
+    public let useConcaveHull: Bool        // Use concave hull (alpha shapes) instead of convex
+    public let alphaRadius: Double         // Alpha radius for concave hull (meters)
+
     public init(
         epsilon: Double = 150.0,  // Reduced from 250m to 150m for tighter cluster bounds
         minPoints: Int = 3,
@@ -138,7 +142,9 @@ public struct ClusteringParameters: Sendable {
         minConfidence: Double = 0.5,
         minTotalDevices: Int = 5,
         enableHullComputation: Bool = true,
-        maxHullVertices: Int = 500
+        maxHullVertices: Int = 500,
+        useConcaveHull: Bool = true,  // Enabled - efficient grid-based spatial indexing algorithm
+        alphaRadius: Double = 100.0  // Concavity in meters - LOWER = tighter (50-300m range)
     ) {
         self.epsilon = epsilon
         self.minPoints = minPoints
@@ -148,6 +154,8 @@ public struct ClusteringParameters: Sendable {
         self.minTotalDevices = minTotalDevices
         self.enableHullComputation = enableHullComputation
         self.maxHullVertices = maxHullVertices
+        self.useConcaveHull = useConcaveHull
+        self.alphaRadius = alphaRadius
     }
 
     public static let `default` = ClusteringParameters()
@@ -174,6 +182,9 @@ public struct ClusteringParameters: Sendable {
         }
         guard maxHullVertices > 2 else {
             throw ClusteringError.configurationInvalid(parameter: "maxHullVertices", value: "\(maxHullVertices)")
+        }
+        guard alphaRadius > 0 else {
+            throw ClusteringError.configurationInvalid(parameter: "alphaRadius", value: "\(alphaRadius)")
         }
     }
 }

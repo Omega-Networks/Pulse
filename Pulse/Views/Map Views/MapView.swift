@@ -138,6 +138,13 @@ struct MapView: View {
                     logger.info("⏭️ Skipping PowerSense initialization - overlay disabled")
                 }
             }
+            .onDisappear {
+                // Clean up overlays to reduce MapKit rendering warnings
+                logger.debug("🧹 MapView disappearing - cleaning up overlays")
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    spatialClusters = []
+                }
+            }
             .onChange(of: showPowerSenseOverlay) { _, isEnabled in
                 logger.info("🔄 PowerSense overlay toggled: \(isEnabled)")
                 if isEnabled {
@@ -145,8 +152,10 @@ struct MapView: View {
                         await performSpatialClustering()
                     }
                 } else {
-                    // Clear clusters when overlay is disabled
-                    spatialClusters = []
+                    // Clear clusters when overlay is disabled with animation
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        spatialClusters = []
+                    }
                     logger.info("🧹 Cleared spatial clusters - overlay disabled")
                 }
             }
@@ -207,18 +216,26 @@ struct MapView: View {
         }
     }
 
-    // MARK: - Phase 3 Outage Polygon Overlays
+    // MARK: - Phase 4: Gradient Outage Polygon Overlays
 
     @MapContentBuilder
     private var outagePolygonOverlays: some MapContent {
-        // Render polygons in batches to prevent UI hangs
-        let validClusters = spatialClusters.filter { $0.polygon != nil && $0.hullVertices.count >= 3 }
+        // Render gradient layers for each cluster (heat map effect)
+        let validClusters = spatialClusters.filter { !$0.gradientLayers.isEmpty }
 
         ForEach(validClusters) { cluster in
-            if let polygon = cluster.polygon {
-                MapPolygon(polygon)
-                    .foregroundStyle(polygonStyle(for: cluster))
-                    .tag(cluster.clusterId)
+            // Render each gradient layer from outermost (lightest) to innermost (darkest)
+            ForEach(Array(cluster.gradientLayers.enumerated()), id: \.offset) { layerIndex, layerVertices in
+                if layerVertices.count >= 3 {
+                    let polygon = MKPolygon(coordinates: layerVertices, count: layerVertices.count)
+                    MapPolygon(polygon)
+                        .foregroundStyle(gradientLayerStyle(
+                            for: cluster,
+                            layerIndex: layerIndex,
+                            totalLayers: cluster.gradientLayers.count
+                        ))
+                        .tag("\(cluster.clusterId)-\(layerIndex)")
+                }
             }
         }
 
@@ -247,15 +264,27 @@ struct MapView: View {
         // }
     }
 
-    // MARK: - Phase 3 Styling Functions
+    // MARK: - Phase 4: Gradient Layer Styling Functions
+
+    /// Compute gradient layer style with intensity increasing toward center
+    private func gradientLayerStyle(for cluster: DeviceCluster, layerIndex: Int, totalLayers: Int) -> Color {
+        // Base color from confidence rating
+        let baseColor = confidenceColor(for: cluster.confidenceRating)
+
+        // Increased opacity gradient: outermost 28% → innermost 45%
+        // Layer 0 (outermost) = 28%, Layer N (innermost) = 45%
+        let normalizedLayer = Double(layerIndex) / Double(max(totalLayers - 1, 1))
+        let alpha = 0.28 + (normalizedLayer * 0.17)  // 28% → 45% gradient (was 8% → 25%)
+
+        return baseColor.opacity(alpha)
+    }
 
     private func polygonStyle(for cluster: DeviceCluster) -> Color {
-        // Fill opacity based on device count (30-60%)
+        // Legacy single polygon style (deprecated - now using gradientLayerStyle)
         let deviceCount = cluster.devices.count
-        let normalizedCount = min(1.0, Double(deviceCount) / 500.0) // Normalize to 500 devices
-        let alpha = 0.3 + (normalizedCount * 0.3) // 30% minimum, 60% maximum
+        let normalizedCount = min(1.0, Double(deviceCount) / 500.0)
+        let alpha = 0.3 + (normalizedCount * 0.3)
 
-        // Fill color based on confidence rating
         let baseColor = confidenceColor(for: cluster.confidenceRating)
         return baseColor.opacity(alpha)
     }
@@ -485,10 +514,12 @@ struct MapView: View {
                 logger.debug("📍 Cluster \(index): \(cluster.deviceCount) devices, \(cluster.hullVertices.count) hull vertices, polygon: \(cluster.polygon != nil ? "✓" : "✗")")
             }
 
-            // Update UI on main thread
+            // Update UI on main thread with animation
             await MainActor.run {
-                self.spatialClusters = clusters
-                self.clusteringStats = stats
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    self.spatialClusters = clusters
+                    self.clusteringStats = stats
+                }
                 self.isClusteringInProgress = false
                 self.lastClusteringTime = Date()
             }

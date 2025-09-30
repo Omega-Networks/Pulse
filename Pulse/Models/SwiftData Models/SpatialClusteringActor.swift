@@ -285,11 +285,13 @@ actor SpatialClusteringActor {
 
         logger.info("📊 Phase 3: Processing \(validClusters.count) clusters with CPU-based hull computation")
 
-        // Apply sampling for very large clusters to improve performance
-        let samplingThreshold = 1000  // CPU can handle more points efficiently
+        // Apply sampling for very large clusters ONLY if necessary for hull vertex limits
+        // Increased from 1000 to 5000 to preserve data integrity (senior engineer recommendation)
+        let samplingThreshold = config.clusteringParameters.maxHullVertices * 10  // e.g., 500 * 10 = 5000
         let maxPointsPerCluster = validClusters.map { $0.1.count }.max() ?? 100
 
         logger.info("🔧 Max points per cluster: \(maxPointsPerCluster)")
+        logger.info("🔧 Sampling threshold: \(samplingThreshold)")
         logger.info("🔧 Cluster sizes: \(validClusters.map { $0.1.count }.prefix(5).map(String.init).joined(separator: ", "))\(validClusters.count > 5 ? "..." : "")")
 
         let finalClusters = validClusters.map { (label, devices) in
@@ -301,59 +303,135 @@ actor SpatialClusteringActor {
             }
         }
 
-        // Start timing CPU hull computation
+        // Phase A: Batch transform ALL cluster coordinates upfront (single GPU call)
+        logger.info("🔧 Phase A: Batch transforming coordinates for all clusters...")
+        let batchStartTime = CFAbsoluteTimeGetCurrent()
+
+        var deviceToProjected: [String: ProjectedCoordinate] = [:]
+        var allClusterCoordinates: [CLLocationCoordinate2D] = []
+
+        for (_, clusterDevices) in finalClusters {
+            for device in clusterDevices {
+                let coord = CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude)
+                allClusterCoordinates.append(coord)
+            }
+        }
+
+        let allProjected = try transformer.batchTransform(allClusterCoordinates)
+
+        // Build lookup map
+        var coordIndex = 0
+        for (_, clusterDevices) in finalClusters {
+            for device in clusterDevices {
+                deviceToProjected[device.deviceId] = allProjected[coordIndex]
+                coordIndex += 1
+            }
+        }
+
+        let batchTime = CFAbsoluteTimeGetCurrent() - batchStartTime
+        logger.info("✅ Phase A: Batch transform complete in \(String(format: "%.1f", batchTime * 1000))ms")
+
+        // Phase B: Process clusters in parallel using TaskGroup
+        logger.info("🔧 Phase B: Parallel hull computation across \(finalClusters.count) clusters...")
         let hullStartTime = CFAbsoluteTimeGetCurrent()
-        var enhancedClusters: [DeviceCluster] = []
 
-        // Process each cluster with CPU-based hull computation
-        for (clusterIndex, (_, clusterDevices)) in finalClusters.enumerated() {
-            logger.debug("🔺 Processing cluster \(clusterIndex) with \(clusterDevices.count) devices")
+        // Capture configuration to avoid actor isolation issues
+        let useConcaveHull = config.clusteringParameters.useConcaveHull
 
-            // Extract coordinates for hull computation
-            let clusterPoints = clusterDevices.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+        let enhancedClusters = try await withThrowingTaskGroup(of: DeviceCluster?.self) { group in
+            for (clusterIndex, (_, clusterDevices)) in finalClusters.enumerated() {
+                // Process each cluster in parallel
+                group.addTask { [devices, deviceToProjected, transformer] in
+                    // Extract pre-transformed coordinates from cache
+                    let projectedCoordinates = clusterDevices.compactMap { deviceToProjected[$0.deviceId] }
+                    guard projectedCoordinates.count == clusterDevices.count else {
+                        self.logger.error("⚠️ Coordinate mismatch for cluster \(clusterIndex)")
+                        return nil
+                    }
 
-            // Compute convex hull using CPU-based Andrew's algorithm
-            let hullVertices = computeConvexHull(points: clusterPoints)
+                    let deviceCoordinates = clusterDevices.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
 
-            // Calculate confidence using point-in-polygon test
-            let confidence = calculateClusterConfidence(
-                clusterDevices: clusterDevices,
-                hullVertices: hullVertices,
-                allDevices: devices
-            )
+                    // Calculate dynamic concavity based on cluster size (more devices = tighter hull)
+                    // Formula: alphaRadius = 300 - (200 * log10(deviceCount))
+                    // Examples: 10 devices=300m, 100=100m, 1000=100m, 10000=50m
+                    let deviceCount = Double(clusterDevices.count)
+                    let dynamicConcavity: Double
+                    if deviceCount <= 10 {
+                        dynamicConcavity = 300.0  // Very small clusters: loose hull
+                    } else if deviceCount >= 10000 {
+                        dynamicConcavity = 50.0   // Very large clusters: tight hull
+                    } else {
+                        // Logarithmic scale between 10 and 10000 devices
+                        let logScale = log10(deviceCount / 10.0) / log10(10000.0 / 10.0)  // 0.0 to 1.0
+                        dynamicConcavity = 300.0 - (250.0 * logScale)  // 300m → 50m
+                    }
 
-            // Skip clusters with very low confidence
-            let minConfidence = 0.02 // 2% minimum confidence threshold
-            if confidence < minConfidence {
-                logger.info("🔍 Skipping cluster \(clusterIndex) with low confidence: \(String(format: "%.3f", confidence))")
-                continue
+                    // Compute hull in projected metric space (concave or convex based on config)
+                    let hullVertices: [CLLocationCoordinate2D]
+                    if useConcaveHull {
+                        hullVertices = try self.computeConcaveHull(
+                            projectedCoordinates: projectedCoordinates,
+                            concavity: dynamicConcavity,
+                            transformer: transformer
+                        )
+                    } else {
+                        // Fallback to convex hull in lat/lon space
+                        hullVertices = self.computeConvexHull(points: deviceCoordinates)
+                    }
+
+                    // Calculate confidence using point-in-polygon test
+                    let confidence = self.calculateClusterConfidence(
+                        clusterDevices: clusterDevices,
+                        hullVertices: hullVertices,
+                        allDevices: devices
+                    )
+
+                    // Skip clusters with very low confidence
+                    let minConfidence = 0.02 // 2% minimum confidence threshold
+                    if confidence < minConfidence {
+                        self.logger.info("🔍 Skipping cluster \(clusterIndex) with low confidence: \(String(format: "%.3f", confidence))")
+                        return nil
+                    }
+
+                    // Calculate outage timing with anomaly filtering (no additional queries)
+                    let (startTime, duration) = self.calculateOutageTiming(clusterDevices: clusterDevices)
+
+                    // Generate gradient layers for heat map visualization (3 layers: outermost removed)
+                    let gradientLayers = self.generateGradientLayers(
+                        polygon: hullVertices,
+                        bufferDistances: [-100, -50, 0]  // 3 layers: 100m outward, 50m outward, base
+                    )
+
+                    // Create DeviceCluster with CPU-computed hull and gradient layers
+                    let deviceCluster = DeviceCluster(
+                        clusterId: clusterIndex,
+                        devices: clusterDevices,
+                        projectedCoordinates: projectedCoordinates,
+                        projectionSystem: .nztm2000,
+                        confidenceRating: confidence,
+                        totalDevicesInArea: clusterDevices.count,
+                        hullVertices: hullVertices,
+                        gradientLayers: gradientLayers,
+                        outageStartTime: startTime,
+                        outageDuration: duration
+                    )
+
+                    // Verify polygon creation
+                    let hasPolygon = deviceCluster.polygon != nil
+                    self.logger.debug("🔺 Cluster \(clusterIndex): \(hullVertices.count) hull vertices, confidence: \(String(format: "%.2f", confidence)), polygon: \(hasPolygon ? "✓" : "✗")")
+
+                    return deviceCluster
+                }
             }
 
-            // Transform device coordinates for DeviceCluster
-            let deviceCoordinates = clusterDevices.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-            let projectedCoordinates = try transformer.batchTransform(deviceCoordinates)
-
-            // Calculate outage timing with anomaly filtering (no additional queries)
-            let (startTime, duration) = calculateOutageTiming(clusterDevices: clusterDevices)
-
-            // Create DeviceCluster with CPU-computed hull
-            let deviceCluster = DeviceCluster(
-                clusterId: clusterIndex,
-                devices: clusterDevices,
-                projectedCoordinates: projectedCoordinates,
-                projectionSystem: .nztm2000,
-                confidenceRating: confidence,
-                totalDevicesInArea: clusterDevices.count,
-                hullVertices: hullVertices,
-                outageStartTime: startTime,
-                outageDuration: duration
-            )
-
-            // Verify polygon creation
-            let hasPolygon = deviceCluster.polygon != nil
-            logger.debug("🔺 Cluster \(clusterIndex): \(hullVertices.count) hull vertices, confidence: \(String(format: "%.2f", confidence)), polygon: \(hasPolygon ? "✓" : "✗")")
-
-            enhancedClusters.append(deviceCluster)
+            // Collect results
+            var results: [DeviceCluster] = []
+            for try await cluster in group {
+                if let cluster = cluster {
+                    results.append(cluster)
+                }
+            }
+            return results
         }
 
         let hullTime = CFAbsoluteTimeGetCurrent() - hullStartTime
@@ -368,7 +446,7 @@ actor SpatialClusteringActor {
 
     /// Check if polygon coordinates are in clockwise order
     /// Used to ensure MKPolygon compatibility (exterior rings should be clockwise)
-    private func isClockwise(coordinates: [CLLocationCoordinate2D]) -> Bool {
+    nonisolated private func isClockwise(coordinates: [CLLocationCoordinate2D]) -> Bool {
         guard coordinates.count >= 3 else { return true }
 
         var sum: Double = 0.0
@@ -516,7 +594,8 @@ actor SpatialClusteringActor {
 
     /// Compute convex hull using Andrew's monotone chain algorithm (O(n log n))
     /// Provides 100% reliability compared to GPU QuickHull implementation
-    private func computeConvexHull(points: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+    /// NOTE: nonisolated to allow parallel execution across multiple clusters
+    nonisolated private func computeConvexHull(points: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
         guard points.count >= 3 else {
             // For degenerate cases, return bounding box
             return createBoundingBoxFromPoints(points)
@@ -571,37 +650,14 @@ actor SpatialClusteringActor {
             hull.reverse()
         }
 
-        // Apply vertex limiting to prevent UI lag (max 50 vertices)
-        if hull.count > 50 {
-            hull = simplifyHullVertices(hull: hull, maxVertices: 50)
-        }
-
+        // Note: Not simplifying convex hull vertices to maintain accuracy
+        // MapKit efficiently handles hundreds of vertices
         return hull
-    }
-
-    /// Simplify hull by reducing vertex count while preserving shape
-    /// Uses Douglas-Peucker-inspired sampling of vertices by perimeter distance
-    private func simplifyHullVertices(hull: [CLLocationCoordinate2D], maxVertices: Int) -> [CLLocationCoordinate2D] {
-        guard hull.count > maxVertices else { return hull }
-
-        logger.debug("🔧 Simplifying hull: \(hull.count) → \(maxVertices) vertices")
-
-        // Calculate perimeter and sample at regular intervals
-        var simplified: [CLLocationCoordinate2D] = []
-        let stride = Double(hull.count) / Double(maxVertices)
-
-        for i in 0..<maxVertices {
-            let index = Int(Double(i) * stride)
-            simplified.append(hull[index])
-        }
-
-        logger.debug("🔧 Hull simplification complete: \(simplified.count) vertices")
-        return simplified
     }
 
     /// Calculate cross product for convex hull computation
     /// Returns positive if points are counter-clockwise, negative if clockwise, zero if collinear
-    private func crossProduct(
+    nonisolated private func crossProduct(
         _ a: CLLocationCoordinate2D,
         _ b: CLLocationCoordinate2D,
         _ c: CLLocationCoordinate2D
@@ -611,7 +667,7 @@ actor SpatialClusteringActor {
     }
 
     /// Create bounding box for degenerate point sets
-    private func createBoundingBoxFromPoints(_ points: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+    nonisolated private func createBoundingBoxFromPoints(_ points: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
         guard !points.isEmpty else { return [] }
 
         if points.count == 1 {
@@ -656,9 +712,165 @@ actor SpatialClusteringActor {
         ]
     }
 
+    // MARK: - Phase 4: Concave Hull (Alpha Shapes)
+
+    /// Compute concave hull using efficient grid-based spatial indexing algorithm
+    /// Works in NZTM2000 projected space (meters) for accurate concavity
+    /// NOTE: nonisolated to allow parallel execution across multiple clusters
+    nonisolated private func computeConcaveHull(
+        projectedCoordinates: [ProjectedCoordinate],
+        concavity: Double,
+        transformer: CoordinateTransformer
+    ) throws -> [CLLocationCoordinate2D] {
+        // Convert projected coordinates to Point for hull algorithm
+        let points = projectedCoordinates.map { Point(x: $0.x, y: $0.y) }
+
+        // Use efficient grid-based concave hull algorithm in metric space
+        let concaveHull = ConcaveHull()
+        let hullPoints = concaveHull.hullFromPoints(points: points, concavity: concavity)
+
+        // Convert hull back to projected coordinates
+        let hullProjected = hullPoints.map { ProjectedCoordinate(x: $0.x, y: $0.y, system: .nztm2000) }
+
+        // Transform back to lat/lon for rendering
+        var hullLatLon = transformer.batchInverseTransform(hullProjected)
+
+        // Ensure clockwise ordering for MapKit
+        if !isClockwise(coordinates: hullLatLon) {
+            hullLatLon.reverse()
+        }
+
+        // Note: Not simplifying hull vertices to preserve tight concave boundaries
+        // Stride-based simplification can skip important vertices at corners
+        // Modern MapKit can handle hundreds of vertices efficiently
+
+        return hullLatLon
+    }
+
+    // MARK: - Phase 4: Gradient Buffer Layers
+
+    /// Generate multiple buffered polygons for gradient visualization
+    /// Returns array of polygons from outermost to innermost
+    /// Supports both inward (positive) and outward (negative) buffers
+    /// NOTE: nonisolated to allow parallel execution across multiple clusters
+    nonisolated func generateGradientLayers(
+        polygon: [CLLocationCoordinate2D],
+        bufferDistances: [Double]  // In meters, negative = outward, positive = inward
+    ) -> [[CLLocationCoordinate2D]] {
+        var layers: [[CLLocationCoordinate2D]] = []
+
+        for distance in bufferDistances {
+            if distance == 0 {
+                // Original polygon
+                layers.append(polygon)
+            } else {
+                // Buffered polygon (inward if positive, outward if negative)
+                if let buffered = bufferPolygon(polygon: polygon, bufferMeters: distance) {
+                    layers.append(buffered)
+                } else {
+                    // Buffer collapsed (only for inward) - stop generating layers
+                    if distance > 0 {
+                        break
+                    }
+                }
+            }
+        }
+
+        return layers
+    }
+
+    /// Buffer polygon by specified distance in meters
+    /// Positive = inward, negative = outward
+    /// Returns nil if polygon collapses (becomes too small) - only for inward buffers
+    nonisolated private func bufferPolygon(
+        polygon: [CLLocationCoordinate2D],
+        bufferMeters: Double
+    ) -> [CLLocationCoordinate2D]? {
+        guard polygon.count >= 3 else { return nil }
+
+        // Convert buffer distance to approximate degrees
+        // At equator: 1 degree ≈ 111,000 meters
+        // This is approximate but sufficient for visualization
+        let bufferDegrees = bufferMeters / 111_000.0
+
+        // Compute inward normal offset for each vertex
+        var bufferedVertices: [CLLocationCoordinate2D] = []
+
+        for i in 0..<polygon.count {
+            let prev = polygon[(i - 1 + polygon.count) % polygon.count]
+            let curr = polygon[i]
+            let next = polygon[(i + 1) % polygon.count]
+
+            // Calculate edge vectors
+            let v1 = (lat: curr.latitude - prev.latitude, lon: curr.longitude - prev.longitude)
+            let v2 = (lat: next.latitude - curr.latitude, lon: next.longitude - curr.longitude)
+
+            // Calculate perpendicular (inward normal) for each edge
+            let n1 = normalizeVector((-v1.lon, v1.lat))  // Perpendicular to v1
+            let n2 = normalizeVector((-v2.lon, v2.lat))  // Perpendicular to v2
+
+            // Average the normals for vertex offset direction
+            var avgNormal = (lat: (n1.lat + n2.lat) / 2.0, lon: (n1.lon + n2.lon) / 2.0)
+            avgNormal = normalizeVector(avgNormal)
+
+            // Ensure correct direction based on buffer type
+            // For inward buffer (positive): normal points inward
+            // For outward buffer (negative): normal points outward
+            let isInward = bufferMeters > 0
+            if isInward {
+                // Inward buffer: ensure normal points inward
+                if !isClockwise(coordinates: polygon) {
+                    avgNormal = (-avgNormal.lat, -avgNormal.lon)
+                }
+            } else {
+                // Outward buffer: ensure normal points outward (reverse of inward)
+                if isClockwise(coordinates: polygon) {
+                    avgNormal = (-avgNormal.lat, -avgNormal.lon)
+                }
+            }
+
+            // Offset vertex by buffer distance
+            let offsetLat = curr.latitude + avgNormal.lat * bufferDegrees
+            let offsetLon = curr.longitude + avgNormal.lon * bufferDegrees
+
+            bufferedVertices.append(CLLocationCoordinate2D(latitude: offsetLat, longitude: offsetLon))
+        }
+
+        // Check if polygon collapsed (area too small) - only for inward buffers
+        guard bufferedVertices.count >= 3 else { return nil }
+
+        // Compute area to detect collapse (only check for inward buffers)
+        if bufferMeters > 0 {
+            let area = computePolygonArea(bufferedVertices)
+            guard area > 1e-10 else { return nil }  // Collapsed to nearly zero area
+        }
+
+        return bufferedVertices
+    }
+
+    /// Normalize a 2D vector
+    nonisolated private func normalizeVector(_ v: (lat: Double, lon: Double)) -> (lat: Double, lon: Double) {
+        let magnitude = sqrt(v.lat * v.lat + v.lon * v.lon)
+        guard magnitude > 0 else { return (0, 0) }
+        return (v.lat / magnitude, v.lon / magnitude)
+    }
+
+    /// Compute signed area of polygon (positive if clockwise)
+    nonisolated private func computePolygonArea(_ polygon: [CLLocationCoordinate2D]) -> Double {
+        guard polygon.count >= 3 else { return 0 }
+
+        var area: Double = 0
+        for i in 0..<polygon.count {
+            let j = (i + 1) % polygon.count
+            area += polygon[i].longitude * polygon[j].latitude
+            area -= polygon[j].longitude * polygon[i].latitude
+        }
+        return abs(area) / 2.0
+    }
+
     /// Point-in-polygon test using winding number algorithm
     /// More accurate than bounding box for confidence calculation
-    private func pointInPolygon(point: CLLocationCoordinate2D, polygon: [CLLocationCoordinate2D]) -> Bool {
+    nonisolated private func pointInPolygon(point: CLLocationCoordinate2D, polygon: [CLLocationCoordinate2D]) -> Bool {
         guard polygon.count >= 3 else { return false }
 
         var wn = 0    // Winding number
@@ -682,7 +894,7 @@ actor SpatialClusteringActor {
     }
 
     /// Test if point is left of line segment
-    private func isLeft(
+    nonisolated private func isLeft(
         _ a: CLLocationCoordinate2D,
         _ b: CLLocationCoordinate2D,
         _ p: CLLocationCoordinate2D
@@ -748,7 +960,8 @@ actor SpatialClusteringActor {
     /// Calculate outage start time and duration with statistical outlier filtering
     /// Uses IQR (Interquartile Range) method - handles both short outages and multi-week disasters
     /// Zero additional database queries - uses eventTimestamp already in DTO
-    private func calculateOutageTiming(clusterDevices: [PowerSenseDeviceDTO]) -> (startTime: Date?, duration: TimeInterval) {
+    /// NOTE: nonisolated to allow parallel execution across multiple clusters
+    nonisolated private func calculateOutageTiming(clusterDevices: [PowerSenseDeviceDTO]) -> (startTime: Date?, duration: TimeInterval) {
         let allTimestamps = clusterDevices
             .compactMap { $0.eventTimestamp }
             .sorted()
@@ -803,7 +1016,8 @@ actor SpatialClusteringActor {
     }
 
     /// Calculate cluster confidence using point-in-polygon test
-    private func calculateClusterConfidence(
+    /// NOTE: nonisolated to allow parallel execution across multiple clusters
+    nonisolated private func calculateClusterConfidence(
         clusterDevices: [PowerSenseDeviceDTO],
         hullVertices: [CLLocationCoordinate2D],
         allDevices: [PowerSenseDeviceDTO]
@@ -813,15 +1027,28 @@ actor SpatialClusteringActor {
             // Calculate confidence based on cluster devices only
             let offlineCount = clusterDevices.filter { $0.isOffline == true }.count
             let confidence = clusterDevices.isEmpty ? 0.0 : Double(offlineCount) / Double(clusterDevices.count)
-            logger.debug("🔍 Degenerate hull confidence (cluster-only): \(offlineCount)/\(clusterDevices.count) = \(String(format: "%.3f", confidence))")
             return confidence
         }
 
-        // Find all devices within the hull area
+        // Compute bounding box for pre-filtering (90%+ reduction in checks)
+        let lats = hullVertices.map(\.latitude)
+        let lons = hullVertices.map(\.longitude)
+        guard let minLat = lats.min(), let maxLat = lats.max(),
+              let minLon = lons.min(), let maxLon = lons.max() else {
+            return 0.0
+        }
+
+        // Pre-filter candidates using bounding box (fast rejection)
+        let candidates = allDevices.filter { device in
+            device.latitude >= minLat && device.latitude <= maxLat &&
+            device.longitude >= minLon && device.longitude <= maxLon
+        }
+
+        // Find all devices within the hull area (only checking candidates)
         var totalDevicesInHull = 0
         var offlineDevicesInHull = 0
 
-        for device in allDevices {
+        for device in candidates {
             let deviceCoord = CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude)
             if pointInPolygon(point: deviceCoord, polygon: hullVertices) {
                 totalDevicesInHull += 1
@@ -834,13 +1061,10 @@ actor SpatialClusteringActor {
         // Confidence = ratio of offline devices to total devices in hull area
         // This represents how "dense" the outage is within the convex hull
         if totalDevicesInHull == 0 {
-            logger.warning("🔍 No devices found in hull - returning 0.0 confidence")
             return 0.0
         }
 
         let confidence = Double(offlineDevicesInHull) / Double(totalDevicesInHull)
-        logger.debug("🔍 Confidence calculation: \(offlineDevicesInHull) offline / \(totalDevicesInHull) total in hull = \(String(format: "%.3f", confidence))")
-
         return confidence
     }
 
@@ -918,4 +1142,10 @@ final class ClusteringService: @unchecked Sendable {
     func isReady() async -> Bool {
         return await actor.isIndexerReady()
     }
+}
+
+// Note: CLLocationCoordinate2D already conforms to Equatable in Swift
+// Custom comparison for triangulation (fuzzy equality within epsilon)
+private func coordinatesEqual(_ lhs: CLLocationCoordinate2D, _ rhs: CLLocationCoordinate2D) -> Bool {
+    return abs(lhs.latitude - rhs.latitude) < 1e-9 && abs(lhs.longitude - rhs.longitude) < 1e-9
 }

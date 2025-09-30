@@ -56,6 +56,9 @@ public struct DeviceCluster: Identifiable, @unchecked Sendable {
     internal let polygon: MKPolygon?         // Convex hull polygon for map overlays
     public let hullVertices: [CLLocationCoordinate2D] // Raw hull vertices for debugging/export
 
+    // Phase 4: Gradient layers for intensity visualization
+    public let gradientLayers: [[CLLocationCoordinate2D]] // Multiple buffered polygons for gradient effect
+
     // Phase 5: Outage timing with anomaly filtering
     public let outageStartTime: Date?        // Median start time (outliers >7 days filtered)
     public let outageDuration: TimeInterval  // Time since filtered start time
@@ -79,7 +82,7 @@ public struct DeviceCluster: Identifiable, @unchecked Sendable {
         }
     }
     
-    public init(clusterId: Int, devices: [any SpatialDevice], projectedCoordinates: [ProjectedCoordinate], projectionSystem: ProjectionSystem, confidenceRating: Double = 1.0, totalDevicesInArea: Int = 0, hullVertices: [CLLocationCoordinate2D] = [], outageStartTime: Date? = nil, outageDuration: TimeInterval = 0) {
+    public init(clusterId: Int, devices: [any SpatialDevice], projectedCoordinates: [ProjectedCoordinate], projectionSystem: ProjectionSystem, confidenceRating: Double = 1.0, totalDevicesInArea: Int = 0, hullVertices: [CLLocationCoordinate2D] = [], gradientLayers: [[CLLocationCoordinate2D]] = [], outageStartTime: Date? = nil, outageDuration: TimeInterval = 0) {
         self.id = clusterId
         self.clusterId = clusterId
         self.devices = devices
@@ -87,6 +90,7 @@ public struct DeviceCluster: Identifiable, @unchecked Sendable {
         self.totalDevicesInArea = totalDevicesInArea > 0 ? totalDevicesInArea : devices.count
         self.outageStartTime = outageStartTime
         self.outageDuration = outageDuration
+        self.gradientLayers = gradientLayers
 
         guard !projectedCoordinates.isEmpty else {
             self.centroid = ProjectedCoordinate(x: 0, y: 0, system: projectionSystem)
