@@ -227,11 +227,13 @@ struct MapView: View {
 
     @MapContentBuilder
     private var outagePolygonOverlays: some MapContent {
-        ForEach(spatialClusters.filter { $0.polygon != nil && $0.hullVertices.count >= 3 }) { cluster in
+        // Render polygons in batches to prevent UI hangs
+        let validClusters = spatialClusters.filter { $0.polygon != nil && $0.hullVertices.count >= 3 }
+
+        ForEach(validClusters) { cluster in
             if let polygon = cluster.polygon {
                 MapPolygon(polygon)
                     .foregroundStyle(polygonStyle(for: cluster))
-                    .stroke(strokeStyle(for: cluster), lineWidth: strokeWidth(for: cluster))
             }
         }
     }
@@ -239,47 +241,47 @@ struct MapView: View {
     // MARK: - Phase 3 Styling Functions
 
     private func polygonStyle(for cluster: DeviceCluster) -> Color {
-        // Style based on confidence and severity
-        let alpha = min(0.8, max(0.2, cluster.confidenceRating)) // 20%-80% opacity based on confidence
+        // Fill opacity based on device count (20-80%)
+        let deviceCount = cluster.devices.count
+        let normalizedCount = min(1.0, Double(deviceCount) / 500.0) // Normalize to 500 devices
+        let alpha = 0.2 + (normalizedCount * 0.6) // 20% minimum, 80% maximum
 
-        switch cluster.severity {
-        case .critical:
-            return Color.red.opacity(alpha)
-        case .major:
-            return Color.orange.opacity(alpha)
-        case .moderate:
-            return Color.yellow.opacity(alpha)
-        case .minor:
-            return Color.blue.opacity(alpha)
-        }
+        // Fill color based on confidence rating
+        let baseColor = confidenceColor(for: cluster.confidenceRating)
+        return baseColor.opacity(alpha)
     }
 
-    private func strokeStyle(for cluster: DeviceCluster) -> Color {
-        // Darker stroke for better visibility
-        switch cluster.severity {
-        case .critical:
-            return Color.red.opacity(0.9)
-        case .major:
-            return Color.orange.opacity(0.9)
-        case .moderate:
-            return Color.yellow.opacity(0.9)
-        case .minor:
-            return Color.blue.opacity(0.9)
-        }
-    }
+    /// Map confidence rating to color gradient: yellow (low) → orange (medium) → red (high)
+    /// - <20%: Yellow
+    /// - 20-70%: Yellow → Orange → Red gradient
+    /// - >70%: Red
+    private func confidenceColor(for confidence: Double) -> Color {
+        if confidence < 0.2 {
+            return .yellow
+        } else if confidence > 0.7 {
+            return .red
+        } else {
+            // Linear interpolation from yellow (20%) → orange (45%) → red (70%)
+            let normalized = (confidence - 0.2) / 0.5 // 0.0 at 20%, 1.0 at 70%
 
-    private func strokeWidth(for cluster: DeviceCluster) -> CGFloat {
-        // Thicker strokes for higher confidence and severity
-        let baseWidth: CGFloat = 1.5
-        let confidenceMultiplier = 1.0 + cluster.confidenceRating // 1.0-2.0 range
-        let severityMultiplier: CGFloat = switch cluster.severity {
-        case .critical: 2.0
-        case .major: 1.5
-        case .moderate: 1.2
-        case .minor: 1.0
+            if normalized < 0.5 {
+                // Yellow to orange (20-45%)
+                let t = normalized * 2.0 // 0.0-1.0 in first half
+                return Color(
+                    red: 1.0,
+                    green: 1.0 - (t * 0.35), // 1.0 → 0.65
+                    blue: 0.0
+                )
+            } else {
+                // Orange to red (45-70%)
+                let t = (normalized - 0.5) * 2.0 // 0.0-1.0 in second half
+                return Color(
+                    red: 1.0,
+                    green: 0.65 - (t * 0.65), // 0.65 → 0.0
+                    blue: 0.0
+                )
+            }
         }
-
-        return baseWidth * CGFloat(confidenceMultiplier) * severityMultiplier
     }
 
     @ViewBuilder

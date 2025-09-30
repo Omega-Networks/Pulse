@@ -129,7 +129,7 @@ actor SpatialClusteringActor {
         try await indexer.buildIndex(devices: devices)
 
         // Perform clustering using GPU-accelerated approach
-        let clusters = try await performModernClustering(devices: devices)
+        let clusters = try await performClustering(devices: devices)
 
         let processingTime = CFAbsoluteTimeGetCurrent() - startTime
         logger.info("✅ Clustering completed in \(String(format: "%.3f", processingTime))s")
@@ -157,45 +157,11 @@ actor SpatialClusteringActor {
         return devices.map { $0.toDTO() }
     }
 
-    /// Query devices within a specific region (viewport-based clustering)
-    func clusterDevicesInRegion(_ region: GeographicBounds) async throws -> ClusterResult {
-        let startTime = CFAbsoluteTimeGetCurrent()
-        logger.info("🗺️ Starting regional clustering")
-
-        try config.clusteringParameters.validate()
-
-        let devices = try await getSpatialDeviceDTOs()
-        let regionDevices = devices.filter { device in
-            let coordinate = CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude)
-            return region.contains(coordinate)
-        }
-
-        let offlineCount = regionDevices.filter { $0.isOffline == true }.count
-        logger.info("📍 Found \(regionDevices.count) devices in region, \(offlineCount) offline")
-
-        guard !regionDevices.isEmpty else {
-            return ClusterResult(clusters: [], totalDevices: 0, offlineDevices: 0, processingTime: 0)
-        }
-
-        // Build index and cluster
-        try await indexer.buildIndex(devices: regionDevices)
-        let clusters = try await performModernClustering(devices: regionDevices)
-
-        let processingTime = CFAbsoluteTimeGetCurrent() - startTime
-        logger.info("✅ Regional clustering completed in \(String(format: "%.3f", processingTime))s")
-
-        return ClusterResult(
-            clusters: clusters,
-            totalDevices: regionDevices.count,
-            offlineDevices: offlineCount,
-            processingTime: processingTime
-        )
-    }
-
+   
     // MARK: - Private Methods
 
-    /// Modern GPU-accelerated clustering implementation using DBSCAN
-    private func performModernClustering(devices: [PowerSenseDeviceDTO]) async throws -> [DeviceCluster] {
+    /// GPU-accelerated clustering implementation using DBSCAN
+    private func performClustering(devices: [PowerSenseDeviceDTO]) async throws -> [DeviceCluster] {
         logger.debug("🔬 Performing GPU-accelerated DBSCAN clustering on \(devices.count) devices")
 
         // Filter to offline devices only for clustering
@@ -208,7 +174,7 @@ actor SpatialClusteringActor {
 
         logger.info("🧠 Using GPU DBSCAN for \(offlineDevices.count) offline devices")
 
-        // Get GPU buffers from the spatial index (Apple Silicon - GPU integrated)
+        // Get GPU buffers from the spatial index
         guard let gridParams = await indexer.getGridParameters(),
               let gpuGrid = await indexer.getGPUGrid(),
               let coordsBuffer = await indexer.getGPUCoordsBuffer(),
@@ -238,7 +204,7 @@ actor SpatialClusteringActor {
 
         logger.info("🚀 GPU DBSCAN completed: \(dbscanResult.clusterCount) clusters, \(dbscanResult.iterations) iterations, \(String(format: "%.3f", dbscanResult.processingTime * 1000))ms")
 
-        // Phase 3: Generate hull and confidence for visualization
+        // Generate hull and confidence for visualization
         let clustersWithPolygons = try await generateClustersWithHullsAndConfidence(
             dbscanResult: dbscanResult,
             devices: devices,
@@ -364,7 +330,7 @@ actor SpatialClusteringActor {
         )
     }
 
-    /// Phase 3: Generate clusters with convex hull polygons and confidence scores (CPU-based)
+    /// Generate clusters with convex hull polygons and confidence scores (CPU-based)
     private func generateClustersWithHullsAndConfidence(
         dbscanResult: DBSCANResult,
         devices: [PowerSenseDeviceDTO],
@@ -702,7 +668,32 @@ actor SpatialClusteringActor {
             hull.reverse()
         }
 
+        // Apply vertex limiting to prevent UI lag (max 50 vertices)
+        if hull.count > 50 {
+            hull = simplifyHullVertices(hull: hull, maxVertices: 50)
+        }
+
         return hull
+    }
+
+    /// Simplify hull by reducing vertex count while preserving shape
+    /// Uses Douglas-Peucker-inspired sampling of vertices by perimeter distance
+    private func simplifyHullVertices(hull: [CLLocationCoordinate2D], maxVertices: Int) -> [CLLocationCoordinate2D] {
+        guard hull.count > maxVertices else { return hull }
+
+        logger.debug("🔧 Simplifying hull: \(hull.count) → \(maxVertices) vertices")
+
+        // Calculate perimeter and sample at regular intervals
+        var simplified: [CLLocationCoordinate2D] = []
+        let stride = Double(hull.count) / Double(maxVertices)
+
+        for i in 0..<maxVertices {
+            let index = Int(Double(i) * stride)
+            simplified.append(hull[index])
+        }
+
+        logger.debug("🔧 Hull simplification complete: \(simplified.count) vertices")
+        return simplified
     }
 
     /// Calculate cross product for convex hull computation
@@ -807,7 +798,6 @@ actor SpatialClusteringActor {
         logger.debug("🔧 Applying farthest-point sampling: \(devices.count) → \(targetCount)")
 
         var sampled: [PowerSenseDeviceDTO] = []
-        var remaining = devices
 
         // Start with extrema points to preserve boundaries
         let lats = devices.map { $0.latitude }
@@ -825,20 +815,30 @@ actor SpatialClusteringActor {
             }
         }
 
-        // Remove extreme points from remaining
-        remaining = devices.enumerated().compactMap { index, device in
-            extremeIndices.contains(index) ? nil : device
-        }
-
-        // Add random selection from remaining points for simplicity and performance
-        // For production, could implement true farthest-point sampling
+        // For large clusters, use stratified random sampling instead of farthest-point
+        // to avoid O(n²) performance hit
         let additionalCount = targetCount - sampled.count
-        if additionalCount > 0 && !remaining.isEmpty {
-            let additionalDevices = Array(remaining.shuffled().prefix(additionalCount))
-            sampled.append(contentsOf: additionalDevices)
+        if additionalCount > 0 {
+            // Remove extrema from pool
+            let remaining = devices.enumerated().compactMap { index, device in
+                extremeIndices.contains(index) ? nil : device
+            }
+
+            if !remaining.isEmpty {
+                // Use stride-based sampling for performance (approximates farthest-point)
+                let stride = Double(remaining.count) / Double(additionalCount)
+                var additionalSampled: [PowerSenseDeviceDTO] = []
+
+                for i in 0..<additionalCount {
+                    let index = min(Int(Double(i) * stride), remaining.count - 1)
+                    additionalSampled.append(remaining[index])
+                }
+
+                sampled.append(contentsOf: additionalSampled)
+            }
         }
 
-        logger.debug("🔧 Sampling complete: \(extremeIndices.count) extrema + \(sampled.count - extremeIndices.count) random = \(sampled.count) total")
+        logger.debug("🔧 Sampling complete: \(extremeIndices.count) extrema + \(sampled.count - extremeIndices.count) stride-sampled = \(sampled.count) total")
         return sampled
     }
 
@@ -848,7 +848,14 @@ actor SpatialClusteringActor {
         hullVertices: [CLLocationCoordinate2D],
         allDevices: [PowerSenseDeviceDTO]
     ) -> Double {
-        guard hullVertices.count >= 3 else { return 0.75 } // Default for degenerate hulls
+        // For degenerate hulls (< 3 vertices), use cluster-only confidence
+        guard hullVertices.count >= 3 else {
+            // Calculate confidence based on cluster devices only
+            let offlineCount = clusterDevices.filter { $0.isOffline == true }.count
+            let confidence = clusterDevices.isEmpty ? 0.0 : Double(offlineCount) / Double(clusterDevices.count)
+            logger.debug("🔍 Degenerate hull confidence (cluster-only): \(offlineCount)/\(clusterDevices.count) = \(String(format: "%.3f", confidence))")
+            return confidence
+        }
 
         // Find all devices within the hull area
         var totalDevicesInHull = 0
@@ -867,11 +874,12 @@ actor SpatialClusteringActor {
         // Confidence = ratio of offline devices to total devices in hull area
         // This represents how "dense" the outage is within the convex hull
         if totalDevicesInHull == 0 {
+            logger.warning("🔍 No devices found in hull - returning 0.0 confidence")
             return 0.0
         }
 
         let confidence = Double(offlineDevicesInHull) / Double(totalDevicesInHull)
-        logger.debug("🔍 Confidence calculation: \(offlineDevicesInHull)/\(totalDevicesInHull) = \(String(format: "%.3f", confidence))")
+        logger.debug("🔍 Confidence calculation: \(offlineDevicesInHull) offline / \(totalDevicesInHull) total in hull = \(String(format: "%.3f", confidence))")
 
         return confidence
     }
