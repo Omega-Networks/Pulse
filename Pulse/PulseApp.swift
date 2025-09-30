@@ -70,9 +70,10 @@ struct PulseApp: App {
     let tipManager = TipManager.shared
     @State private var showContentView = false
     @State private var sharedLocations = SharedLocations()
-    
+
     let notificationHandler = NotificationHandler()
     let modelContainer: ModelContainer
+    var clusteringService: ClusteringService?
     
     init() {
         do {
@@ -91,6 +92,9 @@ struct PulseApp: App {
                 PowerSenseDevice.self,
                 PowerSenseEvent.self
             )
+
+            // Initialize clustering service with model container
+            clusteringService = try ClusteringService(modelContainer: modelContainer)
         } catch {
             fatalError("Failed to initialize modelContainer: \(error)")
         }
@@ -108,6 +112,7 @@ struct PulseApp: App {
                 if showContentView {
                     ContentView()
                         .environment(sharedLocations)
+                        .environment(clusteringService)
                         .modelContainer(modelContainer)
                 } else {
                     LoadingView(state: initState)

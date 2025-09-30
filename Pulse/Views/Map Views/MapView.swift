@@ -32,46 +32,30 @@ import OSLog
 struct MapView: View {
     @Environment(\.openWindow) var openWindow
     @Environment(\.modelContext) private var modelContext
+    @Environment(ClusteringService.self) private var clusteringService
     @Query private var sites: [Site]
-
-    // PowerSense data for basic stats
-    @Query private var powerSenseEvents: [PowerSenseEvent]
-    @Query private var powerSenseDevices: [PowerSenseDevice]
 
     // Phase 3: GPU-accelerated spatial clustering for outage visualization
     @State private var spatialClusters: [DeviceCluster] = []
+    @State private var clusteringStats: ClusteringStats?
     @State private var isClusteringInProgress = false
     @State private var showOutagePolygons = true
     @State private var lastClusteringTime: Date?
 
-    // TEST ONLY: Device circle rendering (easily removable)
-    @State private var showTestDeviceCircles = false // Set to false to disable
+    // Phase 6: Cluster detail view
+    @State private var selectedCluster: DeviceCluster?
+    @State private var showClusterDetail = false
 
     // Debug logging
     private let logger = Logger(subsystem: "pulse", category: "mapView")
 
-    // Computed property for events related to devices
-    private var eventsRelatedToDevices: [PowerSenseEvent] {
-        powerSenseEvents.filter { $0.device != nil }
-    }
-
-    // Computed properties for device power states
-    private var offlinePowerSenseDevices: [PowerSenseDevice] {
-        powerSenseDevices.filter { device in
-            device.isOffline == true  // Explicitly offline (has active event)
-        }
-    }
-
-    private var onlinePowerSenseDevices: [PowerSenseDevice] {
-        powerSenseDevices.filter { device in
-            device.isOffline == false  // Explicitly online (has resolved event)
-        }
-    }
-
-    private var unknownStatusDevices: [PowerSenseDevice] {
-        powerSenseDevices.filter { device in
-            device.isOffline == nil  // No events, status unknown
-        }
+    // Simple stats struct for display
+    private struct ClusteringStats {
+        let totalDevices: Int
+        let offlineDevices: Int
+        let onlineDevices: Int
+        let totalEvents: Int
+        let activeEvents: Int
     }
     @Binding var cameraPosition: MapCameraPosition
     @Binding var mapStyle: MapStyle
@@ -166,13 +150,13 @@ struct MapView: View {
                     logger.info("🧹 Cleared spatial clusters - overlay disabled")
                 }
             }
-            .onChange(of: offlinePowerSenseDevices.count) { _, newCount in
-                // Re-cluster when offline device count changes
-                logger.info("📱 Offline device count changed: \(newCount)")
-                if showPowerSenseOverlay && newCount > 0 {
-                    Task {
-                        await performSpatialClustering()
-                    }
+            .onChange(of: lastClusteringTime) { _, _ in
+                // Trigger re-clustering when data changes
+                // Note: Data change detection now handled by actor
+            }
+            .sheet(isPresented: $showClusterDetail) {
+                if let cluster = selectedCluster {
+                    ClusterDetailView(cluster: cluster)
                 }
             }
     }
@@ -234,17 +218,42 @@ struct MapView: View {
             if let polygon = cluster.polygon {
                 MapPolygon(polygon)
                     .foregroundStyle(polygonStyle(for: cluster))
+                    .tag(cluster.clusterId)
             }
         }
+
+        // TODO: Add annotation markers for tap handling (disabled for now)
+        // ForEach(validClusters) { cluster in
+        //     if !cluster.hullVertices.isEmpty {
+        //         // Calculate centroid for tap target
+        //         let lats = cluster.hullVertices.map { $0.latitude }
+        //         let lons = cluster.hullVertices.map { $0.longitude }
+        //         if let avgLat = lats.reduce(0.0, +) / Double(lats.count) as Double?,
+        //            let avgLon = lons.reduce(0.0, +) / Double(lons.count) as Double? {
+        //             let centroid = CLLocationCoordinate2D(latitude: avgLat, longitude: avgLon)
+        //
+        //             Annotation("", coordinate: centroid) {
+        //                 Circle()
+        //                     .fill(.clear)
+        //                     .frame(width: 40, height: 40)
+        //                     .contentShape(Circle())
+        //                     .onTapGesture {
+        //                         selectedCluster = cluster
+        //                         showClusterDetail = true
+        //                     }
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     // MARK: - Phase 3 Styling Functions
 
     private func polygonStyle(for cluster: DeviceCluster) -> Color {
-        // Fill opacity based on device count (20-80%)
+        // Fill opacity based on device count (30-60%)
         let deviceCount = cluster.devices.count
         let normalizedCount = min(1.0, Double(deviceCount) / 500.0) // Normalize to 500 devices
-        let alpha = 0.2 + (normalizedCount * 0.6) // 20% minimum, 80% maximum
+        let alpha = 0.3 + (normalizedCount * 0.3) // 30% minimum, 60% maximum
 
         // Fill color based on confidence rating
         let baseColor = confidenceColor(for: cluster.confidenceRating)
@@ -315,13 +324,15 @@ struct MapView: View {
     private var powerSenseStatsOverlay: some View {
         VStack {
             HStack {
-                PowerSenseMapStatsBadge(
-                    deviceCount: powerSenseDevices.count,
-                    eventCount: powerSenseEvents.count,
-                    eventsWithDevicesCount: eventsRelatedToDevices.count,
-                    offlineDeviceCount: offlinePowerSenseDevices.count,
-                    onlineDeviceCount: onlinePowerSenseDevices.count
-                )
+                if let stats = clusteringStats {
+                    PowerSenseMapStatsBadge(
+                        deviceCount: stats.totalDevices,
+                        eventCount: stats.totalEvents,
+                        eventsWithDevicesCount: stats.activeEvents,
+                        offlineDeviceCount: stats.offlineDevices,
+                        onlineDeviceCount: stats.onlineDevices
+                    )
+                }
                 Spacer()
             }
             Spacer()
@@ -425,50 +436,35 @@ struct MapView: View {
             return
         }
 
-        let offlineDevices = offlinePowerSenseDevices
-        let totalDevices = powerSenseDevices.count
-        let onlineDevices = onlinePowerSenseDevices.count
-        let unknownDevices = unknownStatusDevices.count
-
-        logger.info("📊 PowerSense Device Status - Total: \(totalDevices), Online: \(onlineDevices), Offline: \(offlineDevices.count), Unknown: \(unknownDevices)")
-
-        guard !offlineDevices.isEmpty else {
-            logger.info("📍 No offline devices found for clustering (need devices with isOffline = true)")
-            await MainActor.run {
-                spatialClusters = []
-            }
-            return
-        }
-
-        logger.info("🚀 Starting spatial clustering for \(offlineDevices.count) offline devices")
+        logger.info("🚀 Starting spatial clustering")
 
         await MainActor.run {
             isClusteringInProgress = true
         }
 
         do {
-            let clusteringActor = try SpatialClusteringActor(
-                modelContainer: modelContext.container,
-                config: SpatialClusteringConfig.default
+            // Use app-level clustering service (persistent actor with cached GPU buffers)
+            let result = try await clusteringService.clusterDevices()
+
+            // Actor returns ready-to-render clusters
+            let clusters = result.clusters
+            let stats = ClusteringStats(
+                totalDevices: result.totalDevices,
+                offlineDevices: result.offlineDevices,
+                onlineDevices: result.totalDevices - result.offlineDevices,
+                totalEvents: result.totalEvents,
+                activeEvents: result.activeEvents
             )
 
-            // Perform GPU-accelerated clustering with Phase 3 hull computation
-            let result = try await clusteringActor.clusterAllDevices()
-
-            // Use DeviceCluster results with polygon data from Phase 3
-            let clusters = result.clusters
-
-            // Compute statistics off the main thread to avoid UI blocking
-            let statsStartTime = CFAbsoluteTimeGetCurrent()
+            // Compute statistics off the main thread
             let totalDevicesInClusters = clusters.reduce(0) { $0 + $1.deviceCount }
             let avgConfidence = clusters.isEmpty ? 0.0 : clusters.map(\.confidenceRating).reduce(0, +) / Double(clusters.count)
             let clustersWithPolygons = clusters.filter { $0.polygon != nil }.count
-            let statsTime = CFAbsoluteTimeGetCurrent() - statsStartTime
 
             logger.info("✅ Spatial clustering completed: \(clusters.count) clusters generated")
-            logger.info("📊 Cluster stats - Total devices: \(totalDevicesInClusters), Avg confidence: \(String(format: "%.2f", avgConfidence))")
-            logger.info("🗺️ Polygon stats - \(clustersWithPolygons)/\(clusters.count) clusters have polygons for rendering")
-            logger.info("⏱️ Statistics computation: \(String(format: "%.1f", statsTime * 1000))ms")
+            logger.info("📊 Device stats - Total: \(stats.totalDevices), Offline: \(stats.offlineDevices), Online: \(stats.onlineDevices)")
+            logger.info("📊 Cluster stats - Devices in clusters: \(totalDevicesInClusters), Avg confidence: \(String(format: "%.2f", avgConfidence))")
+            logger.info("🗺️ Polygon stats - \(clustersWithPolygons)/\(clusters.count) clusters have polygons")
 
             // Debug: Print coordinate bounds for first few clusters (off main thread)
             if !clusters.isEmpty {
@@ -489,15 +485,13 @@ struct MapView: View {
                 logger.debug("📍 Cluster \(index): \(cluster.deviceCount) devices, \(cluster.hullVertices.count) hull vertices, polygon: \(cluster.polygon != nil ? "✓" : "✗")")
             }
 
-                    // Update UI on main thread with minimal processing
-            let uiUpdateStartTime = CFAbsoluteTimeGetCurrent()
+            // Update UI on main thread
             await MainActor.run {
                 self.spatialClusters = clusters
+                self.clusteringStats = stats
                 self.isClusteringInProgress = false
                 self.lastClusteringTime = Date()
             }
-            let uiUpdateTime = CFAbsoluteTimeGetCurrent() - uiUpdateStartTime
-            logger.info("⏱️ UI update time: \(String(format: "%.1f", uiUpdateTime * 1000))ms")
 
         } catch {
             logger.error("❌ Spatial clustering failed: \(error.localizedDescription)")
@@ -601,25 +595,6 @@ struct PowerSenseMapStatsBadge: View {
 class SharedLocations {
     var tapLocation: CLLocationCoordinate2D?
     var tapAddress: String?
-}
-
-struct PowerSenseDeviceCircle: View {
-    let device: PowerSenseDevice
-
-    private var statusColor: Color {
-        switch device.isOffline {
-        case true: return .red      // Device is down
-        case false: return .green   // Device is up
-        case nil: return .orange    // Status unknown
-        }
-    }
-
-    var body: some View {
-        Circle()
-            .fill(statusColor)
-            .frame(width: 8, height: 8)
-            .drawingGroup() // Flatten rendering for performance
-    }
 }
 
 extension CLLocationCoordinate2D {

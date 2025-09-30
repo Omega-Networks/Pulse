@@ -118,6 +118,7 @@
 		C97DEDBB2E822BF5002898A7 /* MapPolygonDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */; };
 		C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */; };
 		C9951ED02E8815380025C136 /* SpatialClusteringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */; };
+		C9951ED62E8BF2380025C136 /* ClusterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */; };
 		C9BF5DA22E5B223900FD1AC3 /* PulseAppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */; };
 		C9FCA5172D153E4D00D9E851 /* Event.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9FCA5162D153E4700D9E851 /* Event.swift */; };
 /* End PBXBuildFile section */
@@ -256,6 +257,7 @@
 		C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapPolygonDemoView.swift; sourceTree = "<group>"; };
 		C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringActor.swift; sourceTree = "<group>"; };
 		C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringTests.swift; sourceTree = "<group>"; };
+		C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterDetailView.swift; sourceTree = "<group>"; };
 		C9A2B32B2ACAA19D00C0BE08 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PulseAppIcon.icon; sourceTree = "<group>"; };
 		C9FCA5162D153E4700D9E851 /* Event.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Event.swift; sourceTree = "<group>"; };
@@ -392,6 +394,7 @@
 		8A4D5B0C123456789ABCDEF0 /* PowerSenseViews */ = {
 			isa = PBXGroup;
 			children = (
+				C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */,
 				C963258B2E86BAE30018D2CD /* SpatialClusteringTestView.swift */,
 			);
 			path = PowerSenseViews;
@@ -763,6 +766,7 @@
 				41A0BE9C2C8FBF5C00C39B50 /* SettingsView.swift in Sources */,
 				C96191B02ACA5794000198DB /* Site.swift in Sources */,
 				4107D86E2C2CD9B700632BE4 /* InvoicesButton.swift in Sources */,
+				C9951ED62E8BF2380025C136 /* ClusterDetailView.swift in Sources */,
 				419246082B6B2F380067DE98 /* ProviderModelActor.swift in Sources */,
 				C96192072ACA5D0A000198DB /* EventTable.swift in Sources */,
 				412BAF3F2C51B7A00026BC6D /* Layout.swift in Sources */,

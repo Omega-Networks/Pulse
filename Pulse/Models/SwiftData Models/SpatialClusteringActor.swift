@@ -33,6 +33,8 @@ struct ClusterResult: Sendable {
     let totalDevices: Int
     let offlineDevices: Int
     let processingTime: Double
+    let totalEvents: Int
+    let activeEvents: Int
 }
 
 struct SimpleCluster: Sendable, Identifiable {
@@ -119,7 +121,11 @@ actor SpatialClusteringActor {
         let devices = try await getSpatialDeviceDTOs()
         let offlineCount = devices.filter { $0.isOffline == true }.count
 
+        // Query events for stats
+        let (totalEvents, activeEvents) = try await getEventStats()
+
         logger.info("📊 Found \(devices.count) devices, \(offlineCount) offline")
+        logger.info("📊 Found \(totalEvents) events, \(activeEvents) active")
 
         guard offlineCount >= config.clusteringParameters.minPoints else {
             throw ClusteringError.insufficientData(deviceCount: offlineCount, minimum: config.clusteringParameters.minPoints)
@@ -138,7 +144,9 @@ actor SpatialClusteringActor {
             clusters: clusters,
             totalDevices: devices.count,
             offlineDevices: offlineCount,
-            processingTime: processingTime
+            processingTime: processingTime,
+            totalEvents: totalEvents,
+            activeEvents: activeEvents
         )
     }
 
@@ -155,6 +163,20 @@ actor SpatialClusteringActor {
         logger.debug("📱 Fetched \(devices.count) PowerSenseDevice devices")
 
         return devices.map { $0.toDTO() }
+    }
+
+    /// Get event statistics for display
+    private func getEventStats() async throws -> (totalEvents: Int, activeEvents: Int) {
+        let modelContext = ModelContext(modelContainer)
+
+        let descriptor = FetchDescriptor<PowerSenseEvent>()
+        let events = try modelContext.fetch(descriptor)
+
+        let activeCount = events.filter { $0.isActive }.count
+
+        logger.debug("📊 Fetched \(events.count) events, \(activeCount) active")
+
+        return (events.count, activeCount)
     }
 
    
@@ -219,116 +241,6 @@ actor SpatialClusteringActor {
         return clustersWithPolygons
     }
 
-    /// Convert GPU DBSCAN results to DeviceCluster objects
-    private func convertDBSCANResultToClusters(
-        dbscanResult: DBSCANResult,
-        devices: [PowerSenseDeviceDTO],
-        aggregationThreshold: Int
-    ) throws -> [DeviceCluster] {
-
-        var clusters: [DeviceCluster] = []
-        var clusterDevicesMap: [Int32: [PowerSenseDeviceDTO]] = [:]
-
-        // Group devices by cluster label (offline devices only)
-        for (index, device) in devices.enumerated() {
-            let label = dbscanResult.labels[index]
-
-            // Only process offline devices with valid cluster labels (not noise -1)
-            if device.isOffline == true && label != -1 {
-                if clusterDevicesMap[label] == nil {
-                    clusterDevicesMap[label] = []
-                }
-                clusterDevicesMap[label]?.append(device)
-            }
-        }
-
-        logger.debug("📊 GPU DBSCAN found \(clusterDevicesMap.count) raw clusters")
-
-        // Convert clusters that meet aggregation threshold
-        var clusterId = 0
-        for (label, clusterDevices) in clusterDevicesMap {
-            if clusterDevices.count >= aggregationThreshold {
-                let cluster = createDeviceCluster(
-                    id: clusterId,
-                    devices: clusterDevices
-                )
-                clusters.append(cluster)
-                clusterId += 1
-
-                logger.debug("✅ Created cluster \(clusterId-1) from GPU label \(label) with \(clusterDevices.count) devices")
-            } else {
-                logger.debug("🔒 GPU cluster \(label) with \(clusterDevices.count) devices below aggregation threshold - filtered for privacy")
-            }
-        }
-
-        logger.info("📈 GPU DBSCAN final result: \(clusters.count) clusters from \(dbscanResult.clusterCount) raw clusters")
-        return clusters
-    }
-
-    /// Expand cluster using density-connectivity (DBSCAN algorithm)
-    private func expandCluster(
-        from seed: PowerSenseDeviceDTO,
-        neighbors: [PowerSenseDeviceDTO],
-        visited: inout Set<String>
-    ) async throws -> [PowerSenseDeviceDTO] {
-        var cluster: [PowerSenseDeviceDTO] = [seed]
-        var queue = Array(neighbors)
-        visited.insert(seed.deviceId)
-
-        while !queue.isEmpty {
-            let current = queue.removeFirst()
-            guard !visited.contains(current.deviceId) else { continue }
-
-            visited.insert(current.deviceId)
-            cluster.append(current)
-
-            // Find neighbors of this point
-            let currentNeighbors = try await indexer.findNeighbors(
-                for: current.deviceId,
-                within: config.clusteringParameters.epsilon
-            )
-
-            // If this is also a core point, add its neighbors to expansion queue
-            if currentNeighbors.count >= config.clusteringParameters.minPoints {
-                for neighbor in currentNeighbors {
-                    if !visited.contains(neighbor.deviceId) {
-                        queue.append(neighbor)
-                    }
-                }
-            }
-        }
-
-        return cluster
-    }
-
-    /// Create a DeviceCluster from a list of devices
-    private func createDeviceCluster(id: Int, devices: [any SpatialDevice]) -> DeviceCluster {
-        // Transform device coordinates for DeviceCluster
-        let deviceCoordinates = devices.map { device in
-            CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude)
-        }
-
-        // Use a simple transformation for projected coordinates (proper transformer would be better)
-        let projectedCoordinates = deviceCoordinates.map { coord in
-            ProjectedCoordinate(
-                x: coord.longitude * 111000.0, // Approximate conversion
-                y: coord.latitude * 111000.0,
-                system: .nztm2000
-            )
-        }
-
-        // DeviceCluster automatically determines severity based on device count in its initializer
-
-        return DeviceCluster(
-            clusterId: id,
-            devices: devices,
-            projectedCoordinates: projectedCoordinates,
-            projectionSystem: .nztm2000,
-            confidenceRating: 1.0, // Default confidence for Phase 2 clusters
-            totalDevicesInArea: devices.count,
-            hullVertices: [] // No hull vertices for Phase 2 clusters
-        )
-    }
 
     /// Generate clusters with convex hull polygons and confidence scores (CPU-based)
     private func generateClustersWithHullsAndConfidence(
@@ -421,6 +333,9 @@ actor SpatialClusteringActor {
             let deviceCoordinates = clusterDevices.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
             let projectedCoordinates = try transformer.batchTransform(deviceCoordinates)
 
+            // Calculate outage timing with anomaly filtering (no additional queries)
+            let (startTime, duration) = calculateOutageTiming(clusterDevices: clusterDevices)
+
             // Create DeviceCluster with CPU-computed hull
             let deviceCluster = DeviceCluster(
                 clusterId: clusterIndex,
@@ -429,7 +344,9 @@ actor SpatialClusteringActor {
                 projectionSystem: .nztm2000,
                 confidenceRating: confidence,
                 totalDevicesInArea: clusterDevices.count,
-                hullVertices: hullVertices
+                hullVertices: hullVertices,
+                outageStartTime: startTime,
+                outageDuration: duration
             )
 
             // Verify polygon creation
@@ -448,20 +365,6 @@ actor SpatialClusteringActor {
         return enhancedClusters
     }
 
-    // MARK: - OBSOLETE GPU Hull Methods (retained for potential revert)
-    /*
-    /// OBSOLETE: Convert hull computation results to DeviceCluster objects with polygons
-    /// Replaced by CPU-based hull computation for 100% reliability
-    private func convertHullResultToClusters(
-        validClusters: [(Int32, [PowerSenseDeviceDTO])],
-        hullResult: GPUHullAndConfidenceResult,
-        transformer: CoordinateTransformer
-    ) async throws -> [DeviceCluster] {
-        // This method has been replaced by the CPU-based approach in generateClustersWithHullsAndConfidence
-        // GPU QuickHull had a 77% failure rate - CPU Andrew's algorithm provides 100% reliability
-        fatalError("This GPU-based method is obsolete. Use CPU-based hull computation instead.")
-    }
-    */
 
     /// Check if polygon coordinates are in clockwise order
     /// Used to ensure MKPolygon compatibility (exterior rings should be clockwise)
@@ -842,6 +745,63 @@ actor SpatialClusteringActor {
         return sampled
     }
 
+    /// Calculate outage start time and duration with statistical outlier filtering
+    /// Uses IQR (Interquartile Range) method - handles both short outages and multi-week disasters
+    /// Zero additional database queries - uses eventTimestamp already in DTO
+    private func calculateOutageTiming(clusterDevices: [PowerSenseDeviceDTO]) -> (startTime: Date?, duration: TimeInterval) {
+        let allTimestamps = clusterDevices
+            .compactMap { $0.eventTimestamp }
+            .sorted()
+
+        guard allTimestamps.count >= 3 else {
+            // Too few samples for statistical filtering, use median
+            if let median = allTimestamps.first {
+                let duration = Date().timeIntervalSince(median)
+                return (median, duration)
+            }
+            return (nil, 0)
+        }
+
+        // Calculate quartiles for IQR outlier detection
+        let q1Index = allTimestamps.count / 4
+        let q3Index = (3 * allTimestamps.count) / 4
+
+        let q1 = allTimestamps[q1Index]
+        let q3 = allTimestamps[q3Index]
+        let iqr = q3.timeIntervalSince(q1)
+
+        // IQR method: outliers are beyond Q1 - 1.5*IQR or Q3 + 1.5*IQR
+        let lowerBound = q1.addingTimeInterval(-1.5 * iqr)
+        let upperBound = q3.addingTimeInterval(1.5 * iqr)
+
+        // Filter outliers using IQR bounds
+        let filteredTimestamps = allTimestamps.filter { timestamp in
+            timestamp >= lowerBound && timestamp <= upperBound
+        }
+
+        guard !filteredTimestamps.isEmpty else {
+            // Fallback if all filtered out (shouldn't happen with IQR)
+            return (allTimestamps[allTimestamps.count / 2], Date().timeIntervalSince(allTimestamps[allTimestamps.count / 2]))
+        }
+
+        // Calculate median of filtered timestamps
+        let medianTimestamp: Date
+        if filteredTimestamps.count % 2 == 0 {
+            let mid = filteredTimestamps.count / 2
+            let interval = filteredTimestamps[mid].timeIntervalSince(filteredTimestamps[mid - 1])
+            medianTimestamp = filteredTimestamps[mid - 1].addingTimeInterval(interval / 2)
+        } else {
+            medianTimestamp = filteredTimestamps[filteredTimestamps.count / 2]
+        }
+
+        let duration = Date().timeIntervalSince(medianTimestamp)
+
+        let filteredCount = allTimestamps.count - filteredTimestamps.count
+        logger.debug("⏱️ Cluster outage: \(filteredTimestamps.count) timestamps (filtered \(filteredCount) outliers via IQR), median start: \(medianTimestamp), duration: \(String(format: "%.1f", duration / 60))min")
+
+        return (medianTimestamp, duration)
+    }
+
     /// Calculate cluster confidence using point-in-polygon test
     private func calculateClusterConfidence(
         clusterDevices: [PowerSenseDeviceDTO],
@@ -884,15 +844,6 @@ actor SpatialClusteringActor {
         return confidence
     }
 
-    // MARK: - OBSOLETE GPU Debug Methods (retained for potential revert)
-    /*
-    /// OBSOLETE: Debug coordinate buffer contents safely
-    /// No longer needed with CPU-based hull computation
-    private func debugCoordinateBuffer(coordsBuffer: SendableBuffer, context: String) async {
-        // This method is obsolete with CPU-based approach
-        logger.debug("Skipping coordinate buffer debug - using CPU-based hull computation")
-    }
-    */
 
     // MARK: - Performance and Diagnostics
 
@@ -909,5 +860,62 @@ actor SpatialClusteringActor {
     /// Get device count currently indexed
     func getIndexedDeviceCount() async -> Int {
         return await indexer.deviceCount
+    }
+}
+//
+//  ClusteringService.swift
+//  Pulse
+//
+//  Copyright © 2025–present Omega Networks Limited.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
+
+import Foundation
+import SwiftData
+import OSLog
+
+/// App-level singleton service for spatial clustering
+/// Maintains single actor instance with cached GPU buffers for performance
+@Observable
+final class ClusteringService: @unchecked Sendable {
+    private let actor: SpatialClusteringActor
+    private let logger = Logger(subsystem: "pulse", category: "clusteringService")
+
+    init(modelContainer: ModelContainer) throws {
+        self.actor = try SpatialClusteringActor(
+            modelContainer: modelContainer,
+            config: SpatialClusteringConfig.default
+        )
+        logger.info("🌍 ClusteringService initialized with persistent actor")
+    }
+
+    /// Perform clustering using the persistent actor instance
+    /// GPU buffers are reused across calls for optimal performance
+    func clusterDevices() async throws -> ClusterResult {
+        return try await actor.clusterAllDevices()
+    }
+
+    /// Get performance metrics from the actor
+    func getPerformanceMetrics() async -> SpatialIndexMetrics {
+        return await actor.getIndexerPerformanceMetrics()
+    }
+
+    /// Check if indexer is ready
+    func isReady() async -> Bool {
+        return await actor.isIndexerReady()
     }
 }

@@ -131,7 +131,7 @@ public struct ClusteringParameters: Sendable {
     public let maxHullVertices: Int        // Maximum vertices per hull (performance cap)
 
     public init(
-        epsilon: Double = 250.0,  // Reduced from 500m to 250m for smaller, more granular clusters
+        epsilon: Double = 150.0,  // Reduced from 250m to 150m for tighter cluster bounds
         minPoints: Int = 3,
         aggregationThreshold: Int = 5,
         maxDevices: Int = 2_000_000,
@@ -228,6 +228,7 @@ public struct PowerSenseDeviceDTO: SpatialDevice, Sendable {
     public let latitude: Double
     public let longitude: Double
     public let isOffline: Bool?
+    public let eventTimestamp: Date?  // Timestamp of most recent active event
 
     /// Initialize from SwiftData model
     init(from model: PowerSenseDevice) {
@@ -235,14 +236,16 @@ public struct PowerSenseDeviceDTO: SpatialDevice, Sendable {
         self.latitude = model.latitude
         self.longitude = model.longitude
         self.isOffline = model.isOffline
+        self.eventTimestamp = model.lastStatusChange  // Use existing computed property
     }
 
     /// Direct initializer for testing
-    public init(deviceId: String, latitude: Double, longitude: Double, isOffline: Bool? = nil) {
+    public init(deviceId: String, latitude: Double, longitude: Double, isOffline: Bool? = nil, eventTimestamp: Date? = nil) {
         self.deviceId = deviceId
         self.latitude = latitude
         self.longitude = longitude
         self.isOffline = isOffline
+        self.eventTimestamp = eventTimestamp
     }
 }
 
