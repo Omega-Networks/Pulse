@@ -360,6 +360,10 @@ actor SpatialClusteringActor {
 
         logger.info("🔺 Phase 3: Starting hull & confidence generation")
 
+        // Debug: Check coordinate ranges RIGHT AT FUNCTION ENTRY
+        logger.info("🔍 FUNCTION-ENTRY: Checking coordinate buffer at generateClustersWithHullsAndConfidence entry...")
+        await debugCoordinateBuffer(coordsBuffer: coordsBuffer, context: "FUNCTION-ENTRY")
+
         // Group devices by cluster label
         var clusterDevicesMap: [Int32: [PowerSenseDeviceDTO]] = [:]
         var clusterOffsets: [Int32] = []
@@ -401,10 +405,10 @@ actor SpatialClusteringActor {
         logger.info("🔧 About to call GPU hull computation with \(validClusters.count) clusters, maxPoints: \(maxPointsPerCluster)")
         logger.info("🔧 Cluster sizes: \(validClusters.map { $0.1.count }.prefix(5).map(String.init).joined(separator: ", "))\(validClusters.count > 5 ? "..." : "")")
 
-        // Configurable sampling for large clusters - enabled to handle GPU shader limits
+        // Configurable sampling for large clusters - DISABLED for testing full dataset
         let samplingThreshold = 1024  // Conservative limit for Metal stack space (~32KB)
-        let enableSampling = maxPointsPerCluster > samplingThreshold // Auto-enable if any cluster is too large
-        logger.info("Max points per cluster: \(maxPointsPerCluster), sampling enabled: \(enableSampling)")
+        let enableSampling = false // DISABLED: maxPointsPerCluster > samplingThreshold
+        logger.info("Max points per cluster: \(maxPointsPerCluster), sampling enabled: \(enableSampling) (DISABLED for testing)")
 
         let optimizedClusters: [(Int32, [PowerSenseDeviceDTO])] = validClusters.map { (label, devices) in
             if enableSampling && devices.count > samplingThreshold {
@@ -455,41 +459,84 @@ actor SpatialClusteringActor {
 
             logger.info("🔧 Rebuilding GPU buffers with optimized data...")
 
-            // Rebuild coordinate and offline buffers
+            // Rebuild coordinate and offline buffers with CORRECT offset tracking
             var allOptimizedCoords: [SIMD2<Float>] = []
             var allOptimizedFlags: [UInt8] = []
-            var optimizedOffsets: [Int32] = [0]
+            var optimizedOffsets: [Int32] = []  // Changed to store start/count pairs
 
-            for (_, devices) in optimizedClusters {
-                let deviceCoords = devices.map { device in
-                    CLLocationCoordinate2D(latitude: device.latitude, longitude: device.longitude)
+            // Get pointer to existing transformed coordinates
+            let existingCoordsPointer = coordsBuffer.buffer.contents().bindMemory(
+                to: SIMD2<Float>.self,
+                capacity: devices.count
+            )
+
+            // Build device index map for fast lookup
+            let deviceIndexMap: [String: Int] = Dictionary(
+                uniqueKeysWithValues: devices.enumerated().map { ($1.deviceId, $0) }
+            )
+
+            for (_, clusterDevices) in optimizedClusters {
+                let clusterStartOffset = Int32(allOptimizedCoords.count)
+
+                // Copy already-transformed coordinates from the existing buffer
+                for device in clusterDevices {
+                    if let deviceIndex = deviceIndexMap[device.deviceId] {
+                        let existingCoord = existingCoordsPointer[deviceIndex]
+                        allOptimizedCoords.append(existingCoord)
+                        allOptimizedFlags.append(device.isOffline == true ? 1 : 0)
+                    } else {
+                        logger.warning("⚠️ Device \(device.deviceId) not found in index map")
+                    }
                 }
-                let projectedCoords = try transformer.batchTransform(deviceCoords)
 
-                for coord in projectedCoords {
-                    allOptimizedCoords.append(SIMD2<Float>(Float(coord.x), Float(coord.y)))
-                }
+                let clusterPointCount = Int32(allOptimizedCoords.count - Int(clusterStartOffset))
 
-                for device in devices {
-                    allOptimizedFlags.append(device.isOffline == true ? 1 : 0)
-                }
+                // Store as start/count pairs (matching Phase 3 expectations)
+                optimizedOffsets.append(clusterStartOffset)
+                optimizedOffsets.append(clusterPointCount)
 
-                optimizedOffsets.append(Int32(allOptimizedCoords.count))
+                logger.debug("📊 Cluster offsets: start=\(clusterStartOffset), count=\(clusterPointCount)")
             }
 
-            // Create Metal buffers using the transformer's internal method
+            // Validate offsets before creating buffers
+            let totalPoints = allOptimizedCoords.count
+            for i in stride(from: 0, to: optimizedOffsets.count, by: 2) {
+                let start = Int(optimizedOffsets[i])
+                let count = Int(optimizedOffsets[i + 1])
+                if start + count > totalPoints {
+                    logger.error("❌ Invalid offset detected: start=\(start), count=\(count), total=\(totalPoints)")
+                    // Clamp to valid range
+                    optimizedOffsets[i + 1] = Int32(max(0, totalPoints - start))
+                }
+            }
+
+            // Create Metal buffers using the already-transformed coordinates
             finalCoordBuffer = try transformer.createCoordinatesBuffer(from: allOptimizedCoords)
             finalOfflineBuffer = try transformer.createOfflineFlagsBuffer(from: allOptimizedFlags)
-            finalClusterOffsets = Array(optimizedOffsets.dropLast()) // Remove last offset
+            finalClusterOffsets = optimizedOffsets  // Use the complete offset array (start/count pairs)
 
             logger.info("✅ GPU buffers rebuilt: \(allOptimizedCoords.count) coords, \(finalClusters.count) clusters")
+            logger.info("📊 Offset pairs: \(finalClusterOffsets)")
         } else {
+            // No sampling needed - rebuild offsets as start/count pairs for original clusters
             finalClusters = validClusters
             finalCoordBuffer = coordsBuffer
             finalOfflineBuffer = offlineFlagsBuffer
-            finalClusterOffsets = clusterOffsets
+
+            // Build proper start/count offset pairs
+            var properOffsets: [Int32] = []
+            var runningOffset: Int32 = 0
+
+            for (_, clusterDevices) in validClusters {
+                properOffsets.append(runningOffset)
+                properOffsets.append(Int32(clusterDevices.count))
+                runningOffset += Int32(clusterDevices.count)
+            }
+
+            finalClusterOffsets = properOffsets
             finalMaxPoints = maxPointsPerCluster
-            logger.info("✅ No sampling needed - using original buffers")
+            logger.info("✅ No sampling needed - using original buffers with corrected offsets")
+            logger.info("📊 Offset pairs: \(finalClusterOffsets)")
         }
 
         // Perform GPU hull and confidence computation with optimized data
@@ -552,8 +599,20 @@ actor SpatialClusteringActor {
                 ))
             }
 
+            // Debug: Log NZTM2000 coordinates before inverse transform
+            if !hullVerticesProjected.isEmpty {
+                let first = hullVerticesProjected[0]
+                logger.info("🔍 INVERSE-DEBUG: Cluster \(clusterIndex) NZTM2000 input: (\(first.x), \(first.y))")
+            }
+
             // Batch inverse transform hull vertices to lat/lon
             let hullVerticesLatLon = transformer.batchInverseTransform(hullVerticesProjected)
+
+            // Debug: Log GPS coordinates after inverse transform
+            if !hullVerticesLatLon.isEmpty {
+                let first = hullVerticesLatLon[0]
+                logger.info("🔍 INVERSE-DEBUG: Cluster \(clusterIndex) GPS output: (\(first.latitude), \(first.longitude))")
+            }
 
             // Calculate confidence ratio
             let confidence = confidencePair.y > 0 ? Double(confidencePair.x / confidencePair.y) : 0.0
@@ -565,12 +624,35 @@ actor SpatialClusteringActor {
                 continue
             }
 
-            // Skip clusters with degenerate or excessive hulls
+            // Handle clusters with degenerate or excessive hulls
+            var hullCoordinates: [CLLocationCoordinate2D] = []
+            var actualConfidence = confidence
+
             if hullCount == 0 {
-                logger.info("🚨 Skipping cluster with degenerate hull (0 vertices)")
-                continue
+                logger.warning("🚨 QuickHull failed for cluster with \(clusterDevices.count) devices - using fallback")
+                hullCoordinates = generateFallbackHull(
+                    clusterIndex: clusterIndex,
+                    devices: clusterDevices
+                )
+                actualConfidence = 0.75  // Fixed confidence for fallback hull
             } else if hullCount > 200 {
-                logger.info("⚠️ Skipping cluster with excessive hull (\(hullCount) vertices > 200)")
+                logger.warning("⚠️ Hull too complex (\(hullCount) vertices) - using simplified fallback")
+                hullCoordinates = generateFallbackHull(
+                    clusterIndex: clusterIndex,
+                    devices: clusterDevices
+                )
+                actualConfidence = 0.50  // Lower confidence for simplified hull
+            } else {
+                // Normal hull processing - transform vertices to lat/lon
+                let hullVerticesLatLon = transformer.batchInverseTransform(hullVerticesProjected)
+                hullCoordinates = hullVerticesLatLon.map { coord in
+                    CLLocationCoordinate2D(latitude: coord.latitude, longitude: coord.longitude)
+                }
+            }
+
+            // Skip empty hulls (shouldn't happen with fallback, but safety check)
+            if hullCoordinates.isEmpty {
+                logger.error("❌ Both QuickHull and fallback failed for cluster \(clusterIndex)")
                 continue
             }
 
@@ -580,13 +662,8 @@ actor SpatialClusteringActor {
             }
             let projectedCoordinates = try transformer.batchTransform(deviceCoordinates)
 
-            // Convert hull vertices to CLLocationCoordinate2D and ensure proper ordering
-            var hullCoordinates = hullVerticesLatLon.map { coord in
-                CLLocationCoordinate2D(latitude: coord.latitude, longitude: coord.longitude)
-            }
-
             // Ensure clockwise ordering for MKPolygon compatibility (only if we have enough vertices)
-            if hullCount >= 3 && !isClockwise(coordinates: hullCoordinates) {
+            if hullCoordinates.count >= 3 && !isClockwise(coordinates: hullCoordinates) {
                 hullCoordinates.reverse()
                 logger.debug("🔄 Reversed hull vertices for clockwise ordering - cluster \(clusterIndex)")
             }
@@ -597,17 +674,18 @@ actor SpatialClusteringActor {
                 devices: clusterDevices, // PowerSenseDeviceDTO conforms to SpatialDevice
                 projectedCoordinates: projectedCoordinates,
                 projectionSystem: .nztm2000,
-                confidenceRating: confidence,
+                confidenceRating: actualConfidence,
                 totalDevicesInArea: Int(confidencePair.y), // Total devices from GPU confidence calculation
                 hullVertices: hullCoordinates
             )
 
             // Log Phase 3 metrics with polygon creation status
             let hasPolygon = deviceCluster.polygon != nil
-            logger.debug("🔺 Cluster \(clusterIndex): \(hullCount) hull vertices, confidence: \(String(format: "%.2f", confidence)), polygon: \(hasPolygon ? "✓" : "✗")")
+            let actualHullCount = hullCoordinates.count
+            logger.debug("🔺 Cluster \(clusterIndex): \(actualHullCount) hull vertices, confidence: \(String(format: "%.2f", actualConfidence)), polygon: \(hasPolygon ? "✓" : "✗")")
 
-            if hullCount >= 3 && !hasPolygon {
-                logger.warning("⚠️ Cluster \(clusterIndex) has \(hullCount) hull vertices but no polygon created!")
+            if actualHullCount >= 3 && !hasPolygon {
+                logger.warning("⚠️ Cluster \(clusterIndex) has \(actualHullCount) hull vertices but no polygon created!")
             }
 
             enhancedClusters.append(deviceCluster)
@@ -687,6 +765,132 @@ actor SpatialClusteringActor {
         logger.info("  • Confidence time: \(String(format: "%.1f", hullResult.confidenceTime * 1000))ms")
         logger.info("  • Clusters processed: \(hullResult.clustersProcessed)")
         logger.info("  • Average vertices: \(String(format: "%.1f", avgVertices))")
+    }
+
+    /// Generate fallback convex hull using gift-wrapping algorithm (Jarvis march)
+    /// Used when QuickHull fails due to collinearity or other degenerate cases
+    private func generateFallbackHull(
+        clusterIndex: Int,
+        devices: [PowerSenseDeviceDTO]
+    ) -> [CLLocationCoordinate2D] {
+        logger.info("🎁 Generating fallback hull for cluster \(clusterIndex) with \(devices.count) devices")
+
+        guard devices.count >= 3 else {
+            // For very small clusters, return bounding box
+            return createBoundingBox(devices)
+        }
+
+        let points = devices.map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        }
+
+        // Gift-wrapping (Jarvis march) algorithm - O(nh) complexity
+        var hull: [CLLocationCoordinate2D] = []
+
+        // Find leftmost point (starting point)
+        var leftmost = 0
+        for i in 1..<points.count {
+            if points[i].longitude < points[leftmost].longitude ||
+               (points[i].longitude == points[leftmost].longitude && points[i].latitude < points[leftmost].latitude) {
+                leftmost = i
+            }
+        }
+
+        var p = leftmost
+        repeat {
+            hull.append(points[p])
+
+            // Find the most counterclockwise point from points[p]
+            var q = (p + 1) % points.count
+            for i in 0..<points.count {
+                if orientation(points[p], points[i], points[q]) == 2 {
+                    q = i
+                }
+            }
+
+            p = q
+        } while p != leftmost && hull.count < points.count // Prevent infinite loops
+
+        logger.info("🎁 Fallback hull complete: \(hull.count) vertices from \(points.count) points")
+        return hull
+    }
+
+    /// Create a simple bounding box hull for degenerate cases
+    private func createBoundingBox(_ devices: [PowerSenseDeviceDTO]) -> [CLLocationCoordinate2D] {
+        guard !devices.isEmpty else { return [] }
+
+        let lats = devices.map { $0.latitude }
+        let lons = devices.map { $0.longitude }
+
+        let minLat = lats.min()!
+        let maxLat = lats.max()!
+        let minLon = lons.min()!
+        let maxLon = lons.max()!
+
+        // Return clockwise bounding rectangle
+        return [
+            CLLocationCoordinate2D(latitude: minLat, longitude: minLon),
+            CLLocationCoordinate2D(latitude: minLat, longitude: maxLon),
+            CLLocationCoordinate2D(latitude: maxLat, longitude: maxLon),
+            CLLocationCoordinate2D(latitude: maxLat, longitude: minLon)
+        ]
+    }
+
+    /// Calculate orientation of ordered triplet of points
+    /// Returns: 0 -> collinear, 1 -> clockwise, 2 -> counterclockwise
+    private func orientation(
+        _ p: CLLocationCoordinate2D,
+        _ q: CLLocationCoordinate2D,
+        _ r: CLLocationCoordinate2D
+    ) -> Int {
+        let val = (q.longitude - p.longitude) * (r.latitude - p.latitude) -
+                  (q.latitude - p.latitude) * (r.longitude - p.longitude)
+
+        if abs(val) < 1e-10 { return 0 }  // Collinear (with tolerance for floating point)
+        return val > 0 ? 1 : 2  // Clockwise or Counterclockwise
+    }
+
+    /// Debug coordinate buffer contents safely
+    private func debugCoordinateBuffer(coordsBuffer: SendableBuffer, context: String) async {
+        let bufferCapacity = coordsBuffer.length / MemoryLayout<SIMD2<Float>>.size
+        let coordsPointer = coordsBuffer.buffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: bufferCapacity)
+
+        logger.info("📊 \(context) Buffer Info:")
+        logger.info("   Buffer Length: \(coordsBuffer.length) bytes (\(bufferCapacity) coordinates)")
+
+        // Sample first few coordinates safely
+        if bufferCapacity > 0 {
+            let sampleCount = min(bufferCapacity, 10)
+            let coords = Array(UnsafeBufferPointer(start: coordsPointer, count: sampleCount))
+
+            if !coords.isEmpty {
+                let minX = coords.map { $0.x }.min() ?? 0
+                let maxX = coords.map { $0.x }.max() ?? 0
+                let minY = coords.map { $0.y }.min() ?? 0
+                let maxY = coords.map { $0.y }.max() ?? 0
+
+                logger.info("📍 \(context) Coordinate Sample (\(sampleCount) points):")
+                logger.info("   X range: [\(String(format: "%.6f", minX)), \(String(format: "%.6f", maxX))] (span: \(String(format: "%.6f", maxX - minX)))")
+                logger.info("   Y range: [\(String(format: "%.6f", minY)), \(String(format: "%.6f", maxY))] (span: \(String(format: "%.6f", maxY - minY)))")
+
+                // Show first 3 actual coordinates
+                let displayCount = min(coords.count, 3)
+                for i in 0..<displayCount {
+                    logger.info("   Point \(i): (\(String(format: "%.6f", coords[i].x)), \(String(format: "%.6f", coords[i].y)))")
+                }
+
+                // Check for degenerate coordinates
+                if abs(maxX - minX) < 0.001 && abs(maxY - minY) < 0.001 {
+                    logger.error("❌ \(context): DEGENERATE coordinates - all points collapsed!")
+                } else {
+                    logger.info("✅ \(context): Valid coordinate spread detected")
+                }
+            } else {
+                logger.error("❌ \(context): No coordinates found in buffer")
+            }
+        } else {
+            logger.error("❌ \(context): Empty coordinate buffer")
+        }
     }
 
     // MARK: - Performance and Diagnostics

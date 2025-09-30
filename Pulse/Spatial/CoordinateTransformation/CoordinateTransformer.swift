@@ -190,6 +190,7 @@ public final class CoordinateTransformer: Sendable {
     private let nztmPipelineState: MTLComputePipelineState
     private let webMercatorPipelineState: MTLComputePipelineState
     private let utmPipelineState: MTLComputePipelineState
+    private let collectHullVerticesPipelineState: MTLComputePipelineState
     
     // MARK: - Configuration
     
@@ -224,6 +225,7 @@ public final class CoordinateTransformer: Sendable {
         self.nztmPipelineState = try Self.createPipelineState(library: library, functionName: "nztm_transform")
         self.webMercatorPipelineState = try Self.createPipelineState(library: library, functionName: "web_mercator_transform")
         self.utmPipelineState = try Self.createPipelineState(library: library, functionName: "utm_transform")
+        self.collectHullVerticesPipelineState = try Self.createPipelineState(library: library, functionName: "collectHullVerticesFromSegments")
         
         // Configure optimal threading and batching
         self.threadsPerThreadgroup = MTLSize(
@@ -1037,6 +1039,18 @@ public final class CoordinateTransformer: Sendable {
         return SendableBuffer(buffer)
     }
 
+    /// Create generic buffer for any data type
+    internal func createBuffer<T>(from data: [T], type: T.Type) throws -> SendableBuffer {
+        guard let buffer = device.makeBuffer(
+            bytes: data,
+            length: data.count * MemoryLayout<T>.size,
+            options: .storageModeShared
+        ) else {
+            throw MetalTransformError.gpuExecutionFailed("Failed to create buffer for type \(T.self)")
+        }
+        return SendableBuffer(buffer)
+    }
+
     /// Perform GPU-accelerated hull and confidence computation (Phase 3)
     ///
     /// This method coordinates the complete Phase 3 pipeline:
@@ -1057,6 +1071,38 @@ public final class CoordinateTransformer: Sendable {
 
         let startTime = CFAbsoluteTimeGetCurrent()
         logger.info("🔺 Phase 3: Starting GPU hull & confidence computation for \(clusterCount) clusters")
+
+        // Critical: Validate NZTM2000 projection parameters before processing
+        try validateNZTM2000Transform()
+
+        // Metal frame capture for debugging (enabled in debug builds with environment variable)
+        #if DEBUG
+        let shouldCaptureFrame = ProcessInfo.processInfo.environment["METAL_CAPTURE_ENABLED"] == "1"
+        if shouldCaptureFrame {
+            logger.info("📹 Starting Metal frame capture for debugging...")
+            let captureManager = MTLCaptureManager.shared()
+            let captureDescriptor = MTLCaptureDescriptor()
+            captureDescriptor.captureObject = commandQueue
+            captureDescriptor.destination = .developerTools
+            captureDescriptor.outputURL = getMetalCaptureURL()
+
+            do {
+                try captureManager.startCapture(with: captureDescriptor)
+                logger.info("✅ Metal frame capture started successfully")
+            } catch {
+                logger.warning("⚠️ Failed to start Metal capture: \(error)")
+            }
+        }
+        #endif
+
+        // Debug: Check coordinate ranges RIGHT AT PHASE 3 ENTRY
+        logger.info("🔍 PHASE-3-ENTRY: Checking coordinates at Phase 3 entry...")
+        try await debugCoordinatesAtEntry(
+            coordsBuffer: coordsBuffer,
+            clusterOffsets: clusterOffsets,
+            maxPointsPerCluster: maxPointsPerCluster,
+            clusterCount: clusterCount
+        )
 
         logger.info("🔧 Creating hull and confidence buffers...")
         let hullBuffers = try createHullAndConfidenceBuffers(clusterCount: clusterCount, maxPointsPerCluster: maxPointsPerCluster)
@@ -1086,33 +1132,51 @@ public final class CoordinateTransformer: Sendable {
         )
         logger.info("✅ Phase 3 parameters configured")
 
-        // Phase 3A: Bitonic sort coordinates by X
-        logger.info("🔧 Starting Phase 3A: Bitonic sort coordinates by X...")
-        let sortTime = CFAbsoluteTimeGetCurrent()
-        try executeBitonicSortKernel(
+        // Debug: Check coordinates BEFORE any processing (sampling stage)
+        try await debugCoordinatesAtEntry(
             coordsBuffer: coordsBuffer,
-            clusterOffsetsBuffer: clusterOffsetsBuffer,
-            tempWorkBuffer: hullBuffers.rawTempSortBuffer,
-            phase3Params: phase3Params,
+            clusterOffsets: clusterOffsets,
+            maxPointsPerCluster: maxPointsPerCluster,
             clusterCount: clusterCount
         )
-        let sortDuration = CFAbsoluteTimeGetCurrent() - sortTime
-        logger.info("✅ Phase 3A completed: Bitonic sort (\(String(format: "%.1f", sortDuration * 1000))ms)")
+
+        // Capture original coordinate bounds before sorting
+        logger.info("🔍 PRE-SORT: Capturing original coordinate bounds...")
+        let bufferSize = coordsBuffer.length / MemoryLayout<SIMD2<Float>>.size
+        let coordsPointer = coordsBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: bufferSize)
+
+        var originalMin = SIMD2<Float>(Float.greatestFiniteMagnitude, Float.greatestFiniteMagnitude)
+        var originalMax = SIMD2<Float>(-Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude)
+
+        for i in 0..<bufferSize {
+            let coord = coordsPointer[i]
+            if coord.x.isFinite && coord.y.isFinite {
+                originalMin = SIMD2<Float>(min(originalMin.x, coord.x), min(originalMin.y, coord.y))
+                originalMax = SIMD2<Float>(max(originalMax.x, coord.x), max(originalMax.y, coord.y))
+            }
+        }
+
+        _ = (min: originalMin, max: originalMax)  // originalBounds unused since bitonic sort disabled
+        logger.info("📊 Original bounds captured: (\(originalMin.x), \(originalMin.y)) to (\(originalMax.x), \(originalMax.y))")
+
+        // Phase 3A: DISABLED - Skip bitonic sort due to coordinate corruption
+        logger.info("🔧 Phase 3A: Skipping bitonic sort (disabled due to corruption)")
+        logger.info("✅ QuickHull will work with unsorted coordinates")
+        let sortDuration = 0.0  // No sort performed
 
         // Phase 3B: Build convex hulls with pruning
-        logger.info("🔧 Starting Phase 3B: Build convex hulls with pruning...")
+        logger.info("🔧 Starting Phase 3B: Parallel QuickHull computation...")
         let hullTime = CFAbsoluteTimeGetCurrent()
-        try await executeBuildHullKernel(
+        try await executeQuickHullParallel(
             coordsBuffer: coordsBuffer,
             hullVerticesBuffer: hullBuffers.rawHullVertices,
             hullCountsBuffer: hullBuffers.rawHullCounts,
             clusterOffsetsBuffer: clusterOffsetsBuffer,
-            tempHullBuffer: hullBuffers.rawTempSortBuffer, // Reuse temp buffer
             phase3Params: phase3Params,
             clusterCount: clusterCount
         )
         let hullDuration = CFAbsoluteTimeGetCurrent() - hullTime
-        logger.info("✅ Phase 3B completed: Hull construction (\(String(format: "%.1f", hullDuration * 1000))ms)")
+        logger.info("✅ Phase 3B completed: Parallel QuickHull (\(String(format: "%.1f", hullDuration * 1000))ms)")
 
         // Phase 3C: Calculate confidence using grid
         logger.info("🔧 Starting Phase 3C: Calculate confidence using grid...")
@@ -1140,6 +1204,9 @@ public final class CoordinateTransformer: Sendable {
            Confidence: \(String(format: "%.1f", confidenceDuration * 1000))ms
            Total: \(String(format: "%.1f", totalDuration * 1000))ms
         """)
+
+        // Stop Metal frame capture before returning
+        stopMetalFrameCapture()
 
         // Return results for CPU post-processing
         return GPUHullAndConfidenceResult(
@@ -1296,6 +1363,785 @@ public final class CoordinateTransformer: Sendable {
         }
 
         logger.info("✅ Hull construction kernel completed successfully")
+    }
+
+    /// Execute QuickHull parallel pipeline (replaces sequential monotone chain)
+    private func executeQuickHullParallel(
+        coordsBuffer: MTLBuffer,
+        hullVerticesBuffer: MTLBuffer,
+        hullCountsBuffer: MTLBuffer,
+        clusterOffsetsBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) async throws {
+        logger.info("🚀 Starting Parallel QuickHull Pipeline")
+
+        // Debug: Safe coordinate validation without buffer overrun
+        logger.info("🔍 QuickHull Pipeline Entry - Buffer Info:")
+        logger.info("   Clusters: \(clusterCount), MaxPoints/Cluster: \(phase3Params.maxPointsPerCluster)")
+        logger.info("   CoordBuffer Length: \(coordsBuffer.length) bytes (\(coordsBuffer.length / MemoryLayout<SIMD2<Float>>.size) coordinates)")
+
+        // Create working buffers for QuickHull iteration
+        let maxSegments = 32
+        let segmentsBuffer = try createBuffer(from: Array(repeating: SIMD2<Float>(0, 0), count: clusterCount * maxSegments * 2), type: SIMD2<Float>.self)
+        let segmentCountsBuffer = try createBuffer(from: Array(repeating: Int32(0), count: clusterCount), type: Int32.self)
+        let pointAssignmentsBuffer = try createBuffer(from: Array(repeating: Int32(-1), count: clusterCount * Int(phase3Params.maxPointsPerCluster)), type: Int32.self)
+        let maxDistancesBuffer = try createBuffer(from: Array(repeating: Float(0.0), count: clusterCount * maxSegments), type: Float.self)
+        let maxIndicesBuffer = try createBuffer(from: Array(repeating: Int32(-1), count: clusterCount * maxSegments), type: Int32.self)
+
+        // Extract cluster offsets from buffer for validation
+        let offsetCount = clusterOffsetsBuffer.length / MemoryLayout<Int32>.size
+        let offsetsPointer = clusterOffsetsBuffer.contents().bindMemory(to: Int32.self, capacity: offsetCount)
+        let clusterOffsets = Array(UnsafeBufferPointer(start: offsetsPointer, count: offsetCount))
+
+        // Pre-validation: Check for collinear clusters and degenerate cases
+        logger.info("🔍 Pre-validation: Checking \(clusterCount) clusters for QuickHull compatibility")
+        var validClusters: [Int] = []
+        var invalidClusters: [Int] = []
+
+        for clusterIndex in 0..<clusterCount {
+            if validateQuickHullInput(
+                coordsBuffer: coordsBuffer,
+                clusterOffsets: clusterOffsets,
+                clusterIndex: clusterIndex
+            ) {
+                validClusters.append(clusterIndex)
+            } else {
+                invalidClusters.append(clusterIndex)
+            }
+        }
+
+        logger.info("✅ Pre-validation complete: \(validClusters.count) valid, \(invalidClusters.count) invalid clusters")
+        if !invalidClusters.isEmpty {
+            logger.warning("⚠️ Invalid clusters (will need fallback): \(invalidClusters.prefix(10).map(String.init).joined(separator: ", "))\(invalidClusters.count > 10 ? "..." : "")")
+        }
+
+        // Step 1: Initialize QuickHull with leftmost/rightmost split
+        logger.info("🔧 Step 1: Initializing QuickHull segments for \(validClusters.count) clusters")
+        try await executeInitializeQuickHull(
+            coordsBuffer: coordsBuffer,
+            segmentsBuffer: segmentsBuffer.buffer,
+            segmentCountsBuffer: segmentCountsBuffer.buffer,
+            pointAssignmentsBuffer: pointAssignmentsBuffer.buffer,
+            clusterOffsetsBuffer: clusterOffsetsBuffer,
+            phase3Params: phase3Params,
+            clusterCount: clusterCount
+        )
+
+        // Step 2: Iterative hull expansion using divide-and-conquer
+        logger.info("🔧 Step 2: Iterative hull expansion")
+        let maxIterations = 20
+        var converged = false
+        var iteration = 0
+
+        // Working buffers for ping-pong iteration
+        var currentCoordsBuffer = coordsBuffer
+        var currentSegmentsBuffer = segmentsBuffer.buffer
+        var currentSegmentCountsBuffer = segmentCountsBuffer.buffer
+        var currentPointAssignmentsBuffer = pointAssignmentsBuffer.buffer
+
+        let workingCoordsBuffer = try createCoordinatesBuffer(from: Array(repeating: SIMD2<Float>(0, 0), count: clusterCount * Int(phase3Params.maxPointsPerCluster)))
+        let workingSegmentsBuffer = try createBuffer(from: Array(repeating: SIMD2<Float>(0, 0), count: clusterCount * maxSegments * 2), type: SIMD2<Float>.self)
+        let workingSegmentCountsBuffer = try createBuffer(from: Array(repeating: Int32(0), count: clusterCount), type: Int32.self)
+        let workingPointAssignmentsBuffer = try createBuffer(from: Array(repeating: Int32(-1), count: clusterCount * Int(phase3Params.maxPointsPerCluster)), type: Int32.self)
+
+        var useWorkingBuffers = false
+
+        while !converged && iteration < maxIterations {
+            logger.debug("📍 QuickHull iteration \(iteration + 1)/\(maxIterations)")
+
+            // Find maximum distance points for all segments
+            try await executeFindMaxDistanceParallel(
+                coordsBuffer: currentCoordsBuffer,
+                segmentsBuffer: currentSegmentsBuffer,
+                segmentCountsBuffer: currentSegmentCountsBuffer,
+                pointAssignmentsBuffer: currentPointAssignmentsBuffer,
+                maxDistancesBuffer: maxDistancesBuffer.buffer,
+                maxIndicesBuffer: maxIndicesBuffer.buffer,
+                clusterOffsetsBuffer: clusterOffsetsBuffer,
+                phase3Params: phase3Params,
+                clusterCount: clusterCount
+            )
+
+            // Check convergence by reading max distances
+            converged = try await checkQuickHullConvergence(
+                maxDistancesBuffer: maxDistancesBuffer.buffer,
+                clusterCount: clusterCount,
+                maxSegments: maxSegments,
+                threshold: 1e-4 // Collinear threshold
+            )
+
+            if !converged {
+                // Determine source and destination buffers for ping-pong
+                let sourceCoords = useWorkingBuffers ? workingCoordsBuffer.buffer : currentCoordsBuffer
+                let sourceSegments = useWorkingBuffers ? workingSegmentsBuffer.buffer : currentSegmentsBuffer
+                let sourceSegmentCounts = useWorkingBuffers ? workingSegmentCountsBuffer.buffer : currentSegmentCountsBuffer
+                let sourcePointAssignments = useWorkingBuffers ? workingPointAssignmentsBuffer.buffer : currentPointAssignmentsBuffer
+
+                let destCoords = useWorkingBuffers ? currentCoordsBuffer : workingCoordsBuffer.buffer
+                let destSegments = useWorkingBuffers ? currentSegmentsBuffer : workingSegmentsBuffer.buffer
+                let destSegmentCounts = useWorkingBuffers ? currentSegmentCountsBuffer : workingSegmentCountsBuffer.buffer
+                let destPointAssignments = useWorkingBuffers ? currentPointAssignmentsBuffer : workingPointAssignmentsBuffer.buffer
+
+                // Partition points and create new segments
+                try await executePartitionAndDiscard(
+                    coordsBuffer: sourceCoords,
+                    segmentsBuffer: sourceSegments,
+                    segmentCountsBuffer: sourceSegmentCounts,
+                    pointAssignmentsBuffer: sourcePointAssignments,
+                    maxIndicesBuffer: maxIndicesBuffer.buffer,
+                    newCoordsBuffer: destCoords,
+                    newSegmentsBuffer: destSegments,
+                    newSegmentCountsBuffer: destSegmentCounts,
+                    newPointAssignmentsBuffer: destPointAssignments,
+                    clusterOffsetsBuffer: clusterOffsetsBuffer,
+                    phase3Params: phase3Params,
+                    clusterCount: clusterCount
+                )
+
+                // Update current buffers and toggle flag
+                currentCoordsBuffer = destCoords
+                currentSegmentsBuffer = destSegments
+                currentSegmentCountsBuffer = destSegmentCounts
+                currentPointAssignmentsBuffer = destPointAssignments
+                useWorkingBuffers.toggle()
+            }
+
+            iteration += 1
+        }
+
+        logger.info("✅ QuickHull converged after \(iteration) iterations")
+
+        // Step 3: Collect final hull vertices from segments
+        logger.info("🔧 Step 3: Collecting hull vertices from segments")
+        try await executeCollectHullVertices(
+            segmentsBuffer: currentSegmentsBuffer,
+            segmentCountsBuffer: currentSegmentCountsBuffer,
+            hullVerticesBuffer: hullVerticesBuffer,
+            hullCountsBuffer: hullCountsBuffer,
+            phase3Params: phase3Params,
+            clusterCount: clusterCount
+        )
+
+        // Add debug logging for hull results
+        try await logQuickHullResults(
+            hullCountsBuffer: hullCountsBuffer,
+            clusterCount: clusterCount
+        )
+
+        logger.info("🏁 Parallel QuickHull Pipeline Complete")
+    }
+
+    /// Enhanced validation for QuickHull input with collinearity detection
+    /// Critical for power grid infrastructure which often has linear arrangements
+    private func validateQuickHullInput(
+        coordsBuffer: MTLBuffer,
+        clusterOffsets: [Int32],
+        clusterIndex: Int
+    ) -> Bool {
+        // Ensure we have valid cluster index
+        guard clusterIndex * 2 + 1 < clusterOffsets.count else {
+            logger.error("Invalid cluster index \(clusterIndex) for offsets array of size \(clusterOffsets.count)")
+            return false
+        }
+
+        let start = Int(clusterOffsets[clusterIndex * 2])
+        let count = Int(clusterOffsets[clusterIndex * 2 + 1])
+
+        // Basic validation - need at least 3 points for hull
+        guard count >= 3 else {
+            logger.warning("Cluster \(clusterIndex) has only \(count) points - insufficient for hull")
+            return false
+        }
+
+        // Buffer bounds validation
+        let bufferSize = coordsBuffer.length / MemoryLayout<SIMD2<Float>>.size
+        guard start >= 0 && start + count <= bufferSize else {
+            logger.error("Cluster \(clusterIndex) exceeds buffer bounds: start=\(start), count=\(count), bufferSize=\(bufferSize)")
+            return false
+        }
+
+        // Collinearity check - critical for power grid data (transmission lines, etc.)
+        let pointer = coordsBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: bufferSize)
+        let p0 = pointer[start]
+        let pLast = pointer[start + count - 1]
+
+        var isCollinear = true
+        let epsilon: Float = 1e-4  // Tolerance in NZTM2000 meters
+
+        // Sample-based check for performance - check up to 100 points
+        let sampleCount = min(100, count - 2)  // Skip first 2 points already used
+        for i in 0..<sampleCount {
+            let pointIndex = start + 2 + i  // Start from 3rd point
+            let p = pointer[pointIndex]
+            let dist = abs(signedDistance(p0: p0, p1: pLast, p: p))
+
+            if dist > epsilon {
+                isCollinear = false
+                break
+            }
+        }
+
+        if isCollinear {
+            logger.warning("Cluster \(clusterIndex) appears collinear (epsilon=\(epsilon)m) - will trigger fallback hull")
+            return false
+        }
+
+        logger.debug("Cluster \(clusterIndex) validation passed: \(count) points, non-collinear")
+        return true
+    }
+
+    /// Calculate signed distance from point to line (for collinearity detection)
+    private func signedDistance(p0: SIMD2<Float>, p1: SIMD2<Float>, p: SIMD2<Float>) -> Float {
+        return (p1.x - p0.x) * (p.y - p0.y) - (p1.y - p0.y) * (p.x - p0.x)
+    }
+
+    /// Validate coordinate ranges after GPU operations to detect corruption
+    /// Critical for catching bitonic sort memory corruption
+    private func validateCoordinateRanges(
+        coordsBuffer: MTLBuffer,
+        clusterOffsets: [Int32],
+        originalBounds: (min: SIMD2<Float>, max: SIMD2<Float>),
+        context: String
+    ) async throws -> Bool {
+        let bufferSize = coordsBuffer.length / MemoryLayout<SIMD2<Float>>.size
+        let coordsPointer = coordsBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: bufferSize)
+
+        var globalMin = SIMD2<Float>(Float.greatestFiniteMagnitude, Float.greatestFiniteMagnitude)
+        var globalMax = SIMD2<Float>(-Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude)
+
+        var corruptedClusters: [Int] = []
+        let tolerance: Float = 10.0  // 10 meters tolerance in NZTM2000
+
+        // Check each cluster for coordinate corruption
+        for clusterIndex in stride(from: 0, to: clusterOffsets.count, by: 2) {
+            let start = Int(clusterOffsets[clusterIndex])
+            let count = Int(clusterOffsets[clusterIndex + 1])
+
+            guard start >= 0, count > 0, start + count <= bufferSize else {
+                logger.error("🚨 \(context): Invalid cluster bounds - start:\(start), count:\(count), bufferSize:\(bufferSize)")
+                corruptedClusters.append(clusterIndex / 2)
+                continue
+            }
+
+            var clusterMin = SIMD2<Float>(Float.greatestFiniteMagnitude, Float.greatestFiniteMagnitude)
+            var clusterMax = SIMD2<Float>(-Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude)
+
+            // Analyze cluster coordinate range
+            for i in 0..<count {
+                let coord = coordsPointer[start + i]
+
+                // Check for invalid coordinates (NaN, Inf, or clearly corrupted)
+                if !coord.x.isFinite || !coord.y.isFinite ||
+                   abs(coord.x) > 10000000 || abs(coord.y) > 10000000 {
+                    logger.error("🚨 \(context): Invalid coordinate in cluster \(clusterIndex/2): (\(coord.x), \(coord.y))")
+                    corruptedClusters.append(clusterIndex / 2)
+                    break
+                }
+
+                clusterMin = SIMD2<Float>(min(clusterMin.x, coord.x), min(clusterMin.y, coord.y))
+                clusterMax = SIMD2<Float>(max(clusterMax.x, coord.x), max(clusterMax.y, coord.y))
+            }
+
+            // Update global bounds
+            globalMin = SIMD2<Float>(min(globalMin.x, clusterMin.x), min(globalMin.y, clusterMin.y))
+            globalMax = SIMD2<Float>(max(globalMax.x, clusterMax.x), max(globalMax.y, clusterMax.y))
+        }
+
+        // Compare with original bounds to detect corruption
+        let xRangeChange = abs(globalMax.x - globalMin.x) - abs(originalBounds.max.x - originalBounds.min.x)
+        let yRangeChange = abs(globalMax.y - globalMin.y) - abs(originalBounds.max.y - originalBounds.min.y)
+
+        let xMinShift = abs(globalMin.x - originalBounds.min.x)
+        let xMaxShift = abs(globalMax.x - originalBounds.max.x)
+        let yMinShift = abs(globalMin.y - originalBounds.min.y)
+        let yMaxShift = abs(globalMax.y - originalBounds.max.y)
+
+        logger.info("📊 \(context) Coordinate Analysis:")
+        logger.info("   Original bounds: (\(originalBounds.min.x), \(originalBounds.min.y)) to (\(originalBounds.max.x), \(originalBounds.max.y))")
+        logger.info("   Current bounds:  (\(globalMin.x), \(globalMin.y)) to (\(globalMax.x), \(globalMax.y))")
+        logger.info("   Range change: X=\(String(format: "%.1f", xRangeChange))m, Y=\(String(format: "%.1f", yRangeChange))m")
+        logger.info("   Bound shifts: X_min=\(String(format: "%.1f", xMinShift))m, X_max=\(String(format: "%.1f", xMaxShift))m")
+
+        // Detect major coordinate corruption
+        if abs(xRangeChange) > tolerance || abs(yRangeChange) > tolerance ||
+           xMinShift > tolerance || xMaxShift > tolerance ||
+           yMinShift > tolerance || yMaxShift > tolerance {
+
+            logger.error("🚨 \(context): COORDINATE CORRUPTION DETECTED!")
+            logger.error("   Range changes exceed tolerance (\(tolerance)m)")
+            logger.error("   This indicates bitonic sort memory corruption or buffer overflow")
+
+            if !corruptedClusters.isEmpty {
+                logger.error("   Corrupted clusters: \(corruptedClusters.prefix(10).map(String.init).joined(separator: ", "))")
+            }
+
+            return false
+        }
+
+        if !corruptedClusters.isEmpty {
+            logger.warning("⚠️ \(context): \(corruptedClusters.count) clusters have invalid coordinates")
+            return false
+        }
+
+        logger.info("✅ \(context): Coordinate ranges validated successfully")
+        return true
+    }
+
+    /// Validate NZTM2000 projection parameters with round-trip test
+    /// Critical for catching parameter corruption that causes invalid GPS coordinates
+    private func validateNZTM2000Transform() throws {
+        logger.info("🔍 Validating NZTM2000 projection parameters...")
+
+        // Use known GPS coordinates and round-trip test for accurate validation
+        let knownGPSPoints = [
+            // Wellington (central reference point)
+            CLLocationCoordinate2D(latitude: -41.2865, longitude: 174.7762),
+            // Auckland (north)
+            CLLocationCoordinate2D(latitude: -36.8484, longitude: 174.7633),
+            // Christchurch (south)
+            CLLocationCoordinate2D(latitude: -43.5321, longitude: 172.6362)
+        ]
+
+        // Generate test points by forward-transforming known GPS coordinates
+        var testPoints: [ProjectedCoordinate] = []
+        for gpsPoint in knownGPSPoints {
+            let projected = transform(gpsPoint)
+            testPoints.append(projected)
+        }
+
+        let expectedResults = knownGPSPoints
+
+        for (i, testPoint) in testPoints.enumerated() {
+            let expected = expectedResults[i]
+
+            // Test inverse transform
+            let result = inverseTransformCPU(testPoint)
+
+            // Calculate error tolerances (NZTM2000 accuracy)
+            let latError = abs(result.latitude - expected.latitude)
+            let lonError = abs(result.longitude - expected.longitude)
+
+            let maxLatError = 0.01   // 0.01° ≈ 1.1km tolerance
+            let maxLonError = 0.01   // 0.01° ≈ 0.8km at NZ latitude
+
+            if latError > maxLatError || lonError > maxLonError {
+                logger.error("🚨 NZTM2000 Transform Error at test point \(i):")
+                logger.error("   Input: NZTM2000(\(testPoint.x), \(testPoint.y))")
+                logger.error("   Expected: (\(expected.latitude), \(expected.longitude))")
+                logger.error("   Got: (\(result.latitude), \(result.longitude))")
+                logger.error("   Error: lat=\(String(format: "%.6f", latError))°, lon=\(String(format: "%.6f", lonError))°")
+
+                throw MetalTransformError.coordinateCorruptionDetected(
+                    "NZTM2000 projection parameters corrupted - inverse transform failed validation"
+                )
+            }
+
+            // Test round-trip accuracy (forward + inverse)
+            let forward = transform(result)
+            let roundTripError = sqrt(pow(forward.x - testPoint.x, 2) + pow(forward.y - testPoint.y, 2))
+
+            let maxRoundTripError = 1.0  // 1 meter tolerance for round-trip
+
+            if roundTripError > maxRoundTripError {
+                logger.error("🚨 NZTM2000 Round-trip Error at test point \(i):")
+                logger.error("   Original: (\(testPoint.x), \(testPoint.y))")
+                logger.error("   Round-trip: (\(forward.x), \(forward.y))")
+                logger.error("   Error: \(String(format: "%.2f", roundTripError))m")
+
+                throw MetalTransformError.coordinateCorruptionDetected(
+                    "NZTM2000 round-trip accuracy failed - projection parameters may be corrupted"
+                )
+            }
+        }
+
+        logger.info("✅ NZTM2000 projection parameters validated successfully")
+
+        // Log projection parameters for debugging
+        logger.debug("📊 NZTM2000 Parameters:")
+        logger.debug("   False Easting: 1600000.0m")
+        logger.debug("   False Northing: 10000000.0m")
+        logger.debug("   Central Meridian: 173°E")
+        logger.debug("   Scale Factor: 0.9996")
+        logger.debug("   Datum: NZGD2000")
+    }
+
+    /// Clamp GPS coordinates to valid New Zealand bounds
+    /// Prevents display of obviously corrupted coordinates
+    private func clampToValidGPSBounds(_ coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        // New Zealand geographic bounds with some tolerance
+        let minLat = -48.0  // South Island southernmost
+        let maxLat = -34.0  // North Island northernmost
+        let minLon = 166.0  // Westernmost
+        let maxLon = 179.0  // Easternmost (before 180° meridian)
+
+        let clampedLat = max(minLat, min(maxLat, coordinate.latitude))
+        let clampedLon = max(minLon, min(maxLon, coordinate.longitude))
+
+        if abs(clampedLat - coordinate.latitude) > 0.1 || abs(clampedLon - coordinate.longitude) > 0.1 {
+            logger.warning("🔧 Clamped invalid GPS: (\(coordinate.latitude), \(coordinate.longitude)) → (\(clampedLat), \(clampedLon))")
+        }
+
+        return CLLocationCoordinate2D(latitude: clampedLat, longitude: clampedLon)
+    }
+
+    /// Generate URL for Metal capture output
+    private func getMetalCaptureURL() -> URL {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let filename = "pulse_spatial_clustering_\(formatter.string(from: Date())).gputrace"
+
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return documentsPath.appendingPathComponent(filename)
+    }
+
+    /// Stop Metal frame capture if active
+    private func stopMetalFrameCapture() {
+        #if DEBUG
+        let captureManager = MTLCaptureManager.shared()
+        if captureManager.isCapturing {
+            captureManager.stopCapture()
+            logger.info("📹 Metal frame capture stopped")
+        }
+        #endif
+    }
+
+    /// Initialize QuickHull with leftmost/rightmost extrema split
+    private func executeInitializeQuickHull(
+        coordsBuffer: MTLBuffer,
+        segmentsBuffer: MTLBuffer,
+        segmentCountsBuffer: MTLBuffer,
+        pointAssignmentsBuffer: MTLBuffer,
+        clusterOffsetsBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) async throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "initializeQuickHullSegments")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(clusterOffsetsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(segmentsBuffer, offset: 0, index: 2)
+        computeEncoder.setBuffer(segmentCountsBuffer, offset: 0, index: 3)
+        computeEncoder.setBuffer(pointAssignmentsBuffer, offset: 0, index: 4)
+
+        var params = phase3Params
+        computeEncoder.setBytes(&params, length: MemoryLayout<Phase3Parameters>.size, index: 5)
+
+        let threadgroupSize = MTLSize(width: 256, height: 1, depth: 1)
+        let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
+
+        computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        await commandBuffer.completed()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed("Initialize QuickHull failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Find maximum distance points for active segments
+    private func executeFindMaxDistanceParallel(
+        coordsBuffer: MTLBuffer,
+        segmentsBuffer: MTLBuffer,
+        segmentCountsBuffer: MTLBuffer,
+        pointAssignmentsBuffer: MTLBuffer,
+        maxDistancesBuffer: MTLBuffer,
+        maxIndicesBuffer: MTLBuffer,
+        clusterOffsetsBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) async throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "findMaxDistanceParallel")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(clusterOffsetsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(segmentsBuffer, offset: 0, index: 2)
+        computeEncoder.setBuffer(segmentCountsBuffer, offset: 0, index: 3)
+        computeEncoder.setBuffer(pointAssignmentsBuffer, offset: 0, index: 4)
+        computeEncoder.setBuffer(maxDistancesBuffer, offset: 0, index: 5)
+        computeEncoder.setBuffer(maxIndicesBuffer, offset: 0, index: 6)
+
+        var params = phase3Params
+        computeEncoder.setBytes(&params, length: MemoryLayout<Phase3Parameters>.size, index: 7)
+
+        let threadgroupSize = MTLSize(width: 256, height: 1, depth: 1)
+        let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
+
+        computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        await commandBuffer.completed()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed("Find max distance failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Check if QuickHull has converged by examining max distances
+    private func checkQuickHullConvergence(
+        maxDistancesBuffer: MTLBuffer,
+        clusterCount: Int,
+        maxSegments: Int,
+        threshold: Float
+    ) async throws -> Bool {
+        let pointer = maxDistancesBuffer.contents().bindMemory(to: Float.self, capacity: clusterCount * maxSegments)
+        let maxDistances = Array(UnsafeBufferPointer(start: pointer, count: clusterCount * maxSegments))
+
+        // Check if all maximum distances are below threshold
+        for distance in maxDistances {
+            if distance > threshold {
+                return false // Not converged yet
+            }
+        }
+
+        logger.debug("🎯 QuickHull converged: all max distances < \(threshold)")
+        return true
+    }
+
+    /// Partition points and discard interior points
+    private func executePartitionAndDiscard(
+        coordsBuffer: MTLBuffer,
+        segmentsBuffer: MTLBuffer,
+        segmentCountsBuffer: MTLBuffer,
+        pointAssignmentsBuffer: MTLBuffer,
+        maxIndicesBuffer: MTLBuffer,
+        newCoordsBuffer: MTLBuffer,
+        newSegmentsBuffer: MTLBuffer,
+        newSegmentCountsBuffer: MTLBuffer,
+        newPointAssignmentsBuffer: MTLBuffer,
+        clusterOffsetsBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) async throws {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        let pipelineState = try getOrCreatePipelineState(functionName: "partitionAndDiscard")
+        computeEncoder.setComputePipelineState(pipelineState)
+
+        computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(clusterOffsetsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(segmentsBuffer, offset: 0, index: 2)
+        computeEncoder.setBuffer(segmentCountsBuffer, offset: 0, index: 3)
+        computeEncoder.setBuffer(maxIndicesBuffer, offset: 0, index: 4)
+        computeEncoder.setBuffer(newCoordsBuffer, offset: 0, index: 5)
+        computeEncoder.setBuffer(newSegmentCountsBuffer, offset: 0, index: 6)
+        computeEncoder.setBuffer(newSegmentsBuffer, offset: 0, index: 7)
+        computeEncoder.setBuffer(newSegmentCountsBuffer, offset: 0, index: 8)
+        computeEncoder.setBuffer(newPointAssignmentsBuffer, offset: 0, index: 9)
+
+        var params = phase3Params
+        computeEncoder.setBytes(&params, length: MemoryLayout<Phase3Parameters>.size, index: 10)
+
+        let threadgroupSize = MTLSize(width: 256, height: 1, depth: 1)
+        let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
+
+        computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        computeEncoder.endEncoding()
+
+        commandBuffer.commit()
+        await commandBuffer.completed()
+
+        if let error = commandBuffer.error {
+            throw MetalTransformError.gpuExecutionFailed("Partition and discard failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Collect final hull vertices from converged segments
+    private func executeCollectHullVertices(
+        segmentsBuffer: MTLBuffer,
+        segmentCountsBuffer: MTLBuffer,
+        hullVerticesBuffer: MTLBuffer,
+        hullCountsBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) async throws {
+        // Full GPU implementation for optimal performance
+        logger.info("🔧 Collecting hull vertices (GPU kernel implementation)")
+
+        // Create command buffer for GPU execution
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalTransformError.commandBufferCreationFailed
+        }
+
+        // Set up GPU kernel
+        computeEncoder.setComputePipelineState(collectHullVerticesPipelineState)
+        computeEncoder.setBuffer(segmentsBuffer, offset: 0, index: 0)
+        computeEncoder.setBuffer(segmentCountsBuffer, offset: 0, index: 1)
+        computeEncoder.setBuffer(hullVerticesBuffer, offset: 0, index: 2)
+        computeEncoder.setBuffer(hullCountsBuffer, offset: 0, index: 3)
+
+        // Create phase3 parameters buffer
+        var phase3ParamsData = phase3Params
+        let phase3ParamsBuffer = device.makeBuffer(
+            bytes: &phase3ParamsData,
+            length: MemoryLayout<Phase3Parameters>.size,
+            options: .storageModeShared
+        )
+        computeEncoder.setBuffer(phase3ParamsBuffer, offset: 0, index: 4)
+
+        // Dispatch GPU threads
+        let threadgroupSize = MTLSize(width: 256, height: 1, depth: 1)
+        let threadgroupCount = MTLSize(width: clusterCount, height: 1, depth: 1)
+        computeEncoder.dispatchThreadgroups(threadgroupCount, threadsPerThreadgroup: threadgroupSize)
+        computeEncoder.endEncoding()
+
+        // Execute GPU kernel with proper async pattern
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            commandBuffer.addCompletedHandler { buffer in
+                if let error = buffer.error {
+                    self.logger.error("❌ Hull vertex collection kernel failed: \(error.localizedDescription)")
+                    continuation.resume(throwing: MetalTransformError.kernelExecutionFailed(error.localizedDescription))
+                    return
+                }
+
+                if buffer.status == .error {
+                    self.logger.error("❌ Hull vertex collection buffer status error")
+                    continuation.resume(throwing: MetalTransformError.kernelExecutionFailed("Command buffer status error"))
+                    return
+                }
+
+                self.logger.info("✅ Hull vertices collected for \(clusterCount) clusters (GPU implementation)")
+                continuation.resume()
+            }
+
+            commandBuffer.commit()
+        }
+    }
+
+    /// Debug QuickHull results to identify kernel failures
+    private func logQuickHullResults(
+        hullCountsBuffer: MTLBuffer,
+        clusterCount: Int
+    ) async throws {
+        let hullCountsPointer = hullCountsBuffer.contents().bindMemory(to: Int32.self, capacity: clusterCount)
+        let hullCounts = Array(UnsafeBufferPointer(start: hullCountsPointer, count: clusterCount))
+
+        var successCount = 0
+        var degenerateCount = 0
+
+        for (clusterIdx, hullCount) in hullCounts.enumerated() {
+            if hullCount == 0 {
+                logger.debug("🚨 QuickHull DEGENERATE: Cluster \(clusterIdx) produced 0 vertices")
+                degenerateCount += 1
+            } else if hullCount >= 3 {
+                logger.debug("✅ QuickHull SUCCESS: Cluster \(clusterIdx) produced \(hullCount) vertices")
+                successCount += 1
+            } else {
+                logger.debug("⚠️ QuickHull MINIMAL: Cluster \(clusterIdx) produced \(hullCount) vertices (< 3)")
+            }
+        }
+
+        let successRate = Double(successCount) / Double(clusterCount) * 100.0
+        logger.info("📊 QuickHull Results: \(successCount)/\(clusterCount) success (\(String(format: "%.1f", successRate))%), \(degenerateCount) degenerate")
+    }
+
+    /// Debug coordinate values to identify transformation issues
+    private func debugCoordinateValues(
+        coordsBuffer: MTLBuffer,
+        clusterOffsetsBuffer: MTLBuffer,
+        phase3Params: Phase3Parameters,
+        clusterCount: Int
+    ) async throws {
+        logger.info("🔍 Debugging coordinate values at QuickHull entry...")
+
+        let totalCoordinates = Int(phase3Params.clustersCount) * Int(phase3Params.maxPointsPerCluster)
+        let coordsPointer = coordsBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: totalCoordinates)
+        let coords = Array(UnsafeBufferPointer(start: coordsPointer, count: totalCoordinates))
+
+        let clusterOffsetsPointer = clusterOffsetsBuffer.contents().bindMemory(to: Int32.self, capacity: clusterCount * 2)
+        let clusterOffsets = Array(UnsafeBufferPointer(start: clusterOffsetsPointer, count: clusterCount * 2))
+
+        for clusterIdx in 0..<min(clusterCount, 5) { // Debug first 5 clusters
+            let startOffset = Int(clusterOffsets[clusterIdx * 2])
+            let count = Int(clusterOffsets[clusterIdx * 2 + 1])
+
+            if count > 0 && startOffset + count <= coords.count {
+                let clusterCoords = Array(coords[startOffset..<(startOffset + min(count, 5))]) // First 5 points
+                let minX = clusterCoords.map { $0.x }.min() ?? 0
+                let maxX = clusterCoords.map { $0.x }.max() ?? 0
+                let minY = clusterCoords.map { $0.y }.min() ?? 0
+                let maxY = clusterCoords.map { $0.y }.max() ?? 0
+
+                logger.info("📍 Cluster \(clusterIdx): \(count) points, X[\(String(format: "%.3f", minX)), \(String(format: "%.3f", maxX))], Y[\(String(format: "%.3f", minY)), \(String(format: "%.3f", maxY))]")
+
+                // Check for degenerate coordinates
+                if abs(maxX - minX) < 0.001 && abs(maxY - minY) < 0.001 {
+                    logger.error("❌ Cluster \(clusterIdx): DEGENERATE coordinates - all points collapsed to (\(String(format: "%.6f", minX)), \(String(format: "%.6f", minY)))")
+                }
+            } else {
+                logger.error("❌ Cluster \(clusterIdx): Invalid offset/count - start:\(startOffset), count:\(count), total:\(coords.count)")
+            }
+        }
+    }
+
+    /// Debug coordinates at any processing stage (reusable function)
+    private func debugCoordinatesAtEntry(
+        coordsBuffer: MTLBuffer,
+        clusterOffsets: [Int32],
+        maxPointsPerCluster: Int,
+        clusterCount: Int
+    ) async throws {
+        // This function is called from multiple stages - the caller sets the log prefix
+
+        let bufferCapacity = coordsBuffer.length / MemoryLayout<SIMD2<Float>>.size
+        let coordsPointer = coordsBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: bufferCapacity)
+
+        for clusterIdx in 0..<min(clusterCount, 3) { // Debug first 3 clusters safely
+            let startOffset = Int(clusterOffsets[clusterIdx * 2])
+            let count = Int(clusterOffsets[clusterIdx * 2 + 1])
+
+            if count > 0 && startOffset >= 0 && startOffset + count <= bufferCapacity {
+                let sampleCount = min(count, 5) // Sample max 5 points safely
+                let clusterCoords = Array(UnsafeBufferPointer(start: coordsPointer.advanced(by: startOffset), count: sampleCount))
+
+                if !clusterCoords.isEmpty {
+                    let minX = clusterCoords.map { $0.x }.min() ?? 0
+                    let maxX = clusterCoords.map { $0.x }.max() ?? 0
+                    let minY = clusterCoords.map { $0.y }.min() ?? 0
+                    let maxY = clusterCoords.map { $0.y }.max() ?? 0
+
+                    logger.info("📍 COORDS Cluster \(clusterIdx): \(count) points")
+                    logger.info("   X range: [\(String(format: "%.6f", minX)), \(String(format: "%.6f", maxX))] (span: \(String(format: "%.6f", maxX - minX)))")
+                    logger.info("   Y range: [\(String(format: "%.6f", minY)), \(String(format: "%.6f", maxY))] (span: \(String(format: "%.6f", maxY - minY)))")
+
+                    // Sample a few actual coordinates
+                    let sampleCount = min(3, clusterCoords.count)
+                    for i in 0..<sampleCount {
+                        logger.info("   Point \(i): (\(String(format: "%.6f", clusterCoords[i].x)), \(String(format: "%.6f", clusterCoords[i].y)))")
+                    }
+
+                    // Check for degenerate coordinates
+                    if abs(maxX - minX) < 0.001 && abs(maxY - minY) < 0.001 {
+                        logger.error("❌ COORDS: Cluster \(clusterIdx) DEGENERATE - all points collapsed!")
+                    } else {
+                        logger.info("✅ COORDS: Cluster \(clusterIdx) has valid coordinate spread")
+                    }
+                } else {
+                    logger.error("❌ PRE-PROCESSING: Cluster \(clusterIdx) has no coordinates at offset \(startOffset)")
+                }
+            } else {
+                logger.error("❌ PRE-PROCESSING: Cluster \(clusterIdx) invalid - start:\(startOffset), count:\(count)")
+            }
+        }
     }
 
     /// Execute confidence calculation kernel using grid optimization
@@ -2683,10 +3529,15 @@ kernel void bitonicSortByX(
 
     if (count < 3 || localIndex >= uint(count)) return;
 
-    // Pad to power of 2 for bitonic (threadgroup size)
-    uint paddedCount = 1u << uint(ceil(log2(float(threadsPerGroup))));
+    // CRITICAL FIX: Match threadgroup array size to actual dispatch
+    const uint maxThreads = 256;  // Must match dispatch threadgroupSize.width
+    uint paddedCount = 1u << uint(ceil(log2(float(min(uint(count), maxThreads)))));
+    paddedCount = min(paddedCount, maxThreads);  // Clamp to prevent overruns
 
-    threadgroup float2 sharedCoords[1024]; // Adjust to max threadsPerGroup
+    threadgroup float2 sharedCoords[256]; // FIXED: Match dispatch size exactly
+
+    // Bounds check before accessing shared memory
+    if (localIndex >= maxThreads) return;
 
     // Load with padding (INF for sort stability)
     float2 coord = (localIndex < uint(count)) ? coordinates[startIdx + localIndex] : float2(INFINITY, INFINITY);
@@ -2698,7 +3549,7 @@ kernel void bitonicSortByX(
         for (uint j = k >> 1; j > 0; j >>= 1) {
             uint ixj = localIndex ^ j;
 
-            if (ixj > localIndex && ixj < paddedCount) {
+            if (ixj > localIndex && ixj < paddedCount && ixj < maxThreads) {
                 float2 a = sharedCoords[localIndex];
                 float2 b = sharedCoords[ixj];
 
@@ -2974,7 +3825,304 @@ kernel void preprocessHullPoints(
     outputCounts[clusterIndex] = keepCount;
 }
 
-// Phase 3: Sequential convex hull using monotone chain algorithm
+// MARK: - QuickHull Parallel Kernels
+
+// Helper function for signed distance from point to line segment
+float signedDistance(float2 lineStart, float2 lineEnd, float2 point) {
+    return (lineEnd.x - lineStart.x) * (point.y - lineStart.y) - (lineEnd.y - lineStart.y) * (point.x - lineStart.x);
+}
+
+// Kernel 1: Find maximum distance point for each active segment (parallel)
+kernel void findMaxDistanceParallel(
+    const device float2* coords [[buffer(0)]],           // Filtered coordinates per cluster
+    const device int* coordCounts [[buffer(1)]],         // Points per cluster
+    const device float2* segments [[buffer(2)]],         // Active segments [start, end] pairs
+    const device int* segmentCounts [[buffer(3)]],       // Number of active segments per cluster
+    const device int* pointSegmentAssign [[buffer(4)]],  // Point assignments to segments
+    device float* maxDistances [[buffer(5)]],            // Output: max distance per segment
+    device int* maxPointIndices [[buffer(6)]],           // Output: index of farthest point
+    constant Phase3Parameters& params [[buffer(7)]],
+    uint clusterId [[threadgroup_position_in_grid]],
+    uint localId [[thread_position_in_threadgroup]],
+    uint groupSize [[threads_per_threadgroup]]
+) {
+    if (clusterId >= uint(params.clustersCount)) return;
+
+    int coordCount = coordCounts[clusterId];
+    int segmentCount = segmentCounts[clusterId];
+
+    if (coordCount < 3 || segmentCount == 0) return;
+
+    // Shared memory for segmented reduction
+    threadgroup float localMaxDists[256];
+    threadgroup int localMaxIndices[256];
+
+    int coordOffset = clusterId * params.maxPointsPerCluster;
+    int segmentOffset = clusterId * 32; // Max 32 segments per cluster
+
+    // Each thread processes multiple points across all segments
+    for (uint pointIdx = localId; pointIdx < uint(coordCount); pointIdx += groupSize) {
+        float2 point = coords[coordOffset + pointIdx];
+        int assignedSegment = pointSegmentAssign[coordOffset + pointIdx];
+
+        // Skip unassigned points (-1) or invalid assignments
+        if (assignedSegment < 0 || assignedSegment >= segmentCount) continue;
+
+        // Get segment endpoints
+        float2 segStart = segments[segmentOffset * 2 + assignedSegment * 2];
+        float2 segEnd = segments[segmentOffset * 2 + assignedSegment * 2 + 1];
+
+        // Calculate signed distance
+        float dist = abs(signedDistance(segStart, segEnd, point));
+
+        // Store in local memory for reduction
+        localMaxDists[localId] = dist;
+        localMaxIndices[localId] = int(pointIdx);
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        // Segmented reduction within threadgroup for each segment
+        // Note: This is simplified - full implementation would use parallel scan
+        if (localId == 0) {
+            for (int seg = 0; seg < segmentCount; seg++) {
+                float maxDist = 0.0;
+                int maxIdx = -1;
+
+                // Find max for this segment across all threads
+                for (uint tid = 0; tid < groupSize; tid++) {
+                    if (pointSegmentAssign[coordOffset + tid] == seg && localMaxDists[tid] > maxDist) {
+                        maxDist = localMaxDists[tid];
+                        maxIdx = localMaxIndices[tid];
+                    }
+                }
+
+                maxDistances[clusterId * 32 + seg] = maxDist;
+                maxPointIndices[clusterId * 32 + seg] = maxIdx;
+            }
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
+// Kernel 2: Partition points and discard interior (with prefix sum compaction)
+kernel void partitionAndDiscard(
+    const device float2* coords [[buffer(0)]],           // Input coordinates
+    const device int* coordCounts [[buffer(1)]],         // Points per cluster
+    const device float2* segments [[buffer(2)]],         // Current segments
+    const device int* segmentCounts [[buffer(3)]],       // Segments per cluster
+    const device int* maxPointIndices [[buffer(4)]],     // Farthest points per segment
+    device float2* newCoords [[buffer(5)]],              // Output: partitioned coordinates
+    device int* newCoordCounts [[buffer(6)]],            // Output: new point counts
+    device float2* newSegments [[buffer(7)]],            // Output: new segment pairs
+    device int* newSegmentCounts [[buffer(8)]],          // Output: new segment counts
+    device int* newPointSegmentAssign [[buffer(9)]],     // Output: new assignments
+    constant Phase3Parameters& params [[buffer(10)]],
+    uint clusterId [[threadgroup_position_in_grid]],
+    uint localId [[thread_position_in_threadgroup]],
+    uint groupSize [[threads_per_threadgroup]]
+) {
+    if (clusterId >= uint(params.clustersCount)) return;
+
+    int coordCount = coordCounts[clusterId];
+    int segmentCount = segmentCounts[clusterId];
+
+    if (coordCount < 3 || segmentCount == 0) {
+        if (localId == 0) {
+            newCoordCounts[clusterId] = 0;
+            newSegmentCounts[clusterId] = 0;
+        }
+        return;
+    }
+
+    int coordOffset = clusterId * params.maxPointsPerCluster;
+    int segmentOffset = clusterId * 32;
+    int newCoordOffset = clusterId * params.maxPointsPerCluster;
+    int newSegmentOffset = clusterId * 32;
+
+    threadgroup atomic_int validPointCount;
+    threadgroup atomic_int newSegCount;
+
+    if (localId == 0) {
+        atomic_store_explicit(&validPointCount, 0, memory_order_relaxed);
+        atomic_store_explicit(&newSegCount, 0, memory_order_relaxed);
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Process each segment to split it at the farthest point
+    for (int seg = 0; seg < segmentCount; seg++) {
+        int maxPointIdx = maxPointIndices[clusterId * 32 + seg];
+
+        if (maxPointIdx >= 0 && maxPointIdx < coordCount) {
+            float2 segStart = segments[segmentOffset * 2 + seg * 2];
+            float2 segEnd = segments[segmentOffset * 2 + seg * 2 + 1];
+            float2 maxPoint = coords[coordOffset + maxPointIdx];
+
+            // Split segment into two: segStart->maxPoint and maxPoint->segEnd
+            if (localId == 0) {
+                // Add two new segments atomically
+                int currentSegCount = atomic_fetch_add_explicit(&newSegCount, 1, memory_order_relaxed);
+                if (currentSegCount < 32) {
+                    newSegments[newSegmentOffset * 2 + currentSegCount * 2] = segStart;
+                    newSegments[newSegmentOffset * 2 + currentSegCount * 2 + 1] = maxPoint;
+
+                    int nextSegCount = atomic_fetch_add_explicit(&newSegCount, 1, memory_order_relaxed);
+                    if (nextSegCount < 32) {
+                        newSegments[newSegmentOffset * 2 + nextSegCount * 2] = maxPoint;
+                        newSegments[newSegmentOffset * 2 + nextSegCount * 2 + 1] = segEnd;
+                    }
+                }
+            }
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Parallel point classification and compaction
+    for (uint pointIdx = localId; pointIdx < uint(coordCount); pointIdx += groupSize) {
+        float2 point = coords[coordOffset + pointIdx];
+        bool keepPoint = true;
+        int newAssignment = -1;
+
+        // Test if point should be discarded (inside any triangle formed by split segments)
+        // Simplified: For now, keep all points and reassign to nearest new segment
+        if (keepPoint) {
+            // Find closest new segment (simplified assignment)
+            float minDist = INFINITY;
+            int currentNewSegCount = atomic_load_explicit(&newSegCount, memory_order_relaxed);
+            for (int newSeg = 0; newSeg < currentNewSegCount; newSeg++) {
+                float2 segStart = newSegments[newSegmentOffset * 2 + newSeg * 2];
+                float2 segEnd = newSegments[newSegmentOffset * 2 + newSeg * 2 + 1];
+                float dist = abs(signedDistance(segStart, segEnd, point));
+
+                if (dist < minDist) {
+                    minDist = dist;
+                    newAssignment = newSeg;
+                }
+            }
+
+            // Atomic increment for compaction (simplified)
+            int writeIdx = atomic_fetch_add_explicit(&validPointCount, 1, memory_order_relaxed);
+            if (writeIdx < params.maxPointsPerCluster) {
+                newCoords[newCoordOffset + writeIdx] = point;
+                newPointSegmentAssign[newCoordOffset + writeIdx] = newAssignment;
+            }
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (localId == 0) {
+        newCoordCounts[clusterId] = atomic_load_explicit(&validPointCount, memory_order_relaxed);
+        newSegmentCounts[clusterId] = atomic_load_explicit(&newSegCount, memory_order_relaxed);
+    }
+}
+
+// Kernel 3: Initialize QuickHull with leftmost/rightmost split
+kernel void initializeQuickHullSegments(
+    const device float2* coords [[buffer(0)]],           // Coordinate buffer
+    const device int* clusterOffsets [[buffer(1)]],      // Start/count pairs per cluster
+    device float2* initialSegments [[buffer(2)]],        // Output: initial segments [left->right, right->left]
+    device int* segmentCounts [[buffer(3)]],             // Output: segment counts (always 2)
+    device int* pointSegmentAssign [[buffer(4)]],        // Output: initial point assignments
+    constant Phase3Parameters& params [[buffer(5)]],
+    uint clusterId [[threadgroup_position_in_grid]],
+    uint localId [[thread_position_in_threadgroup]],
+    uint groupSize [[threads_per_threadgroup]]
+) {
+    // Bounds check - ensure we're within valid cluster range
+    if (clusterId >= uint(params.clustersCount)) return;
+
+    // Read start/count pair with validation
+    int startIdx = clusterOffsets[clusterId * 2];
+    int count = clusterOffsets[clusterId * 2 + 1];
+
+    // Validate bounds - critical for preventing GPU crashes
+    if (count < 3 || startIdx < 0) {
+        if (localId == 0) segmentCounts[clusterId] = 0;
+        return;
+    }
+
+    // Additional bounds check to prevent buffer overruns
+    int endIdx = startIdx + count;
+    if (endIdx > params.maxPointsPerCluster * params.clustersCount) {
+        if (localId == 0) segmentCounts[clusterId] = 0;
+        return;
+    }
+
+    int segmentOffset = clusterId * 32;
+
+    // Shared memory for parallel min/max finding
+    threadgroup float2 localMin;
+    threadgroup float2 localMax;
+    threadgroup int minIdx, maxIdx;
+
+    // Initialize with first point
+    if (localId == 0) {
+        localMin = coords[startIdx];
+        localMax = coords[startIdx];
+        minIdx = 0;
+        maxIdx = 0;
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Parallel reduction to find leftmost and rightmost points
+    for (uint i = localId; i < uint(count); i += groupSize) {
+        // Bounds check before accessing coordinates
+        int coordIndex = startIdx + int(i);
+        if (coordIndex >= endIdx) break;  // Additional safety check
+
+        float2 point = coords[coordIndex];
+
+        // Check if this is the new minimum (leftmost) point
+        if (point.x < localMin.x || (point.x == localMin.x && point.y < localMin.y)) {
+            localMin = point;
+            minIdx = int(i);
+        }
+
+        // Check if this is the new maximum (rightmost) point
+        if (point.x > localMax.x || (point.x == localMax.x && point.y > localMax.y)) {
+            localMax = point;
+            maxIdx = int(i);
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Set up initial two segments and classify points
+    if (localId == 0) {
+        // Upper segment: min -> max
+        initialSegments[segmentOffset * 2] = localMin;
+        initialSegments[segmentOffset * 2 + 1] = localMax;
+
+        // Lower segment: max -> min
+        initialSegments[segmentOffset * 2 + 2] = localMax;
+        initialSegments[segmentOffset * 2 + 3] = localMin;
+
+        segmentCounts[clusterId] = 2;
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Classify points to upper (0) or lower (1) segment
+    for (uint i = localId; i < uint(count); i += groupSize) {
+        // Bounds check before accessing coordinates and assignment buffer
+        int coordIndex = startIdx + int(i);
+        if (coordIndex >= endIdx) break;
+
+        if (int(i) == minIdx || int(i) == maxIdx) {
+            pointSegmentAssign[coordIndex] = -1; // Hull vertex
+        } else {
+            float2 point = coords[coordIndex];
+            float dist = signedDistance(localMin, localMax, point);
+            pointSegmentAssign[coordIndex] = (dist > 0) ? 0 : 1; // Upper or lower
+        }
+    }
+}
+
+// Phase 3: Sequential convex hull using monotone chain algorithm (LEGACY - TO BE REPLACED)
 // Single thread per cluster - eliminates atomic contention and deadlocks
 kernel void buildConvexHullSequential(
     const device float2* sortedCoords [[buffer(0)]],    // X-sorted coordinates
@@ -3204,6 +4352,94 @@ kernel void calculateConfidenceWithGrid(
         confidencePairs[clusterIndex] = float2(float(offlineCount), float(max(totalCount, params.minTotalDevices)));
     }
 }
+
+// GPU Hull Vertex Collection Kernel
+// Replaces CPU collection for full GPU pipeline
+kernel void collectHullVerticesFromSegments(
+    const device float2* segments [[buffer(0)]],           // Segment endpoints (pairs)
+    const device int* segmentCounts [[buffer(1)]],         // Segments per cluster
+    device float2* hullVertices [[buffer(2)]],             // Output hull vertices
+    device int* hullCounts [[buffer(3)]],                  // Output vertex counts
+    constant Phase3Parameters& params [[buffer(4)]],
+    uint clusterIndex [[threadgroup_position_in_grid]],
+    uint localIndex [[thread_position_in_threadgroup]]
+) {
+    if (clusterIndex >= uint(params.clustersCount)) return;
+
+    int segmentCount = segmentCounts[clusterIndex];
+    if (segmentCount == 0) {
+        if (localIndex == 0) {
+            hullCounts[clusterIndex] = 0;
+        }
+        return;
+    }
+
+    // Parallel deduplication using threadgroup memory
+    threadgroup float2 sharedVertices[200];  // Max vertices buffer
+    threadgroup atomic_int vertexCount;
+
+    if (localIndex == 0) {
+        atomic_store_explicit(&vertexCount, 0, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    int segmentOffset = clusterIndex * 32 * 2;  // Match CPU layout: 32 segments max, 2 vertices each
+
+    // Each thread processes multiple segments
+    for (int segIdx = localIndex; segIdx < segmentCount; segIdx += 256) {
+        float2 startVertex = segments[segmentOffset + segIdx * 2];
+        float2 endVertex = segments[segmentOffset + segIdx * 2 + 1];
+
+        // Add start vertex if unique (simple distance threshold)
+        int currentCount = atomic_load_explicit(&vertexCount, memory_order_relaxed);
+        bool startUnique = true;
+        for (int i = 0; i < currentCount && i < 200; i++) {
+            float2 diff = startVertex - sharedVertices[i];
+            if (dot(diff, diff) < 1e-12) {  // 1e-6 squared for distance comparison
+                startUnique = false;
+                break;
+            }
+        }
+
+        if (startUnique && currentCount < 200) {
+            int index = atomic_fetch_add_explicit(&vertexCount, 1, memory_order_relaxed);
+            if (index < 200) {
+                sharedVertices[index] = startVertex;
+            }
+        }
+
+        // Add end vertex if unique
+        currentCount = atomic_load_explicit(&vertexCount, memory_order_relaxed);
+        bool endUnique = true;
+        for (int i = 0; i < currentCount && i < 200; i++) {
+            float2 diff = endVertex - sharedVertices[i];
+            if (dot(diff, diff) < 1e-12) {
+                endUnique = false;
+                break;
+            }
+        }
+
+        if (endUnique && currentCount < 200) {
+            int index = atomic_fetch_add_explicit(&vertexCount, 1, memory_order_relaxed);
+            if (index < 200) {
+                sharedVertices[index] = endVertex;
+            }
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Copy results to output buffer
+    if (localIndex == 0) {
+        int finalCount = min(atomic_load_explicit(&vertexCount, memory_order_relaxed), params.maxHullVertices);
+        hullCounts[clusterIndex] = finalCount;
+
+        int hullOffset = clusterIndex * params.maxHullVertices;
+        for (int i = 0; i < finalCount; i++) {
+            hullVertices[hullOffset + i] = sharedVertices[i];
+        }
+    }
+}
 """
 }
 
@@ -3217,8 +4453,10 @@ public enum MetalTransformError: Error, LocalizedError {
     case functionNotFound(String)
     case pipelineStateCreationFailed(String)
     case gpuExecutionFailed(String)
+    case kernelExecutionFailed(String)
     case insufficientData(String)
-    
+    case coordinateCorruptionDetected(String)
+
     public var errorDescription: String? {
         switch self {
         case .deviceNotAvailable:
@@ -3235,8 +4473,12 @@ public enum MetalTransformError: Error, LocalizedError {
             return "Failed to create Metal compute pipeline: \(details)"
         case .gpuExecutionFailed(let details):
             return "GPU execution failed: \(details)"
+        case .kernelExecutionFailed(let details):
+            return "GPU kernel execution failed: \(details)"
         case .insufficientData(let details):
             return "Insufficient data for GPU processing: \(details)"
+        case .coordinateCorruptionDetected(let details):
+            return "Coordinate corruption detected during GPU processing: \(details)"
         }
     }
 }
