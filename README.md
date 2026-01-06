@@ -93,24 +93,33 @@ Before you begin, make sure you have:
 
 For experienced developers, here's the quick version:
 
+1. Clone the repository
 ```bash
-# 1. Clone the repository
-git clone https://github.com/omega-networks/pulse.git
-cd pulse
-
-# 2. Configure build settings
-cp Development.xcconfig.template Development.xcconfig
-
-# 3. Edit Development.xcconfig with your values:
-#    DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
-#    CLOUDKIT_CONTAINER_ID = iCloud.com.yourorg.pulse
-#    BUNDLE_IDENTIFIER = com.yourorg.pulse
-
-# 4. Open and build
-open Pulse.xcodeproj
-# Select your development team in project settings
-# Build and run (⌘+R)
+   git clone https://github.com/omega-networks/pulse.git
+   cd pulse
 ```
+
+2. Configure build settings
+```bash
+   cp Development.xcconfig.template Development.xcconfig
+```
+
+3. Edit `Development.xcconfig` with your team-specific values:
+```
+   DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
+   CLOUDKIT_CONTAINER_ID = iCloud.com.yourorg.pulse
+   BUNDLE_IDENTIFIER = com.yourorg.pulse
+```
+
+4. Open and build
+   - Open `Pulse.xcodeproj` in Xcode 26+
+   - Select your development team in project settings
+   - Build and run (⌘+R)
+
+5. Configure data sources
+   - Add your NetBox endpoint URL
+   - Configure Zabbix monitoring credentials
+   - Set up CloudKit container (if using sync features)
 
 For detailed step-by-step instructions, continue reading below.
 
