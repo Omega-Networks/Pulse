@@ -164,27 +164,10 @@ Before editing the configuration file, you need to gather three pieces of inform
 
 Your Team ID is a 10-character code that identifies your Apple Developer account.
 
-**How to find it in Xcode:**
-
-1. Open **Xcode**
-2. Go to **Xcode → Settings** (or **Preferences** on older macOS versions)
-3. Click the **Accounts** tab
-4. Select your Apple ID from the list
-5. Click on your team name in the right panel
-6. Your **Team ID** appears below your team name
-   - It's a 10-character code like `ABC1234DEF`
-   - **Write this down** or copy it
-
-**Don't have an Apple ID in Xcode yet?**
-1. In the Accounts tab, click the **+** button
-2. Select **"Apple ID"**
-3. Sign in with your Apple ID
-4. If you don't have an Apple Developer account, visit [developer.apple.com](https://developer.apple.com) to create one (free)
-
-**Alternative method - Apple Developer Portal:**
+**How to find it on the Apple Developer Portal:**
 1. Visit [developer.apple.com](https://developer.apple.com)
 2. Sign in with your Apple ID
-3. Go to **Account → Membership**
+3. Go to **Account → Membership Details**
 4. Your **Team ID** is listed there
 
 ##### B. Create Your CloudKit Container ID
@@ -233,7 +216,7 @@ Your bundle identifier uniquely identifies your app. It can use a different form
 1. Go to [developer.apple.com](https://developer.apple.com)
 2. Navigate to **Certificates, Identifiers & Profiles**
 3. Click **Identifiers** in the left sidebar
-4. Click the **+** button (top left)
+4. Click the **+** button next to Identifiers
 5. Select **App IDs**
 6. Click **Continue**
 7. Select **App** (not App Clip)
