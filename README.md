@@ -299,13 +299,13 @@ nano Development.xcconfig
 **Your completed file should look like:**
 
 ```xcconfig
-// Apple Developer Team ID
+// Apple Developer Team ID - find this in your Apple Developer account
 DEVELOPMENT_TEAM = ADC5AJV3TU
 
-// CloudKit Container (with iCloud. prefix)
+// CloudKit container identifier - create this in your Apple Developer portal
 CLOUDKIT_CONTAINER_ID = iCloud.nz.net.omega.pulse
 
-// Bundle Identifier
+// Base bundle identifier for your app
 BUNDLE_IDENTIFIER = omega-networks.Pulse
 ```
 
@@ -335,13 +335,13 @@ open Pulse.xcodeproj
 2. In the main editor area, select the **Pulse** target
 3. Click the **Signing & Capabilities** tab
 4. Under **"Team"**, select your team from the dropdown
-   - It should show your name or organisation name with your Team ID
+   - It should show your name or organisation name
 
 **If you see a signing error:**
 - Make sure your Team ID in `Development.xcconfig` matches what's selected here
 - Make sure you're connected to the internet
 - Verify **"Automatically manage signing"** is checked
-- Make sure your Bundle Identifier matches what's registered in the Apple Developer Portal
+- Make sure your Bundle Identifier matches what's registered in the Apple Developer Portal (case sensitive)
 
 ##### C. Build and Run
 
@@ -478,7 +478,7 @@ A: Yes, each person follows these setup instructions with their own Apple Develo
 
 **Q: Do I need both NetBox and Zabbix?**
 
-A: NetBox is required for infrastructure inventory. Zabbix is optional but recommended for real-time monitoring metrics.
+A: NetBox is required for infrastructure inventory. Zabbix is optional but recommended for real-time monitoring.
 
 ---
 
@@ -488,9 +488,9 @@ Once Pulse is running:
 
 1. **Explore the interface** - Familiarise yourself with the monitoring dashboard
 2. **Add devices** - Connect your infrastructure devices through NetBox
-3. **Configure alerts** - Set up notifications for infrastructure events
+3. **Configure monitoring & alerting** - Assign templates to your devices for monitoring data and notifications for events in Zabbix
 
-Detailed setup instructions to be developed in our [Wiki](https://github.com/omega-networks/pulse/wiki).
+More detailed instructions to be developed in our [Wiki](https://github.com/omega-networks/pulse/wiki).
 
 ---
 
