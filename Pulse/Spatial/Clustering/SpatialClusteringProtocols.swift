@@ -66,16 +66,6 @@ public enum ClusteringError: LocalizedError {
     }
 }
 
-// MARK: - Logging Extensions
-
-extension Logger {
-    static let spatialClustering = Logger(subsystem: "pulse.spatial", category: "clustering")
-    static let spatialIndexing = Logger(subsystem: "pulse.spatial", category: "indexing")
-    static let spatialPerformance = Logger(subsystem: "pulse.spatial", category: "performance")
-    static let spatialGPU = Logger(subsystem: "pulse.spatial", category: "gpu")
-    static let spatialValidation = Logger(subsystem: "pulse.spatial", category: "validation")
-}
-
 // MARK: - Protocol Abstractions
 
 /// Protocol defining spatial indexing capabilities for any device type
@@ -257,45 +247,5 @@ public struct PowerSenseDeviceDTO: SpatialDevice, Sendable {
         self.longitude = longitude
         self.isOffline = isOffline
         self.eventTimestamp = eventTimestamp
-    }
-}
-
-// MARK: - Helper Extensions
-
-extension Array where Element: SpatialDevice {
-    /// Filter devices that are offline
-    public var offlineDevices: [Element] {
-        return filter { $0.isOffline == true }
-    }
-
-    /// Filter devices with valid coordinates
-    public var validCoordinateDevices: [Element] {
-        return filter { device in
-            device.latitude >= -90 && device.latitude <= 90 &&
-            device.longitude >= -180 && device.longitude <= 180 &&
-            device.latitude != 0.0 && device.longitude != 0.0
-        }
-    }
-
-    /// Get geographic bounds of all devices
-    public var geographicBounds: GeographicBounds? {
-        guard !isEmpty else { return nil }
-
-        let lats = map { $0.latitude }
-        let lons = map { $0.longitude }
-
-        guard let minLat = lats.min(),
-              let maxLat = lats.max(),
-              let minLon = lons.min(),
-              let maxLon = lons.max() else {
-            return nil
-        }
-
-        return GeographicBounds(
-            minLatitude: minLat,
-            maxLatitude: maxLat,
-            minLongitude: minLon,
-            maxLongitude: maxLon
-        )
     }
 }

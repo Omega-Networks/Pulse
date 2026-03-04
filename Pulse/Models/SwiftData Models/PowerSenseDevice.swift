@@ -33,7 +33,7 @@ import CoreLocation
 /// directly to the UI. All visualization must go through aggregation layers that enforce
 /// minimum device thresholds and privacy controls.
 @Model
-final class PowerSenseDevice {
+final class PowerSenseDevice : SpatialDevice {
 
     // MARK: - Core Properties
 
@@ -133,6 +133,7 @@ final class PowerSenseDevice {
 
     // MARK: - Privacy and Aggregation Methods
 
+    //TODO: - URGENT THIS RUNS FOR EACH DEVICE EVERY TIME AN OPERATION IS DONE ON THE DEVICE. HIGH CPU/GPU and POWERDRAW
     /// Update grid coordinates based on current location
     /// Uses 10m x 10m grid cells with accurate projected coordinates
     private func updateGridCoordinates() {
@@ -181,6 +182,58 @@ final class PowerSenseDevice {
         case nil: return "Unknown"
         }
     }
+    
+    // MARK: - Privacy
+
+    /// Privacy-safe computed properties (never expose individual device data)
+
+    /// Device is suitable for aggregation (has valid location data)
+    var canAggregate: Bool {
+        return latitude != 0.0 && longitude != 0.0 && !deviceId.isEmpty
+    }
+
+    /// Recent power loss (within last hour) - only if we have status data
+    var hasRecentPowerLoss: Bool {
+        guard let offline = isOffline,
+              let statusChange = lastStatusChange else { return false }
+        return offline && statusChange.timeIntervalSinceNow > -3600
+    }
+
+    /// Stable power status (no changes in last 15 minutes) - only if we have data
+    var hasStablePowerStatus: Bool {
+        guard let statusChange = lastStatusChange else { return false }
+        return statusChange.timeIntervalSinceNow < -900
+    }
+
+    /// Device has recent data (received data in last 5 minutes)
+    var hasRecentData: Bool {
+        guard let lastData = lastDataReceived else { return false }
+        return lastData.timeIntervalSinceNow > -300
+    }
+
+    // MARK: - Aggregation Helpers
+
+    /// Static method to group devices by grid cell for aggregation
+    static func groupByGridCell(_ devices: [PowerSenseDevice]) -> [String: [PowerSenseDevice]] {
+        return Dictionary(grouping: devices) { $0.gridCellId }
+    }
+
+    /// Static method to filter devices for privacy compliance
+    static func filterForPrivacy(_ devices: [PowerSenseDevice]) -> [PowerSenseDevice] {
+        return devices.filter { $0.canAggregate }
+    }
+
+    /// Static method to filter devices with known power status
+    static func filterWithPowerData(_ devices: [PowerSenseDevice]) -> [PowerSenseDevice] {
+        return devices.filter { $0.hasPowerStatusData }
+    }
+    
+    /// Convert to Sendable DTO for GPU processing
+    // MARK: - SpatialDevice Protocol Conformance
+    public func toDTO() -> PowerSenseDeviceDTO {
+        return PowerSenseDeviceDTO(from: self)
+    }
+
 }
 
 // MARK: - PowerSense Device Properties (API Communication)
@@ -304,66 +357,3 @@ struct PowerSenseDeviceProperties: Decodable {
                (longitude! >= -180 && longitude! <= 180)
     }
 }
-
-// MARK: - Privacy Extensions
-
-extension PowerSenseDevice {
-
-    /// Privacy-safe computed properties (never expose individual device data)
-
-    /// Device is suitable for aggregation (has valid location data)
-    var canAggregate: Bool {
-        return latitude != 0.0 && longitude != 0.0 && !deviceId.isEmpty
-    }
-
-    /// Recent power loss (within last hour) - only if we have status data
-    var hasRecentPowerLoss: Bool {
-        guard let offline = isOffline,
-              let statusChange = lastStatusChange else { return false }
-        return offline && statusChange.timeIntervalSinceNow > -3600
-    }
-
-    /// Stable power status (no changes in last 15 minutes) - only if we have data
-    var hasStablePowerStatus: Bool {
-        guard let statusChange = lastStatusChange else { return false }
-        return statusChange.timeIntervalSinceNow < -900
-    }
-
-    /// Device has recent data (received data in last 5 minutes)
-    var hasRecentData: Bool {
-        guard let lastData = lastDataReceived else { return false }
-        return lastData.timeIntervalSinceNow > -300
-    }
-}
-
-// MARK: - Aggregation Helpers
-
-extension PowerSenseDevice {
-
-    /// Static method to group devices by grid cell for aggregation
-    static func groupByGridCell(_ devices: [PowerSenseDevice]) -> [String: [PowerSenseDevice]] {
-        return Dictionary(grouping: devices) { $0.gridCellId }
-    }
-
-    /// Static method to filter devices for privacy compliance
-    static func filterForPrivacy(_ devices: [PowerSenseDevice]) -> [PowerSenseDevice] {
-        return devices.filter { $0.canAggregate }
-    }
-
-    /// Static method to filter devices with known power status
-    static func filterWithPowerData(_ devices: [PowerSenseDevice]) -> [PowerSenseDevice] {
-        return devices.filter { $0.hasPowerStatusData }
-    }
-}
-
-// MARK: - SpatialDevice Protocol Conformance
-
-extension PowerSenseDevice: SpatialDevice {
-    /// Convert to Sendable DTO for GPU processing
-    public func toDTO() -> PowerSenseDeviceDTO {
-        return PowerSenseDeviceDTO(from: self)
-    }
-}
-
-
-

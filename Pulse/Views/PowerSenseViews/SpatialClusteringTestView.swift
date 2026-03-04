@@ -545,11 +545,11 @@ struct SpatialClusteringTestView: View {
         }
 
         // Run the test logic synchronously
-        await runPerformanceTest(scale: scale)
+        runPerformanceTest(scale: scale)
 
         // Wait for completion
-        while await isRunning {
-            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
+        while isRunning {
+            try? await Task.sleep(for: Duration.seconds(0.1)) // 0.1 second
         }
     }
 

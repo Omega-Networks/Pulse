@@ -56,9 +56,6 @@ final class Event {
     init(eventId: String) {
         self.eventId = eventId
     }
-}
-
-extension Event {
     
     func update(with properties: EventProperties, device: Device? = nil) {
         // Always update these properties as they come from both problem.get and event.get

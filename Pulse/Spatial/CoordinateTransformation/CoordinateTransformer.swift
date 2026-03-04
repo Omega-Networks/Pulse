@@ -25,62 +25,6 @@ import simd
 import OSLog
 public import CoreLocation
 
-// MARK: - Public Types
-
-/// Projected coordinate in meters
-public struct ProjectedCoordinate: Sendable {
-    public let x: Double  // Easting
-    public let y: Double  // Northing
-    public let system: ProjectionSystem
-    
-    public init(x: Double, y: Double, system: ProjectionSystem) {
-        self.x = x
-        self.y = y
-        self.system = system
-    }
-    
-    /// Convert to GameplayKit vector2 with Float precision
-    public var vector2: SIMD2<Float> {
-        return SIMD2<Float>(Float(x), Float(y))
-    }
-    
-    /// Calculate euclidean distance to another projected coordinate
-    public func distance(to other: ProjectedCoordinate) -> Double {
-        let dx = x - other.x
-        let dy = y - other.y
-        return sqrt(dx * dx + dy * dy)
-    }
-    
-    /// Calculate squared distance (faster, avoids sqrt)
-    public func distanceSquared(to other: ProjectedCoordinate) -> Double {
-        let dx = x - other.x
-        let dy = y - other.y
-        return dx * dx + dy * dy
-    }
-}
-
-/// Supported projection systems for coordinate transformation
-///
-/// For open-source contributors: Add new projection systems here following the pattern.
-/// Each case must implement corresponding transform kernels in MetalShaderLibrary.
-public enum ProjectionSystem: Equatable, Hashable, Sendable {
-    case nztm2000        // New Zealand Transverse Mercator (EPSG:2193)
-    case webMercator     // Web Mercator (EPSG:3857) - Global web mapping
-    case utm(zone: Int, isNorthern: Bool)  // UTM zones with hemisphere for regional accuracy
-
-    public var epsgCode: Int {
-        switch self {
-        case .nztm2000:
-            return 2193
-        case .webMercator:
-            return 3857
-        case .utm(let zone, let isNorthern):
-            // UTM EPSG codes: Northern hemisphere 32600+zone, Southern hemisphere 32700+zone
-            return isNorthern ? (32600 + zone) : (32700 + zone)
-        }
-    }
-}
-
 // MARK: - Performance Metrics
 
 public struct TransformationMetrics {
@@ -193,14 +137,12 @@ public final class CoordinateTransformer: Sendable {
     private let collectHullVerticesPipelineState: MTLComputePipelineState
     
     // MARK: - Configuration
-    
     private let projectionSystem: ProjectionSystem
     private let threadsPerThreadgroup: MTLSize
     private let maxBufferSize: Int
     private let optimalBatchSize: Int
     
     // MARK: - Initialization
-    
     /// Initialize GPU-accelerated transformer with specified projection system
     public init(projectionSystem: ProjectionSystem = .nztm2000) throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -1041,9 +983,13 @@ public final class CoordinateTransformer: Sendable {
 
     /// Create generic buffer for any data type
     internal func createBuffer<T>(from data: [T], type: T.Type) throws -> SendableBuffer {
+        
+        let dataSize = data.count * MemoryLayout<T>.size;
+        let unsafePointerData = UnsafeMutablePointer<T.Type>.allocate(capacity: dataSize)
+        
         guard let buffer = device.makeBuffer(
-            bytes: data,
-            length: data.count * MemoryLayout<T>.size,
+            bytes: unsafePointerData,
+            length: dataSize,
             options: .storageModeShared
         ) else {
             throw MetalTransformError.gpuExecutionFailed("Failed to create buffer for type \(T.self)")
@@ -2628,6 +2574,18 @@ public final class CoordinateTransformer: Sendable {
             throw MetalTransformError.pipelineStateCreationFailed(error.localizedDescription)
         }
     }
+    
+    /// Validate transformation accuracy by round-trip testing
+    public func validateTransformation(_ coordinate: CLLocationCoordinate2D, tolerance: Double = 0.001) -> Bool {
+        let projected = transform(coordinate)
+        let roundTrip = batchInverseTransform([projected]).first ?? CLLocationCoordinate2D()
+        
+        let latDiff = abs(coordinate.latitude - roundTrip.latitude)
+        let lonDiff = abs(coordinate.longitude - roundTrip.longitude)
+        
+        return latDiff <= tolerance && lonDiff <= tolerance
+    }
+    
 }
 
 // MARK: - Parameter Structures for GPU
@@ -4480,34 +4438,5 @@ public enum MetalTransformError: Error, LocalizedError {
         case .coordinateCorruptionDetected(let details):
             return "Coordinate corruption detected during GPU processing: \(details)"
         }
-    }
-}
-
-// MARK: - Extensions
-
-extension ProjectedCoordinate: Equatable {
-    public static func == (lhs: ProjectedCoordinate, rhs: ProjectedCoordinate) -> Bool {
-        return lhs.x == rhs.x && lhs.y == rhs.y && lhs.system.epsgCode == rhs.system.epsgCode
-    }
-}
-
-extension ProjectedCoordinate: CustomStringConvertible {
-    public var description: String {
-        return "ProjectedCoordinate(x: \(x), y: \(y), system: \(system))"
-    }
-}
-
-// MARK: - Validation Helper
-
-extension CoordinateTransformer {
-    /// Validate transformation accuracy by round-trip testing
-    public func validateTransformation(_ coordinate: CLLocationCoordinate2D, tolerance: Double = 0.001) -> Bool {
-        let projected = transform(coordinate)
-        let roundTrip = batchInverseTransform([projected]).first ?? CLLocationCoordinate2D()
-        
-        let latDiff = abs(coordinate.latitude - roundTrip.latitude)
-        let lonDiff = abs(coordinate.longitude - roundTrip.longitude)
-        
-        return latDiff <= tolerance && lonDiff <= tolerance
     }
 }

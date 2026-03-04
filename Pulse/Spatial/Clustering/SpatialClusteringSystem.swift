@@ -369,7 +369,7 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
         }
 
         // Transform query coordinate
-        let queryProjected = try transformer.transform(coordinate)
+        let queryProjected = transformer.transform(coordinate)
 
         let offlineDevices = indexedDevices.offlineDevices
         var neighbors: [SpatialDeviceType] = []

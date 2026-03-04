@@ -24,7 +24,7 @@
 //
 
 import SwiftUI
-import MapKit
+@preconcurrency import MapKit
 import SwiftData
 import CoreLocation
 import OSLog
@@ -415,22 +415,17 @@ struct MapView: View {
     }
     
     func getAddress(coordinate: CLLocationCoordinate2D) async -> String? {
-        // TODO: Replace CLGeocoder with MKReverseGeocodingRequest (deprecated in macOS 26.0)
-        let geocoder = CLGeocoder()
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let geocoder = MKReverseGeocodingRequest(location: location)
         
         do {
-            let placemarks = try await geocoder.reverseGeocodeLocation(location)
+            let placemarks = try await geocoder?.mapItems
             
-            if let firstPlacemark = placemarks.first,
-               let street = firstPlacemark.thoroughfare,
-               let suburb = firstPlacemark.locality,
-               let city = firstPlacemark.administrativeArea,
-               let postCode = firstPlacemark.postalCode,
-               let houseNumber = firstPlacemark.subThoroughfare {
-                
-                return "\(houseNumber) \(street), \(suburb), \(city) \(postCode)"
+            if let firstPlacemark = placemarks?.first
+            {
+                return "\(firstPlacemark.address, default: "")"
             }
+            
             return nil
             
         } catch {

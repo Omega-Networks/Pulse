@@ -43,7 +43,7 @@ final class ConcaveHull {
     func hullFromPoints(points: [Point], concavity: Double) -> [Point] {
         guard points.count >= 4 else { return points }
 
-        var uniquePoints = filterDuplicates(points)
+        let uniquePoints = filterDuplicates(points)
 
         // Get convex hull as starting point
         var convex = Convex(uniquePoints).convex
@@ -233,7 +233,7 @@ final class ConcaveHull {
 
 // MARK: - Supporting Types
 
-/// Simple 2D point for hull computation
+// Simple 2D point for hull computation
 struct Point: Equatable {
     let x: Double
     let y: Double

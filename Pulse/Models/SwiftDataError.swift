@@ -33,7 +33,7 @@ An enumeration of CoreData fetch and consumption errors.
 // TODO: Refactor for SwiftData
 import Foundation
 
-enum SwiftDataError: Error {
+enum SwiftDataError: Error, Identifiable, LocalizedError {
     case wrongDataFormat(error: Error)
     case missingData
     case creationError
@@ -43,9 +43,7 @@ enum SwiftDataError: Error {
     case invalidPropertiesType
     case relationshipMappingError(error: Error)
     case unexpectedError(error: Error)
-}
 
-extension SwiftDataError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .wrongDataFormat(let error):
@@ -68,9 +66,7 @@ extension SwiftDataError: LocalizedError {
             return NSLocalizedString("Received unexpected error. \(error.localizedDescription)", comment: "")
         }
     }
-}
 
-extension SwiftDataError: Identifiable {
     var id: String? {
         errorDescription
     }

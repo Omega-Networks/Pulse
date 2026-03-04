@@ -25,6 +25,65 @@
 
 import Foundation
 
-// Note: ProjectionSystem is defined in CoordinateTransformer.swift to avoid circular dependencies
-// This file exists to maintain module organization and can be used for additional projection utilities
+/// Supported projection systems for coordinate transformation
+///
+/// For open-source contributors: Add new projection systems here following the pattern.
+/// Each case must implement corresponding transform kernels in MetalShaderLibrary.
+public enum ProjectionSystem: Equatable, Hashable, Sendable {
+    case nztm2000        // New Zealand Transverse Mercator (EPSG:2193)
+    case webMercator     // Web Mercator (EPSG:3857) - Global web mapping
+    case utm(zone: Int, isNorthern: Bool)  // UTM zones with hemisphere for regional accuracy
 
+    public var epsgCode: Int {
+        switch self {
+        case .nztm2000:
+            return 2193
+        case .webMercator:
+            return 3857
+        case .utm(let zone, let isNorthern):
+            // UTM EPSG codes: Northern hemisphere 32600+zone, Southern hemisphere 32700+zone
+            return isNorthern ? (32600 + zone) : (32700 + zone)
+        }
+    }
+}
+
+/// Projected coordinate in meters
+public struct ProjectedCoordinate: Sendable {
+    public let x: Double  // Easting
+    public let y: Double  // Northing
+    public let system: ProjectionSystem
+    
+    public init(x: Double, y: Double, system: ProjectionSystem) {
+        self.x = x
+        self.y = y
+        self.system = system
+    }
+    
+    /// Convert to GameplayKit vector2 with Float precision
+    public var vector2: SIMD2<Float> {
+        return SIMD2<Float>(Float(x), Float(y))
+    }
+    
+    /// Calculate euclidean distance to another projected coordinate
+    public func distance(to other: ProjectedCoordinate) -> Double {
+        let dx = x - other.x
+        let dy = y - other.y
+        return sqrt(dx * dx + dy * dy)
+    }
+    
+    /// Calculate squared distance (faster, avoids sqrt)
+    public func distanceSquared(to other: ProjectedCoordinate) -> Double {
+        let dx = x - other.x
+        let dy = y - other.y
+        return dx * dx + dy * dy
+    }
+
+    public static func == (lhs: ProjectedCoordinate, rhs: ProjectedCoordinate) -> Bool {
+        return lhs.x == rhs.x && lhs.y == rhs.y && lhs.system.epsgCode == rhs.system.epsgCode
+    }
+
+    public var description: String {
+        return "ProjectedCoordinate(x: \(x), y: \(y), system: \(system))"
+    }
+    
+}
