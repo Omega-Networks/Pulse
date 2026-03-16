@@ -119,9 +119,9 @@ struct SettingsView: View {
         
         #endif
     }
-    
+        
     // MARK: - Form Content
-    
+
     private var settingsForm: some View {
         Form {
             Section(header: Text("            NetBox Settings")
@@ -238,6 +238,26 @@ struct SettingsView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || powerSenseZabbixToken.isEmpty)
             }
+            
+            HStack {
+                Button("Full Sync All Devices") {
+                    Task {
+                        await fullSyncAllDevices()
+                    }
+                }
+                .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || isFullSyncing)
+                
+                Spacer()
+                
+                if isFullSyncing {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Text("Syncs all 120k devices")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+             }
         }
         .alert(isPresented: $showingAlert) {
             Alert(
@@ -281,6 +301,28 @@ struct SettingsView: View {
     }
 
 
+    
+    private func fullSyncAllDevices() async {
+        guard !isFullSyncing else { return }
+        
+        isFullSyncing = true
+        defer { isFullSyncing = false }
+        
+        logger.info("Starting full sync of all PowerSense devices...")
+        
+        do {
+            let dataService = PowerSenseDataService(modelContext: modelContext)
+            let (deviceCount, eventCount) = try await dataService.syncPowerSenseData()
+            
+            await refreshDataCounts()
+            
+            logger.info("Full sync completed: \(deviceCount) devices, \(eventCount) events processed")
+            
+        } catch {
+            logger.error("Full sync failed: \(error.localizedDescription)")
+        }
+    }
+    
     // MARK: - Settings Management
     
     private func loadSettings() async {
@@ -432,14 +474,15 @@ struct SettingsView: View {
     }
 }
 
+
 // MARK: - PowerSense Test Results View
 
 struct PowerSenseTestResultsView: View {
     let results: String
     @Environment(\.dismiss) private var dismiss
-
+    
     var body: some View {
-        #if os(iOS)
+#if os(iOS)
         NavigationView {
             scrollContent
                 .navigationTitle("Test Results")
@@ -452,50 +495,52 @@ struct PowerSenseTestResultsView: View {
                     }
                 }
         }
-        #else
+#else
         VStack {
             HStack {
                 Text("PowerSense Integration Test Results")
                     .font(.title2)
                     .fontWeight(.bold)
-
+                
                 Spacer()
-
+                
                 Button("Close") {
                     dismiss()
                 }
             }
             .padding()
-
+            
             scrollContent
         }
         .frame(minWidth: 600, minHeight: 500)
-        #endif
+#endif
     }
-
+    
     private var scrollContent: some View {
         ScrollView {
             VStack(alignment: .leading) {
-                #if os(iOS)
+#if os(iOS)
                 Text("PowerSense Integration Test Results")
                     .font(.title2)
                     .fontWeight(.bold)
                     .padding(.bottom)
-                #endif
-
+#endif
+                
                 Text(results.isEmpty ? "No test results available yet." : results)
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
                     .padding()
-                    #if os(macOS)
+#if os(macOS)
                     .background(Color(NSColor.textBackgroundColor))
-                    #else
+#else
                     .background(Color(UIColor.systemBackground))
-                    #endif
+#endif
                     .cornerRadius(8)
             }
             .padding()
         }
     }
+    
+
 }
 

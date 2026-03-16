@@ -33,6 +33,7 @@ struct MapView: View {
     @Environment(\.openWindow) var openWindow
     @Environment(\.modelContext) private var modelContext
     @Environment(ClusteringService.self) private var clusteringService
+    @Environment(PowerSenseMonitorService.self) private var monitorService
     @Query private var sites: [Site]
 
     // Phase 3: GPU-accelerated spatial clustering for outage visualization
@@ -132,7 +133,7 @@ struct MapView: View {
                 // Only initialize if PowerSense overlay is actually enabled
                 if showPowerSenseOverlay {
                     Task {
-                        await performSpatialClustering()
+                        await showCachedClusters()
                     }
                 } else {
                     logger.info("⏭️ Skipping PowerSense initialization - overlay disabled")
@@ -149,7 +150,7 @@ struct MapView: View {
                 logger.info("🔄 PowerSense overlay toggled: \(isEnabled)")
                 if isEnabled {
                     Task {
-                        await performSpatialClustering()
+                        await showCachedClusters()
                     }
                 } else {
                     // Clear clusters when overlay is disabled with animation
@@ -157,6 +158,26 @@ struct MapView: View {
                         spatialClusters = []
                     }
                     logger.info("🧹 Cleared spatial clusters - overlay disabled")
+                }
+            }
+            .onChange(of: monitorService.cachedResult) { _, newResult in
+                // Auto-update polygons when background polling detects changes
+                guard showPowerSenseOverlay, let result = newResult else { return }
+
+                logger.info("🔄 Background update detected - refreshing \(result.clusters.count) polygons")
+
+                let stats = ClusteringStats(
+                    totalDevices: result.totalDevices,
+                    offlineDevices: result.offlineDevices,
+                    onlineDevices: result.totalDevices - result.offlineDevices,
+                    totalEvents: result.totalEvents,
+                    activeEvents: result.activeEvents
+                )
+
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    self.spatialClusters = result.clusters
+                    self.clusteringStats = stats
+                    self.lastClusteringTime = Date()
                 }
             }
             .onChange(of: lastClusteringTime) { _, _ in
@@ -454,24 +475,19 @@ struct MapView: View {
 
     // MARK: - Phase 3 Spatial Clustering Integration
 
-    private func performSpatialClustering() async {
-        guard !isClusteringInProgress else {
-            logger.info("⏸️ Spatial clustering already in progress, skipping")
-            return
+    /// Display cached clusters from monitor service (fast path: <0.4s)
+    private func showCachedClusters() async {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        // Try to get cached result from monitor service
+        let cachedResult = await MainActor.run {
+            monitorService.getCachedResultIfValid()
         }
 
-        logger.info("🚀 Starting spatial clustering")
+        if let result = cachedResult {
+            logger.info("✅ Loading \(result.clusters.count) cached clusters...")
 
-        await MainActor.run {
-            isClusteringInProgress = true
-        }
-
-        do {
-            // Use app-level clustering service (persistent actor with cached GPU buffers)
-            let result = try await clusteringService.clusterDevices()
-
-            // Actor returns ready-to-render clusters
-            let clusters = result.clusters
+            // Extract stats from result
             let stats = ClusteringStats(
                 totalDevices: result.totalDevices,
                 offlineDevices: result.offlineDevices,
@@ -480,53 +496,67 @@ struct MapView: View {
                 activeEvents: result.activeEvents
             )
 
-            // Compute statistics off the main thread
-            let totalDevicesInClusters = clusters.reduce(0) { $0 + $1.deviceCount }
-            let avgConfidence = clusters.isEmpty ? 0.0 : clusters.map(\.confidenceRating).reduce(0, +) / Double(clusters.count)
-            let clustersWithPolygons = clusters.filter { $0.polygon != nil }.count
-
-            logger.info("✅ Spatial clustering completed: \(clusters.count) clusters generated")
-            logger.info("📊 Device stats - Total: \(stats.totalDevices), Offline: \(stats.offlineDevices), Online: \(stats.onlineDevices)")
-            logger.info("📊 Cluster stats - Devices in clusters: \(totalDevicesInClusters), Avg confidence: \(String(format: "%.2f", avgConfidence))")
-            logger.info("🗺️ Polygon stats - \(clustersWithPolygons)/\(clusters.count) clusters have polygons")
-
-            // Debug: Print coordinate bounds for first few clusters (off main thread)
-            if !clusters.isEmpty {
-                logger.info("🗺️ Cluster coordinate ranges:")
-                for (index, cluster) in clusters.prefix(3).enumerated() {
-                    if !cluster.hullVertices.isEmpty {
-                        let lats = cluster.hullVertices.map(\.latitude)
-                        let lons = cluster.hullVertices.map(\.longitude)
-                        let minLat = lats.min() ?? 0, maxLat = lats.max() ?? 0
-                        let minLon = lons.min() ?? 0, maxLon = lons.max() ?? 0
-                        logger.info("   Cluster \(index): lat[\(String(format: "%.3f", minLat)), \(String(format: "%.3f", maxLat))] lon[\(String(format: "%.3f", minLon)), \(String(format: "%.3f", maxLon))]")
-                    }
-                }
-            }
-
-            // Debug individual clusters (off main thread)
-            for (index, cluster) in clusters.enumerated() {
-                logger.debug("📍 Cluster \(index): \(cluster.deviceCount) devices, \(cluster.hullVertices.count) hull vertices, polygon: \(cluster.polygon != nil ? "✓" : "✗")")
-            }
-
             // Update UI on main thread with animation
             await MainActor.run {
                 withAnimation(.easeInOut(duration: 0.4)) {
-                    self.spatialClusters = clusters
+                    self.spatialClusters = result.clusters
                     self.clusteringStats = stats
+                    self.lastClusteringTime = Date()
                 }
-                self.isClusteringInProgress = false
-                self.lastClusteringTime = Date()
             }
 
+            let duration = CFAbsoluteTimeGetCurrent() - startTime
+            logger.info("✅ Displayed \(result.clusters.count) cached clusters in \(String(format: "%.3f", duration))s")
+        } else {
+            // Fallback: cache invalid or empty, trigger fresh clustering
+            logger.info("⚠️ Cache invalid or empty - requesting fresh clustering")
+            await requestFreshClustering()
+        }
+    }
+
+    /// Request fresh clustering when cache is invalid (fallback path)
+    private func requestFreshClustering() async {
+        guard !isClusteringInProgress else {
+            logger.info("⏸️ Clustering already in progress, skipping")
+            return
+        }
+
+        await MainActor.run {
+            isClusteringInProgress = true
+        }
+
+        do {
+            logger.info("🔄 Requesting fresh clustering from monitor service...")
+            try await monitorService.refreshClusters()
+
+            // Show the newly cached clusters
+            await showCachedClusters()
+
+            await MainActor.run {
+                isClusteringInProgress = false
+            }
         } catch {
-            logger.error("❌ Spatial clustering failed: \(error.localizedDescription)")
+            logger.error("❌ Fresh clustering failed: \(error.localizedDescription)")
 
             await MainActor.run {
                 isClusteringInProgress = false
                 // Keep existing clusters on error rather than clearing
             }
         }
+    }
+
+    /// Derive statistics from cluster collection
+    private func deriveStatsFromClusters(_ clusters: [DeviceCluster]) -> ClusteringStats {
+        let totalDevices = clusters.reduce(0) { $0 + $1.deviceCount }
+        let offlineDevices = clusters.flatMap { $0.devices }.filter { $0.isOffline == true }.count
+
+        return ClusteringStats(
+            totalDevices: totalDevices,
+            offlineDevices: offlineDevices,
+            onlineDevices: totalDevices - offlineDevices,
+            totalEvents: 0, // TODO: Get from service if needed
+            activeEvents: 0
+        )
     }
 }
 

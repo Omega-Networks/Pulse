@@ -47,34 +47,11 @@ final class PowerSenseEvent {
         return resolvedAt == nil
     }
 
-    /// Event severity level (0-5, following Zabbix convention)
-    var severity: Int = 0
-
-    /// Human-readable event description
-    var eventDescription: String?
-
-    /// Raw event value from PowerSense (if available)
-    var rawValue: String?
-
-    /// Event acknowledged status
-    var isAcknowledged: Bool = false
-
     /// Event resolution timestamp (nil if not resolved)
     var resolvedAt: Date?
 
     /// Creation timestamp
     var created: Date = Date()
-
-    // MARK: - Correlation Properties
-
-    /// PowerSense alarm ID that triggered this event
-    var alarmId: String?
-
-    /// Zabbix event ID for correlation
-    var zabbixEventId: String?
-
-    /// Related outage duration (calculated when event resolves)
-    var outageDuration: TimeInterval?
 
     // MARK: - Relationships
 
@@ -92,23 +69,7 @@ final class PowerSenseEvent {
 
     /// Update event with properties from PowerSense/Zabbix
     func update(with properties: PowerSenseEventProperties) {
-        self.eventDescription = properties.name
-        self.severity = properties.severity
-        self.rawValue = properties.value
-        self.isAcknowledged = properties.acknowledged
         self.resolvedAt = properties.resolvedAt
-        self.alarmId = properties.alarmId
-        self.zabbixEventId = properties.zabbixEventId
-
-        // Calculate outage duration if event is resolved
-        if let resolvedAt = resolvedAt {
-            self.outageDuration = resolvedAt.timeIntervalSince(timestamp)
-        }
-    }
-
-    /// Mark event as acknowledged
-    func acknowledge() {
-        isAcknowledged = true
     }
 
     /// Resolve the event with current timestamp
@@ -116,91 +77,7 @@ final class PowerSenseEvent {
         guard resolvedAt == nil else { return } // Already resolved
 
         resolvedAt = Date()
-        outageDuration = resolvedAt!.timeIntervalSince(timestamp)
     }
-    
-    // MARK: - Utilities
-
-    /// Whether this event represents an active outage (power lost and not resolved)
-    var isActiveOutage: Bool {
-        return isActive  // Active means power is off
-    }
-
-    /// Human-readable duration string
-    var durationString: String {
-        guard let duration = outageDuration else {
-            if isActiveOutage {
-                let currentDuration = Date().timeIntervalSince(timestamp)
-                return formatDuration(currentDuration) + " (ongoing)"
-            }
-            return "N/A"
-        }
-        return formatDuration(duration)
-    }
-
-    /// Format duration as human-readable string
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let hours = Int(duration) / 3600
-        let minutes = (Int(duration) % 3600) / 60
-        let seconds = Int(duration) % 60
-
-        if hours > 0 {
-            return "\(hours)h \(minutes)m \(seconds)s"
-        } else if minutes > 0 {
-            return "\(minutes)m \(seconds)s"
-        } else {
-            return "\(seconds)s"
-        }
-    }
-
-    /// Event age (time since event occurred)
-    var age: TimeInterval {
-        return Date().timeIntervalSince(timestamp)
-    }
-
-    /// Whether event is recent (within last hour)
-    var isRecent: Bool {
-        return age < 3600
-    }
-
-
-    // MARK: - Aggregation Helpers
-
-    /// Group events by time window for analysis
-    static func groupByTimeWindow(_ events: [PowerSenseEvent], windowSize: TimeInterval = 3600) -> [Date: [PowerSenseEvent]] {
-        _ = Calendar.current
-        return Dictionary(grouping: events) { event in
-            let windowStart = floor(event.timestamp.timeIntervalSince1970 / windowSize) * windowSize
-            return Date(timeIntervalSince1970: windowStart)
-        }
-    }
-
-    /// Filter events for recent outages (active events within timeframe)
-    static func recentOutages(_ events: [PowerSenseEvent], within timeframe: TimeInterval = 3600) -> [PowerSenseEvent] {
-        let cutoff = Date().addingTimeInterval(-timeframe)
-        return events.filter { event in
-            event.isActive && event.timestamp > cutoff
-        }
-    }
-
-    /// Calculate outage statistics for a collection of events
-    static func outageStatistics(for events: [PowerSenseEvent]) -> OutageStatistics {
-        let powerLostEvents = events  // All events are power-related
-        let activeOutages = powerLostEvents.filter { $0.isActive }
-        let resolvedOutages = powerLostEvents.filter { !$0.isActive && $0.outageDuration != nil }
-
-        let totalOutages = powerLostEvents.count
-        let activeCount = activeOutages.count
-        let averageDuration = resolvedOutages.compactMap { $0.outageDuration }.average
-
-        return OutageStatistics(
-            totalOutages: totalOutages,
-            activeOutages: activeCount,
-            resolvedOutages: resolvedOutages.count,
-            averageOutageDuration: averageDuration
-        )
-    }
-
 }
 
 // MARK: - PowerSense Event Properties (API Communication)

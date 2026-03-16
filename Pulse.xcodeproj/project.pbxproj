@@ -130,6 +130,7 @@
 		C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */; };
 		C9951ED02E8815380025C136 /* SpatialClusteringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */; };
 		C9951ED62E8BF2380025C136 /* ClusterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */; };
+		C9951EDC2E8CDA0F0025C136 /* PowerSenseMonitorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951EDA2E8CDA0F0025C136 /* PowerSenseMonitorService.swift */; };
 		C9BF5DA22E5B223900FD1AC3 /* PulseAppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */; };
 		C9FCA5172D153E4D00D9E851 /* Event.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9FCA5162D153E4700D9E851 /* Event.swift */; };
 /* End PBXBuildFile section */
@@ -279,6 +280,7 @@
 		C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringActor.swift; sourceTree = "<group>"; };
 		C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringTests.swift; sourceTree = "<group>"; };
 		C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterDetailView.swift; sourceTree = "<group>"; };
+		C9951EDA2E8CDA0F0025C136 /* PowerSenseMonitorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseMonitorService.swift; sourceTree = "<group>"; };
 		C9A2B32B2ACAA19D00C0BE08 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PulseAppIcon.icon; sourceTree = "<group>"; };
 		C9FCA5162D153E4700D9E851 /* Event.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Event.swift; sourceTree = "<group>"; };
@@ -489,6 +491,7 @@
 				C96191912ACA55CB000198DB /* Protocols */,
 				C96191922ACA55DA000198DB /* Toolbar Content */,
 				C96191932ACA55F4000198DB /* Views */,
+				C9951EDB2E8CDA0F0025C136 /* Services */,
 				C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */,
 				C96F2F942E719BBC007BADE5 /* AppConfiguration.swift */,
 				C96191632ACA552F000198DB /* ContentView.swift */,
@@ -654,6 +657,14 @@
 				C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */,
 			);
 			path = PulseTests;
+			sourceTree = "<group>";
+		};
+		C9951EDB2E8CDA0F0025C136 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				C9951EDA2E8CDA0F0025C136 /* PowerSenseMonitorService.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 		C9EF519B2D3083F400D49DEA /* SwiftData Models */ = {
@@ -878,6 +889,7 @@
 				413BEA0C2CA38E3F0051DDD2 /* OverlayItemStyle.swift in Sources */,
 				C96191CE2ACA58C7000198DB /* ToolbarStatus.swift in Sources */,
 				41A0BE9E2C8FC05200C39B50 /* Configuration.swift in Sources */,
+				C9951EDC2E8CDA0F0025C136 /* PowerSenseMonitorService.swift in Sources */,
 				410F37262CAB5938008236ED /* DeviceDetailsPanelView.swift in Sources */,
 				419A0D9D2BED8A0D00FC74AF /* MapStyleButton.swift in Sources */,
 				4122CC3B2C081B3600EEE5CA /* DeviceFaceplate.swift in Sources */,
@@ -1105,7 +1117,6 @@
 				CURRENT_PROJECT_VERSION = 6;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Pulse/Preview Content\"";
-				DEVELOPMENT_TEAM = S2B95V7SPG;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;

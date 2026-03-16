@@ -74,7 +74,8 @@ struct PulseApp: App {
     let notificationHandler = NotificationHandler()
     let modelContainer: ModelContainer
     var clusteringService: ClusteringService?
-    
+    var monitorService: PowerSenseMonitorService?
+
     init() {
         do {
             modelContainer = try ModelContainer(
@@ -95,6 +96,14 @@ struct PulseApp: App {
 
             // Initialize clustering service with model container
             clusteringService = try ClusteringService(modelContainer: modelContainer)
+
+            // Initialize PowerSense monitor service
+            if let clustering = clusteringService {
+                monitorService = PowerSenseMonitorService(
+                    clusteringService: clustering,
+                    modelContainer: modelContainer
+                )
+            }
         } catch {
             fatalError("Failed to initialize modelContainer: \(error)")
         }
@@ -113,7 +122,11 @@ struct PulseApp: App {
                     ContentView()
                         .environment(sharedLocations)
                         .environment(clusteringService)
+                        .environment(monitorService)
                         .modelContainer(modelContainer)
+                        .task {
+                            await initializePowerSense()
+                        }
                 } else {
                     LoadingView(state: initState)
                 }
@@ -369,6 +382,53 @@ struct PulseApp: App {
         } catch {
             print("Failed to configure TipKit: \(error)")
             return .failure(error)
+        }
+    }
+
+    /**
+     Initialize PowerSense background processing if configured and enabled.
+
+     This method checks if PowerSense is properly configured before initializing
+     the monitor service and starting background event polling.
+     */
+    private func initializePowerSense() async {
+        // Check feature flag (defaults to true if not set)
+        let featureFlagValue = UserDefaults.standard.object(forKey: "enablePowerSenseBackground")
+        let featureFlagEnabled = featureFlagValue as? Bool ?? true  // Default to enabled
+
+        guard featureFlagEnabled else {
+            print("⏭️ PowerSense background processing disabled (feature flag)")
+            return
+        }
+
+        // Check if PowerSense is configured and enabled
+        let config = await Configuration.shared
+        let isConfigured = await config.isPowerSenseConfigured()
+        let isEnabled = await config.isPowerSenseEnabled()
+
+        guard isConfigured && isEnabled else {
+            print("⏭️ Skipping PowerSense initialization: not configured/enabled")
+            return
+        }
+
+        // Ensure monitor service exists
+        guard let service = monitorService else {
+            print("❌ PowerSense monitor service not initialized")
+            return
+        }
+
+        print("🚀 Initializing PowerSense background processing...")
+
+        do {
+            // Initialize service (pre-warm GPU, perform initial clustering)
+            try await service.initialize()
+
+            // Start 60-second event polling
+            service.startMonitoring()
+
+            print("✅ PowerSense background processing started successfully")
+        } catch {
+            print("❌ PowerSense initialization failed: \(error.localizedDescription)")
         }
     }
 }

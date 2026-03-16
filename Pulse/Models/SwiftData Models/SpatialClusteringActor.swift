@@ -28,13 +28,22 @@ import OSLog
 
 // MARK: - Simple Results
 
-struct ClusterResult: Sendable {
+struct ClusterResult: Sendable, Equatable {
     let clusters: [DeviceCluster]
     let totalDevices: Int
     let offlineDevices: Int
     let processingTime: Double
     let totalEvents: Int
     let activeEvents: Int
+
+    static func == (lhs: ClusterResult, rhs: ClusterResult) -> Bool {
+        // Compare counts for change detection (skip deep cluster comparison for performance)
+        return lhs.totalDevices == rhs.totalDevices &&
+               lhs.offlineDevices == rhs.offlineDevices &&
+               lhs.totalEvents == rhs.totalEvents &&
+               lhs.activeEvents == rhs.activeEvents &&
+               lhs.clusters.count == rhs.clusters.count
+    }
 }
 
 struct SimpleCluster: Sendable, Identifiable {
@@ -127,8 +136,18 @@ actor SpatialClusteringActor {
         logger.info("📊 Found \(devices.count) devices, \(offlineCount) offline")
         logger.info("📊 Found \(totalEvents) events, \(activeEvents) active")
 
+        // If no offline devices, return empty result (valid state - all devices online)
         guard offlineCount >= config.clusteringParameters.minPoints else {
-            throw ClusteringError.insufficientData(deviceCount: offlineCount, minimum: config.clusteringParameters.minPoints)
+            let processingTime = CFAbsoluteTimeGetCurrent() - startTime
+            logger.info("✅ No offline devices - returning empty clusters (all devices online)")
+            return ClusterResult(
+                clusters: [],
+                totalDevices: devices.count,
+                offlineDevices: offlineCount,
+                processingTime: processingTime,
+                totalEvents: totalEvents,
+                activeEvents: activeEvents
+            )
         }
 
         // Build GPU spatial index

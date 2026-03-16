@@ -299,15 +299,18 @@ struct PowerSenseEventResource: PowerSenseZabbixResource {
     let methodPath = ""
 
     let hostIds: [String]?
+    let eventIds: [String]?
     let timeFrom: Date?
     let timeTill: Date?
     let limit: Int
 
     init(hostIds: [String]? = nil,
+         eventIds: [String]? = nil,
          timeFrom: Date? = nil,
          timeTill: Date? = nil,
-         limit: Int = 1000) {
+         limit: Int = 25000) {
         self.hostIds = hostIds
+        self.eventIds = eventIds
         self.timeFrom = timeFrom
         self.timeTill = timeTill
         self.limit = limit
@@ -318,8 +321,15 @@ struct PowerSenseEventResource: PowerSenseZabbixResource {
             "output": ["eventid", "source", "object", "objectid", "clock", "ns", "name", "severity", "r_eventid"],
             "selectAcknowledges": "extend",
             "selectTags": "extend",
-            "selectHosts": ["hostid"],
-            "tags": [
+            "selectHosts": ["hostid"]
+        ]
+
+        if let eventIds = eventIds, !eventIds.isEmpty {
+            // Direct event ID lookup - minimal parameters
+            parameters["eventids"] = eventIds
+        } else {
+            // Searching/filtering mode - use tags, sorting, and limit
+            parameters["tags"] = [
                 [
                     "tag": "classification",
                     "value": "device",
@@ -335,12 +345,12 @@ struct PowerSenseEventResource: PowerSenseZabbixResource {
                     "value": "powersense",
                     "operator": 0
                 ]
-            ],
-            "evaltype": 0,
-            "sortfield": ["eventid"],
-            "sortorder": "DESC",
-            "limit": limit
-        ]
+            ]
+            parameters["evaltype"] = 0
+            parameters["sortfield"] = ["eventid"]
+            parameters["sortorder"] = "DESC"
+            parameters["limit"] = limit
+        }
 
         if let hostIds = hostIds, !hostIds.isEmpty {
             parameters["hostids"] = hostIds

@@ -237,7 +237,7 @@ public struct PowerSenseDeviceDTO: SpatialDevice, Sendable {
         self.latitude = model.latitude
         self.longitude = model.longitude
         self.isOffline = model.isOffline
-        self.eventTimestamp = model.lastStatusChange  // Use existing computed property
+        self.eventTimestamp = model.mostRecentEvent?.timestamp  // Most recent event timestamp
     }
 
     /// Direct initializer for testing
