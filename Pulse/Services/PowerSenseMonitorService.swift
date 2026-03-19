@@ -92,7 +92,6 @@ final class PowerSenseMonitorService {
 
     /// Force refresh of cached clusters (manual refresh, background)
     func refreshClusters() async throws {
-        logger.info("🔄 Manually refreshing clusters (background)...")
 
         // Perform heavy work on background actor
         let result = try await backgroundActor.refreshClusters()
@@ -187,7 +186,6 @@ actor BackgroundMonitorActor {
             throw PowerSenseMonitorError.notConfigured
         }
 
-        logger.info("🔧 Refreshing clusters (background thread)...")
         let result = try await clusteringService.clusterDevices()
 
         // Update offline tracking

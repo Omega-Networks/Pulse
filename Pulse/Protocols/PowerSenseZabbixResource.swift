@@ -49,7 +49,6 @@ final class PowerSenseZabbixAPI: @unchecked Sendable {
             throw PowerSenseZabbixError.authenticationFailed("Bearer token not configured")
         }
 
-        logger.debug("Retrieved PowerSense bearer token (length: \(token.count))")
         return token
     }
 
@@ -101,7 +100,6 @@ extension PowerSenseZabbixResource {
             let tokenStartTime = Date()
             let bearerToken = try await PowerSenseZabbixAPI.shared.getBearerToken()
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
-            logger.debug("PowerSense bearer token setup took: \(Date().timeIntervalSince(tokenStartTime))s")
 
             // Prepare request data (no auth field needed with bearer token)
             let requestData: [String: Any] = [
@@ -114,13 +112,10 @@ extension PowerSenseZabbixResource {
             // Serialize request data
             let serializationStartTime = Date()
             request.httpBody = try JSONSerialization.data(withJSONObject: requestData)
-            logger.debug("PowerSense request serialization took: \(Date().timeIntervalSince(serializationStartTime))s")
 
             // Log the request data for debugging
-            if let requestJsonData = try? JSONSerialization.data(withJSONObject: requestData, options: .prettyPrinted),
-               let requestJsonString = String(data: requestJsonData, encoding: .utf8) {
-                logger.debug("PowerSense API request: \(requestJsonString)")
-            }
+            let requestJsonData = try? JSONSerialization.data(withJSONObject: requestData, options: .prettyPrinted)
+               
 
             // Add any additional headers
             if let headers = headers {
@@ -129,7 +124,6 @@ extension PowerSenseZabbixResource {
                 }
             }
 
-            logger.debug("Total PowerSense request generation took: \(Date().timeIntervalSince(startTime))s")
             return request
         }
     }
