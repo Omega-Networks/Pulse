@@ -509,7 +509,7 @@ struct MapView: View {
             logger.info("✅ Displayed \(result.clusters.count) cached clusters in \(String(format: "%.3f", duration))s")
         } else {
             // Fallback: cache invalid or empty, trigger fresh clustering
-            logger.info("⚠️ Cache invalid or empty - requesting fresh clustering")
+            logger.info("Cache invalid or empty - requesting fresh clustering")
             await requestFreshClustering()
         }
     }

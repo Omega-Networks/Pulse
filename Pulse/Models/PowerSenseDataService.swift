@@ -28,13 +28,381 @@ import SwiftData
 import OSLog
 import Combine
 
-/// Simple service for PowerSense data ingestion and SwiftData mapping
-/// Focus: Basic data fetching and storage without complex UI bindings
+// MARK: - Background Sync Actor
+
+/// Performs all heavy PowerSense SwiftData operations off the main thread.
+/// Uses a single ModelContext per operation to ensure consistency between
+/// device and event data (critical for event-device linking).
+actor PowerSenseSyncActor {
+
+    private let modelContainer: ModelContainer
+    private let logger = Logger(subsystem: "powersense", category: "syncActor")
+
+    init(modelContainer: ModelContainer) {
+        self.modelContainer = modelContainer
+    }
+
+    // MARK: - Full Sync
+
+    /// Full sync: devices then events on a SINGLE context.
+    /// Using one context ensures events can find devices saved moments before.
+    func syncAll() async throws -> (deviceCount: Int, eventCount: Int) {
+        let startTime = Date()
+        let modelContext = ModelContext(modelContainer)
+        logger.info("Starting PowerSense data sync (background)")
+
+        let config = await Configuration.shared
+        guard await config.isPowerSenseConfigured() else {
+            throw PowerSenseDataServiceError.notConfigured
+        }
+
+        // Sync devices first, then events — same context so events see devices
+        let deviceCount = try await syncDevices(modelContext: modelContext)
+        let eventCount = try await syncEvents(modelContext: modelContext)
+
+        // Refresh power status cache on devices that have events
+        refreshAllPowerStatus(modelContext: modelContext)
+
+        // Persist cachedIsOffline so other contexts (clustering actor) can see it
+        try modelContext.save()
+
+        let duration = Date().timeIntervalSince(startTime)
+        logger.info("PowerSense sync completed in \(duration)s - \(deviceCount) devices, \(eventCount) events")
+
+        return (deviceCount: deviceCount, eventCount: eventCount)
+    }
+
+    // MARK: - Device Sync
+
+    /// Two-phase device sync: fetch IDs, then batch-fetch details.
+    /// Uses bulk dictionary lookup instead of per-device SwiftData queries.
+    private func syncDevices(modelContext: ModelContext) async throws -> Int {
+        logger.info("Starting two-phase PowerSense device sync (background)")
+
+        // Phase 1: Fetch all host IDs (lightweight API call)
+        let allHostIds = try await fetchAllPowerSenseHostIds()
+        logger.info("Phase 1 complete: Retrieved \(allHostIds.count) host IDs")
+
+        // Pre-fetch ALL existing devices once into a dictionary (O(1) lookup)
+        let allExistingDevices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
+        var existingDevicesById: [String: PowerSenseDevice] = Dictionary(
+            uniqueKeysWithValues: allExistingDevices.map { ($0.deviceId, $0) }
+        )
+        logger.info("Pre-fetched \(existingDevicesById.count) existing devices for bulk lookup")
+
+        // Phase 2: Batch process host details
+        var totalSyncedCount = 0
+        var totalUpdatedCount = 0
+        let batchSize = 1000
+        let totalBatches = (allHostIds.count + batchSize - 1) / batchSize
+
+        for batchIndex in 0..<totalBatches {
+            let startIndex = batchIndex * batchSize
+            let endIndex = min(startIndex + batchSize, allHostIds.count)
+            let batchHostIds = Array(allHostIds[startIndex..<endIndex])
+
+            let deviceProperties = try await fetchPowerSenseDevicesByIds(batchHostIds)
+
+            var batchSyncedCount = 0
+            var batchUpdatedCount = 0
+
+            for properties in deviceProperties {
+                if let existingDevice = existingDevicesById[properties.deviceId] {
+                    updateDevice(existingDevice, with: properties)
+                    batchUpdatedCount += 1
+                } else {
+                    let newDevice = PowerSenseDevice(
+                        deviceId: properties.deviceId,
+                        latitude: properties.privacyLatitude,
+                        longitude: properties.privacyLongitude
+                    )
+                    updateDevice(newDevice, with: properties)
+                    modelContext.insert(newDevice)
+                    existingDevicesById[properties.deviceId] = newDevice
+                    batchSyncedCount += 1
+                }
+            }
+
+            try modelContext.save()
+
+            totalSyncedCount += batchSyncedCount
+            totalUpdatedCount += batchUpdatedCount
+
+            let totalProgress = totalSyncedCount + totalUpdatedCount
+            logger.info("Batch \(batchIndex + 1)/\(totalBatches) complete: \(batchSyncedCount) new, \(batchUpdatedCount) updated. Progress: \(totalProgress)/\(allHostIds.count)")
+        }
+
+        logger.info("Device sync complete: \(totalSyncedCount) new, \(totalUpdatedCount) updated out of \(allHostIds.count) total")
+        return totalSyncedCount + totalUpdatedCount
+    }
+
+    // MARK: - Event Sync
+
+    /// Sync events using sequential batch processing.
+    /// Device lookup is built ONCE and reused across all batches.
+    private func syncEvents(modelContext: ModelContext) async throws -> Int {
+        logger.debug("Syncing PowerSense events (background)")
+
+        let twentyFourHoursAgo = Date().addingTimeInterval(-24 * 3600)
+        let eventProperties = try await fetchPowerSenseEvents(timeFrom: twentyFourHoursAgo)
+        logger.debug("Fetched \(eventProperties.count) PowerSense events from API")
+
+        guard !eventProperties.isEmpty else { return 0 }
+
+        // Build device lookup ONCE for all batches
+        let allDevices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
+        let devicesByName: [String: PowerSenseDevice] = Dictionary(
+            uniqueKeysWithValues: allDevices.compactMap { device -> (String, PowerSenseDevice)? in
+                guard let name = device.name else { return nil }
+                return (name, device)
+            }
+        )
+        logger.debug("Built device lookup: \(devicesByName.count) devices by name")
+
+        // Process in sequential batches
+        if eventProperties.count > 500 {
+            let batchSize = 200
+            let batches = eventProperties.chunked(into: batchSize)
+            var totalProcessed = 0
+
+            logger.info("Processing \(eventProperties.count) events in \(batches.count) sequential batches of \(batchSize)")
+
+            for (index, batch) in batches.enumerated() {
+                logger.debug("Processing batch \(index + 1)/\(batches.count)")
+                let count = try processPowerSenseEvents(batch, modelContext: modelContext, devicesByName: devicesByName)
+                totalProcessed += count
+            }
+
+            logger.info("Batch processing complete: \(totalProcessed) events processed")
+            return totalProcessed
+        } else {
+            return try processPowerSenseEvents(eventProperties, modelContext: modelContext, devicesByName: devicesByName)
+        }
+    }
+
+    /// Bulk process a batch of events. Device lookup is passed in to avoid refetching.
+    private func processPowerSenseEvents(
+        _ eventPropertiesList: [PowerSenseEventProperties],
+        modelContext: ModelContext,
+        devicesByName: [String: PowerSenseDevice]
+    ) throws -> Int {
+        let startTime = Date()
+
+        // Step 1: Bulk fetch existing events
+        let eventIds = eventPropertiesList.map { $0.eventId }
+        let eventIdSet = Set(eventIds)
+        let existingEventsDescriptor = FetchDescriptor<PowerSenseEvent>(
+            predicate: #Predicate<PowerSenseEvent> { event in
+                eventIds.contains(event.eventId)
+            }
+        )
+        let existingEvents = try modelContext.fetch(existingEventsDescriptor)
+        let existingEventsDict = Dictionary(uniqueKeysWithValues:
+            existingEvents.map { ($0.eventId, $0) }
+        )
+
+        // Step 2: Properties lookup
+        let propertiesDict = Dictionary(uniqueKeysWithValues:
+            eventPropertiesList.map { ($0.eventId, $0) }
+        )
+
+        // Step 3: Update existing events, track affected devices
+        var updateCount = 0
+        var affectedDevices: Set<String> = []
+
+        for (eventId, event) in existingEventsDict {
+            if let properties = propertiesDict[eventId] {
+                event.update(with: properties)
+
+                if event.device == nil, let ontName = properties.ontDeviceName {
+                    event.device = devicesByName[ontName]
+                }
+                if let deviceId = event.device?.deviceId {
+                    affectedDevices.insert(deviceId)
+                }
+                updateCount += 1
+            }
+        }
+
+        // Step 4: Insert new events with linking
+        let newEventIds = eventIdSet.subtracting(existingEventsDict.keys)
+        var insertCount = 0
+        var linkedCount = 0
+
+        for eventId in newEventIds {
+            if let properties = propertiesDict[eventId] {
+                let newEvent = PowerSenseEvent(eventId: eventId, timestamp: properties.timestamp)
+                newEvent.update(with: properties)
+
+                if let ontName = properties.ontDeviceName {
+                    newEvent.device = devicesByName[ontName]
+                    if let device = newEvent.device {
+                        linkedCount += 1
+                        affectedDevices.insert(device.deviceId)
+                    }
+                }
+
+                modelContext.insert(newEvent)
+                insertCount += 1
+            }
+        }
+
+        // Step 5: Save
+        try modelContext.save()
+
+        // Step 6: Refresh power status only on affected devices (not all 120k)
+        for (_, device) in devicesByName where affectedDevices.contains(device.deviceId) {
+            device.refreshPowerStatus()
+        }
+
+        let duration = Date().timeIntervalSince(startTime)
+        logger.info("Processed \(eventPropertiesList.count) events in \(String(format: "%.2f", duration))s: \(updateCount) updated, \(insertCount) inserted, \(linkedCount) linked")
+
+        return updateCount + insertCount
+    }
+
+    // MARK: - Power Status Refresh
+
+    /// Refresh cached power status on all devices that have events.
+    /// Called once at the end of a full sync cycle.
+    private func refreshAllPowerStatus(modelContext: ModelContext) {
+        do {
+            let devicesWithEvents = try modelContext.fetch(
+                FetchDescriptor<PowerSenseDevice>(
+                    predicate: #Predicate<PowerSenseDevice> { !$0.events.isEmpty }
+                )
+            )
+            for device in devicesWithEvents {
+                device.refreshPowerStatus()
+            }
+            logger.debug("Refreshed power status on \(devicesWithEvents.count) devices")
+        } catch {
+            logger.error("Failed to refresh power status: \(error)")
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func updateDevice(_ device: PowerSenseDevice, with properties: PowerSenseDeviceProperties) {
+        device.name = properties.name
+        device.isMonitored = properties.isMonitored
+        device.tlc = properties.tlc
+        device.tui = properties.tui
+        device.alarmId = properties.alarmId
+        device.zabbixHostId = properties.deviceId
+        device.lastDataReceived = Date()
+        device.lastUpdated = Date()
+        device.latitude = properties.privacyLatitude
+        device.longitude = properties.privacyLongitude
+    }
+
+    // MARK: - Data Management
+
+    /// Get counts on background context
+    func getDataCounts() throws -> (deviceCount: Int, eventCount: Int) {
+        let modelContext = ModelContext(modelContainer)
+        let deviceCount = try modelContext.fetchCount(FetchDescriptor<PowerSenseDevice>())
+        let eventCount = try modelContext.fetchCount(FetchDescriptor<PowerSenseEvent>())
+        return (deviceCount: deviceCount, eventCount: eventCount)
+    }
+
+    /// Clear only PowerSense events (keeps devices intact)
+    func clearEvents() throws {
+        let modelContext = ModelContext(modelContainer)
+        logger.info("Clearing all PowerSense events")
+
+        let events = try modelContext.fetch(FetchDescriptor<PowerSenseEvent>())
+        for event in events { modelContext.delete(event) }
+
+        // Reset cached power status on all devices since events are gone
+        let devices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
+        for device in devices {
+            device.cachedIsOffline = nil
+            device.cachedLastStatusChange = nil
+        }
+
+        try modelContext.save()
+        logger.info("Cleared \(events.count) PowerSense events, reset power status on \(devices.count) devices")
+    }
+
+    /// Clear all PowerSense data (devices + events)
+    func clearAllData() throws {
+        let modelContext = ModelContext(modelContainer)
+        logger.info("Clearing all PowerSense data")
+
+        let events = try modelContext.fetch(FetchDescriptor<PowerSenseEvent>())
+        for event in events { modelContext.delete(event) }
+
+        let devices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
+        for device in devices { modelContext.delete(device) }
+
+        try modelContext.save()
+        logger.info("Cleared \(events.count) events and \(devices.count) devices")
+    }
+
+    /// Sync problems and update resolutions on background context
+    func syncProblems() async throws -> (activeCount: Int, resolvedCount: Int) {
+        let modelContext = ModelContext(modelContainer)
+        logger.info("Syncing PowerSense problems (background)")
+
+        let config = await Configuration.shared
+        guard await config.isPowerSenseConfigured() else {
+            throw PowerSenseDataServiceError.notConfigured
+        }
+
+        let problems = try await fetchPowerSenseProblems()
+        let activeProblemIds = Set(problems.map { $0.eventId })
+
+        let existingEvents = try modelContext.fetch(FetchDescriptor<PowerSenseEvent>())
+        let existingEventsDict = Dictionary(uniqueKeysWithValues:
+            existingEvents.map { ($0.eventId, $0) }
+        )
+
+        var activeCount = 0
+        var resolvedCount = 0
+
+        for event in existingEvents {
+            if activeProblemIds.contains(event.eventId) {
+                if event.resolvedAt != nil { event.resolvedAt = nil }
+                activeCount += 1
+            } else {
+                if event.resolvedAt == nil {
+                    event.resolve()
+                    resolvedCount += 1
+                }
+            }
+        }
+
+        let newProblems = problems.filter { !existingEventsDict.keys.contains($0.eventId) }
+
+        if !newProblems.isEmpty {
+            // Build device lookup for event linking
+            let allDevices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
+            let devicesByName: [String: PowerSenseDevice] = Dictionary(
+                uniqueKeysWithValues: allDevices.compactMap { device -> (String, PowerSenseDevice)? in
+                    guard let name = device.name else { return nil }
+                    return (name, device)
+                }
+            )
+            let newEventCount = try processPowerSenseEvents(newProblems, modelContext: modelContext, devicesByName: devicesByName)
+            activeCount += newEventCount
+        }
+
+        try modelContext.save()
+
+        logger.info("Problem sync: \(activeCount) active, \(resolvedCount) resolved, \(newProblems.count) new")
+        return (activeCount: activeCount, resolvedCount: resolvedCount)
+    }
+}
+
+// MARK: - UI-Facing Service (MainActor)
+
+/// Thin MainActor wrapper for UI state. All heavy work delegates to PowerSenseSyncActor.
 @MainActor
 final class PowerSenseDataService: ObservableObject {
 
     private let logger = Logger(subsystem: "powersense", category: "dataService")
-    private let modelContext: ModelContext
+    private let syncActor: PowerSenseSyncActor
 
     // MARK: - Published State for UI
     @Published private(set) var isCurrentlySyncing = false
@@ -58,488 +426,35 @@ final class PowerSenseDataService: ObservableObject {
     }
 
     // MARK: - Initialization
+
     init(modelContext: ModelContext) {
-        self.modelContext = modelContext
+        self.syncActor = PowerSenseSyncActor(modelContainer: modelContext.container)
         logger.debug("PowerSenseDataService initialized")
 
-        // Initialize UI state
-        Task {
-            await updateUIState()
-        }
+        Task { await updateUIState() }
     }
 
-    // MARK: - Basic Data Sync
+    init(modelContainer: ModelContainer) {
+        self.syncActor = PowerSenseSyncActor(modelContainer: modelContainer)
+        logger.debug("PowerSenseDataService initialized")
 
-    /// Simple sync method - just fetch and store data
+        Task { await updateUIState() }
+    }
+
+    // MARK: - Sync
+
     func syncPowerSenseData() async throws -> (deviceCount: Int, eventCount: Int) {
         guard !isCurrentlySyncing else {
-            logger.debug("Sync already in progress, skipping")
             throw PowerSenseDataServiceError.syncInProgress
         }
 
         isCurrentlySyncing = true
+        syncStatus = .syncing
         defer { isCurrentlySyncing = false }
 
-        let startTime = Date()
-        logger.info("Starting PowerSense data sync")
-
-        // Check configuration
-        let config = await Configuration.shared
-        guard await config.isPowerSenseConfigured() else {
-            throw PowerSenseDataServiceError.notConfigured
-        }
-
-        // Sync devices first
-        let deviceCount = try await syncDevices()
-
-        // Then sync events
-        let eventCount = try await syncEvents()
-
-        let duration = Date().timeIntervalSince(startTime)
-        logger.info("PowerSense sync completed in \(duration)s - \(deviceCount) devices, \(eventCount) events")
-
-        return (deviceCount: deviceCount, eventCount: eventCount)
+        return try await syncActor.syncAll()
     }
 
-    /// Sync PowerSense devices using two-phase approach
-    private func syncDevices() async throws -> Int {
-        logger.info("Starting two-phase PowerSense device sync")
-
-        // Phase 1: Fetch all host IDs (lightweight call)
-        logger.info("Phase 1: Fetching all PowerSense host IDs...")
-        let allHostIds = try await fetchAllPowerSenseHostIds()
-        logger.info("Phase 1 complete: Retrieved \(allHostIds.count) host IDs (range: \(allHostIds.first ?? "none") to \(allHostIds.last ?? "none"))")
-
-        // Verify we got the expected count
-        let expectedCount = try await countPowerSenseDevices()
-        if allHostIds.count != expectedCount {
-            logger.warning("Host ID count mismatch: got \(allHostIds.count), expected \(expectedCount)")
-        }
-
-        // Phase 2: Batch process host details using exact host ID arrays
-        var totalSyncedCount = 0
-        var totalUpdatedCount = 0
-        let batchSize = 1000  // Process 1000 host IDs per batch
-        let totalBatches = (allHostIds.count + batchSize - 1) / batchSize
-
-        logger.info("Phase 2: Processing \(totalBatches) batches of \(batchSize) devices each...")
-
-        for batchIndex in 0..<totalBatches {
-            let startIndex = batchIndex * batchSize
-            let endIndex = min(startIndex + batchSize, allHostIds.count)
-            let batchHostIds = Array(allHostIds[startIndex..<endIndex])
-
-            logger.debug("Batch \(batchIndex + 1)/\(totalBatches): Processing host IDs \(startIndex) to \(endIndex - 1)")
-
-            // Fetch full device details for this batch of host IDs
-            let deviceProperties = try await fetchPowerSenseDevicesByIds(batchHostIds)
-            logger.info("Batch \(batchIndex + 1): Fetched details for \(deviceProperties.count) devices")
-
-            var batchSyncedCount = 0
-            var batchUpdatedCount = 0
-
-            for properties in deviceProperties {
-                // Check if device already exists
-                let deviceId = properties.deviceId
-                let predicate = #Predicate<PowerSenseDevice> { device in
-                    device.deviceId == deviceId
-                }
-
-                var descriptor = FetchDescriptor(predicate: predicate)
-                descriptor.fetchLimit = 1
-                let existingDevices = try modelContext.fetch(descriptor)
-
-                if let existingDevice = existingDevices.first {
-                    // Update existing device
-                    updateDevice(existingDevice, with: properties)
-                    batchUpdatedCount += 1
-                } else {
-                    // Create new device
-                    let newDevice = PowerSenseDevice(
-                        deviceId: properties.deviceId,
-                        latitude: properties.privacyLatitude,
-                        longitude: properties.privacyLongitude
-                    )
-                    updateDevice(newDevice, with: properties)
-                    modelContext.insert(newDevice)
-                    batchSyncedCount += 1
-                }
-            }
-
-            // Save batch progress
-            try modelContext.save()
-
-            totalSyncedCount += batchSyncedCount
-            totalUpdatedCount += batchUpdatedCount
-
-            let totalProgress = totalSyncedCount + totalUpdatedCount
-            logger.info("Batch \(batchIndex + 1)/\(totalBatches) complete: \(batchSyncedCount) new, \(batchUpdatedCount) updated. Total progress: \(totalProgress)/\(allHostIds.count)")
-        }
-
-        logger.info("Two-phase device sync complete: \(totalSyncedCount) new devices, \(totalUpdatedCount) updated devices out of \(allHostIds.count) total")
-        return totalSyncedCount + totalUpdatedCount
-    }
-
-    /// Bulk process PowerSense events (optimized version)
-    private func processPowerSenseEvents(_ eventPropertiesList: [PowerSenseEventProperties]) async throws -> Int {
-        let logger = Logger(subsystem: "powersense", category: "bulkProcessing")
-
-        logger.debug("🚀 Starting bulk processing of \(eventPropertiesList.count) PowerSense events")
-        let startTime = Date()
-
-        // Step 1: Bulk fetch existing events using eventIds array
-        let eventIds = eventPropertiesList.map { $0.eventId }
-        let existingEventsDescriptor = FetchDescriptor<PowerSenseEvent>(
-            predicate: #Predicate<PowerSenseEvent> { event in
-                eventIds.contains(event.eventId)
-            }
-        )
-        let existingEvents = try modelContext.fetch(existingEventsDescriptor)
-        let existingEventsDict = Dictionary(uniqueKeysWithValues:
-            existingEvents.map { ($0.eventId, $0) }
-        )
-
-        logger.debug("📊 Fetched \(existingEvents.count) existing events in bulk")
-
-        // Step 2: Bulk fetch all PowerSense devices for manual linking
-        let devicesDescriptor = FetchDescriptor<PowerSenseDevice>()
-        let allDevices = try modelContext.fetch(devicesDescriptor)
-
-        logger.debug("📊 Fetched \(allDevices.count) PowerSense devices for manual linking")
-
-        // Step 3: Create properties lookup dictionary
-        let propertiesDict = Dictionary(uniqueKeysWithValues:
-            eventPropertiesList.map { ($0.eventId, $0) }
-        )
-
-        // Step 4: Bulk process updates
-        var updateCount = 0
-        for (eventId, event) in existingEventsDict {
-            if let properties = propertiesDict[eventId] {
-                event.update(with: properties)
-
-                // Update device linking if not already linked (using manual linking)
-                if event.device == nil {
-                    await linkEventToDevice(event, properties: properties)
-                    if event.device != nil {
-                        logger.debug("🔗 Linked existing event \(eventId) to device via manual linking")
-                    }
-                }
-                updateCount += 1
-            }
-        }
-
-        logger.debug("✅ Updated \(updateCount) existing events")
-
-        // Step 5: Bulk process inserts with manual linking
-        let newEventIds = Set(eventIds).subtracting(existingEventsDict.keys)
-        var insertCount = 0
-        var linkedCount = 0
-
-        for eventId in newEventIds {
-            if let properties = propertiesDict[eventId] {
-                let newEvent = PowerSenseEvent(eventId: eventId, timestamp: properties.timestamp)
-                newEvent.update(with: properties)
-
-                // Use reliable manual linking for all new events
-                await linkEventToDevice(newEvent, properties: properties)
-                if newEvent.device != nil {
-                    linkedCount += 1
-                }
-
-                modelContext.insert(newEvent)
-                insertCount += 1
-            }
-        }
-
-        logger.debug("✅ Inserted \(insertCount) new events")
-        logger.debug("🔗 Manual device linking: \(linkedCount) successful links")
-
-        // Step 6: Single context save
-        try modelContext.save()
-
-        let duration = Date().timeIntervalSince(startTime)
-        logger.info("""
-        🚀 Bulk PowerSense event processing completed in \(String(format: "%.2f", duration))s:
-        - Processed: \(eventPropertiesList.count) events
-        - Updated: \(updateCount) events
-        - Inserted: \(insertCount) events
-        - Manual links: \(linkedCount)/\(insertCount) successful
-        - Performance: \(String(format: "%.0f", Double(eventPropertiesList.count) / duration)) events/sec
-        """)
-
-        return updateCount + insertCount
-    }
-
-    /// Sync PowerSense events with concurrent batch processing
-    private func syncEvents() async throws -> Int {
-        logger.debug("Syncing PowerSense events with concurrent batch processing")
-
-        // Fetch events from last 24 hours
-        let twentyFourHoursAgo = Date().addingTimeInterval(-24 * 3600)
-        let eventProperties = try await fetchPowerSenseEvents(timeFrom: twentyFourHoursAgo)
-        logger.debug("Fetched \(eventProperties.count) PowerSense events from API")
-
-        // If we have many events, process in concurrent batches
-        if eventProperties.count > 500 {
-            return try await processPowerSenseEventsWithBatching(eventProperties)
-        } else {
-            // Use standard bulk processing for smaller datasets
-            return try await processPowerSenseEvents(eventProperties)
-        }
-    }
-
-    /// Process PowerSense events with concurrent batching for large datasets
-    private func processPowerSenseEventsWithBatching(_ eventProperties: [PowerSenseEventProperties]) async throws -> Int {
-        let logger = Logger(subsystem: "powersense", category: "batchProcessing")
-        let batchSize = 200
-        let batches = eventProperties.chunked(into: batchSize)
-
-        logger.info("🚀 Processing \(eventProperties.count) events in \(batches.count) concurrent batches of \(batchSize)")
-
-        return try await withThrowingTaskGroup(of: Int.self) { group in
-            for (index, batch) in batches.enumerated() {
-                group.addTask {
-                    self.logger.debug("Processing batch \(index + 1)/\(batches.count)")
-                    return try await self.processPowerSenseEvents(batch)
-                }
-            }
-
-            var totalProcessed = 0
-            for try await batchCount in group {
-                totalProcessed += batchCount
-            }
-
-            logger.info("🎉 Concurrent batch processing complete: \(totalProcessed) events processed")
-            return totalProcessed
-        }
-    }
-
-    /// Update a PowerSenseDevice with properties from the API
-    private func updateDevice(_ device: PowerSenseDevice, with properties: PowerSenseDeviceProperties) {
-        logger.info("🔧 Updating device ID: \(properties.deviceId), Name: '\(properties.name)'")
-
-        device.name = properties.name
-        device.isMonitored = properties.isMonitored
-        device.tlc = properties.tlc
-        device.tui = properties.tui
-        device.alarmId = properties.alarmId
-        device.zabbixHostId = properties.deviceId
-        device.lastDataReceived = Date()
-        device.lastUpdated = Date()
-
-        // Update location with privacy-safe coordinates
-        device.latitude = properties.privacyLatitude
-        device.longitude = properties.privacyLongitude
-
-        logger.info("🔧 Device updated - Final name: '\(device.name ?? "nil")', ID: \(device.deviceId)")
-    }
-
-    /// Link PowerSense event to device using ONT device name extraction
-    private func linkEventToDevice(_ event: PowerSenseEvent, properties: PowerSenseEventProperties) async {
-        logger.debug("🔗 Starting linkEventToDevice for event \(properties.eventId)")
-
-        // Extract ONT device name from event name
-        guard let ontDeviceName = properties.ontDeviceName else {
-            logger.debug("🔗 ❌ No ONT device name found in event: '\(properties.name)'")
-            return
-        }
-
-        logger.debug("🔗 ✅ Extracted ONT device name '\(ontDeviceName)' from event: '\(properties.name)'")
-
-        // Find matching PowerSense device by name
-        let predicate = #Predicate<PowerSenseDevice> { device in
-            device.name == ontDeviceName
-        }
-
-        do {
-            var descriptor = FetchDescriptor(predicate: predicate)
-            descriptor.fetchLimit = 1
-            let matchingDevices = try modelContext.fetch(descriptor)
-
-            if let matchingDevice = matchingDevices.first {
-                event.device = matchingDevice
-                logger.debug("🔗 ✅ Successfully linked event \(properties.eventId) to device '\(matchingDevice.name ?? "nil")'")
-            } else {
-                logger.debug("🔗 ❌ No PowerSense device found with name '\(ontDeviceName)' for event \(properties.eventId)")
-            }
-        } catch {
-            logger.error("🔗 ❌ Error linking event to device: \(error)")
-        }
-    }
-
-    // MARK: - Simple Data Management
-
-    /// Get basic counts of stored data
-    func getDataCounts() async throws -> (deviceCount: Int, eventCount: Int) {
-        let deviceDescriptor = FetchDescriptor<PowerSenseDevice>()
-        let eventDescriptor = FetchDescriptor<PowerSenseEvent>()
-
-        let deviceCount = try modelContext.fetchCount(deviceDescriptor)
-        let eventCount = try modelContext.fetchCount(eventDescriptor)
-
-        return (deviceCount: deviceCount, eventCount: eventCount)
-    }
-
-    /// Clear all PowerSense data from local storage
-    func clearAllData() async throws {
-        logger.info("Clearing all PowerSense data")
-
-        // Delete all events
-        let eventDescriptor = FetchDescriptor<PowerSenseEvent>()
-        let events = try modelContext.fetch(eventDescriptor)
-        for event in events {
-            modelContext.delete(event)
-        }
-
-        // Delete all devices
-        let deviceDescriptor = FetchDescriptor<PowerSenseDevice>()
-        let devices = try modelContext.fetch(deviceDescriptor)
-        for device in devices {
-            modelContext.delete(device)
-        }
-
-        try modelContext.save()
-        logger.info("Cleared all PowerSense data")
-    }
-
-    /// Test method to fetch and process events only (no device sync)
-    func testEventFetching() async -> (success: Bool, message: String, eventCount: Int) {
-        do {
-            logger.info("Testing PowerSense event fetching only...")
-
-            // Check configuration first
-            let config = await Configuration.shared
-            guard await config.isPowerSenseConfigured() else {
-                return (false, "PowerSense not configured", 0)
-            }
-
-            // Sync events only (no devices)
-            let eventCount = try await syncEvents()
-
-            return (true, "Successfully fetched and processed PowerSense events", eventCount)
-
-        } catch {
-            logger.error("PowerSense event test failed: \(error)")
-            return (false, "Event test failed: \(error.localizedDescription)", 0)
-        }
-    }
-
-    /// Test method to fetch active problems and update event resolutions (using bulk processing)
-    func testProblemsFetching() async -> (success: Bool, message: String, activeCount: Int, resolvedCount: Int) {
-        do {
-            logger.info("🔍 Testing PowerSense problems fetching with bulk processing...")
-
-            // Check configuration first
-            let config = await Configuration.shared
-            guard await config.isPowerSenseConfigured() else {
-                return (false, "PowerSense not configured", 0, 0)
-            }
-
-            // Fetch current problems from API
-            let problems = try await fetchPowerSenseProblems()
-            logger.info("📊 Found \(problems.count) active problems")
-
-            // Get active problem IDs
-            let activeProblemIds = Set(problems.map { $0.eventId })
-
-            // Bulk fetch all existing events
-            let allEventsDescriptor = FetchDescriptor<PowerSenseEvent>()
-            let existingEvents = try modelContext.fetch(allEventsDescriptor)
-            let existingEventsDict = Dictionary(uniqueKeysWithValues:
-                existingEvents.map { ($0.eventId, $0) }
-            )
-
-            logger.debug("📊 Fetched \(existingEvents.count) existing events for resolution checking")
-
-            var activeCount = 0
-            var resolvedCount = 0
-
-            // Bulk update event resolutions
-            for event in existingEvents {
-                if activeProblemIds.contains(event.eventId) {
-                    // Event is still active
-                    if event.resolvedAt != nil {
-                        event.resolvedAt = nil  // Mark as active again
-                        logger.debug("🔴 Reactivated event \(event.eventId)")
-                    }
-                    activeCount += 1
-                } else {
-                    // Event is not in active problems, so it's resolved
-                    if event.resolvedAt == nil {
-                        event.resolve()  // Mark as resolved
-                        logger.debug("✅ Resolved event \(event.eventId)")
-                        resolvedCount += 1
-                    }
-                }
-            }
-
-            // Find new problems not in our database
-            let newProblems = problems.filter { problem in
-                !existingEventsDict.keys.contains(problem.eventId)
-            }
-
-            logger.debug("📥 Found \(newProblems.count) new problems to add")
-
-            if !newProblems.isEmpty {
-                // Use bulk processing for new problems
-                let newEventCount = try await processPowerSenseEvents(newProblems)
-                activeCount += newEventCount
-                logger.debug("📥 Added \(newEventCount) new active problems via bulk processing")
-            }
-
-            try modelContext.save()
-
-            logger.info("""
-            🔍 Problem resolution test completed:
-            - Active problems: \(activeCount)
-            - Resolved events: \(resolvedCount)
-            - New problems added: \(newProblems.count)
-            """)
-
-            return (true, "Successfully synced problems with bulk processing", activeCount, resolvedCount)
-
-        } catch {
-            logger.error("PowerSense problems test failed: \(error)")
-            return (false, "Problems test failed: \(error.localizedDescription)", 0, 0)
-        }
-    }
-
-    /// Simple test method to verify PowerSense data ingestion (full sync)
-    func testDataIngestion() async -> (success: Bool, message: String, deviceCount: Int, eventCount: Int) {
-        do {
-            logger.info("Testing PowerSense data ingestion...")
-
-            // Check configuration first
-            let config = await Configuration.shared
-            guard await config.isPowerSenseConfigured() else {
-                return (false, "PowerSense not configured", 0, 0)
-            }
-
-            // Try to sync data
-            let (deviceCount, eventCount) = try await syncPowerSenseData()
-
-            return (true, "Successfully synced PowerSense data", deviceCount, eventCount)
-
-        } catch {
-            logger.error("PowerSense test failed: \(error)")
-            return (false, "Test failed: \(error.localizedDescription)", 0, 0)
-        }
-    }
-
-    // MARK: - UI Interface Methods
-
-    /// Update UI state from current data
-    private func updateUIState() async {
-        let config = await Configuration.shared
-        self.isEnabled = await config.isPowerSenseEnabled()
-
-        let counts = try? await getDataCounts()
-        self.deviceCount = counts?.deviceCount ?? 0
-        self.eventCount = counts?.eventCount ?? 0
-    }
-
-    /// Perform sync for UI
     func performSync() async {
         syncStatus = .syncing
         do {
@@ -554,28 +469,111 @@ final class PowerSenseDataService: ObservableObject {
         }
     }
 
-    /// Enable PowerSense
+    // MARK: - Data Management
+
+    func clearAllPowerSenseEvents(monitorService: PowerSenseMonitorService? = nil) async {
+        // Pause polling to prevent race with background event insertion
+        await monitorService?.pauseForMaintenance()
+
+        do {
+            try await syncActor.clearEvents()
+            await updateUIState()
+            logger.info("PowerSense events cleared successfully")
+        } catch {
+            logger.error("Clear events failed: \(error.localizedDescription)")
+        }
+
+        // Resume polling after clear completes
+        await monitorService?.resumeAfterMaintenance()
+    }
+
+    func clearAllPowerSenseData() async {
+        do {
+            try await syncActor.clearAllData()
+            await updateUIState()
+        } catch {
+            logger.error("Clear data failed: \(error)")
+        }
+    }
+
+    func getDataCounts() async throws -> (deviceCount: Int, eventCount: Int) {
+        return try await syncActor.getDataCounts()
+    }
+
+    func clearAllData() async throws {
+        try await syncActor.clearAllData()
+    }
+
+    // MARK: - Configuration
+
     func enable() async {
         let config = await Configuration.shared
         await config.setPowerSenseEnabled(true)
         await updateUIState()
     }
 
-    /// Disable PowerSense
     func disable() async {
         let config = await Configuration.shared
         await config.setPowerSenseEnabled(false)
         await updateUIState()
     }
 
-    /// Clear all data and update UI
-    func clearAllPowerSenseData() async {
+    // MARK: - Test Methods
+
+    func testEventFetching() async -> (success: Bool, message: String, eventCount: Int) {
         do {
-            try await clearAllData()
-            await updateUIState()
+            let config = await Configuration.shared
+            guard await config.isPowerSenseConfigured() else {
+                return (false, "PowerSense not configured", 0)
+            }
+
+            let (_, eventCount) = try await syncActor.syncAll()
+            return (true, "Successfully fetched and processed PowerSense events", eventCount)
         } catch {
-            logger.error("Clear data failed: \(error)")
+            logger.error("PowerSense event test failed: \(error)")
+            return (false, "Event test failed: \(error.localizedDescription)", 0)
         }
+    }
+
+    func testProblemsFetching() async -> (success: Bool, message: String, activeCount: Int, resolvedCount: Int) {
+        do {
+            let config = await Configuration.shared
+            guard await config.isPowerSenseConfigured() else {
+                return (false, "PowerSense not configured", 0, 0)
+            }
+
+            let (activeCount, resolvedCount) = try await syncActor.syncProblems()
+            return (true, "Successfully synced problems", activeCount, resolvedCount)
+        } catch {
+            logger.error("PowerSense problems test failed: \(error)")
+            return (false, "Problems test failed: \(error.localizedDescription)", 0, 0)
+        }
+    }
+
+    func testDataIngestion() async -> (success: Bool, message: String, deviceCount: Int, eventCount: Int) {
+        do {
+            let config = await Configuration.shared
+            guard await config.isPowerSenseConfigured() else {
+                return (false, "PowerSense not configured", 0, 0)
+            }
+
+            let (deviceCount, eventCount) = try await syncPowerSenseData()
+            return (true, "Successfully synced PowerSense data", deviceCount, eventCount)
+        } catch {
+            logger.error("PowerSense test failed: \(error)")
+            return (false, "Test failed: \(error.localizedDescription)", 0, 0)
+        }
+    }
+
+    // MARK: - Private
+
+    private func updateUIState() async {
+        let config = await Configuration.shared
+        self.isEnabled = await config.isPowerSenseEnabled()
+
+        let counts = try? await syncActor.getDataCounts()
+        self.deviceCount = counts?.deviceCount ?? 0
+        self.eventCount = counts?.eventCount ?? 0
     }
 }
 
@@ -597,4 +595,3 @@ enum PowerSenseDataServiceError: LocalizedError {
         }
     }
 }
-

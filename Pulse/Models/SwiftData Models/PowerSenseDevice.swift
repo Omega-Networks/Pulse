@@ -71,27 +71,47 @@ final class PowerSenseDevice : SpatialDevice {
     /// Zabbix host ID for this device
     var zabbixHostId: String?
 
+    // MARK: - Cached Power Status
+
+    /// Cached offline status — updated when events change via refreshPowerStatus()
+    var cachedIsOffline: Bool?
+
+    /// Cached last status change timestamp
+    var cachedLastStatusChange: Date?
+
     // MARK: - Data Quality Properties
 
-    /// Get the most recent event by eventId (highest ID = most recent)
+    /// Get the most recent event by eventId (highest ID = most recent).
+    /// Prefer using cached properties (cachedIsOffline, cachedLastStatusChange) in hot paths.
     var mostRecentEvent: PowerSenseEvent? {
         events.max(by: { Int($0.eventId) ?? 0 < Int($1.eventId) ?? 0 })
     }
 
-    /// Device is offline if the most recent event is active (true = offline, false = online, nil = unknown)
+    /// Refresh cached power status from events. Call after event sync completes.
+    func refreshPowerStatus() {
+        let latest = mostRecentEvent
+        cachedIsOffline = latest?.isActive
+        cachedLastStatusChange = latest?.timestamp
+    }
+
+    /// Device is offline if the most recent event is active (true = offline, false = online, nil = unknown).
+    /// Falls back to computing from events when cache hasn't been populated yet.
     var isOffline: Bool? {
+        if let cached = cachedIsOffline { return cached }
         guard let latestEvent = mostRecentEvent else { return nil }
         return latestEvent.isActive
     }
 
-    /// Last time power status changed (from most recent event)
+    /// Last time power status changed (from most recent event).
+    /// Falls back to computing from events when cache hasn't been populated yet.
     var lastStatusChange: Date? {
+        if let cached = cachedLastStatusChange { return cached }
         return mostRecentEvent?.timestamp
     }
 
     /// Whether we have valid power status data for this device
     var hasPowerStatusData: Bool {
-        mostRecentEvent != nil
+        cachedIsOffline != nil || !events.isEmpty
     }
 
     /// Last time we received any data about this device
@@ -128,38 +148,46 @@ final class PowerSenseDevice : SpatialDevice {
         self.deviceId = deviceId
         self.latitude = latitude
         self.longitude = longitude
-        self.updateGridCoordinates()
+        self.updateGridCoordinatesFromLatLon()
     }
 
     // MARK: - Privacy and Aggregation Methods
 
-    //TODO: - URGENT THIS RUNS FOR EACH DEVICE EVERY TIME AN OPERATION IS DONE ON THE DEVICE. HIGH CPU/GPU and POWERDRAW
-    /// Update grid coordinates based on current location
-    /// Uses 10m x 10m grid cells with accurate projected coordinates
-    private func updateGridCoordinates() {
-        // Use proper coordinate transformation for accurate grid positioning
-        // Grid cells are 10m x 10m in projected coordinates
+    /// Lightweight grid coordinate calculation using simple lat/lon scaling.
+    /// Accurate projection (NZTM2000) is deferred to the clustering phase
+    /// where it can be batched efficiently on the GPU.
+    private func updateGridCoordinatesFromLatLon() {
         guard latitude != 0.0, longitude != 0.0 else {
             self.gridX = 0
             self.gridY = 0
             return
         }
 
-        // Transform to NZTM2000 projected coordinates for accurate distance calculations
-        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-        do {
-            let transformer = try CoordinateTransformer(projectionSystem: .nztm2000)
-            let projected = transformer.transform(coordinate)
+        // Approximate 10m grid cells using degree-to-metre scaling at NZ latitudes (~-41 to -46)
+        // 1 degree latitude  ≈ 111,320 m
+        // 1 degree longitude ≈ 111,320 * cos(lat) m  (≈ 78,000–84,000 m for NZ)
+        let gridCellSize: Double = 10.0
+        let metersPerDegreeLat = 111_320.0
+        let metersPerDegreeLon = 111_320.0 * cos(latitude * .pi / 180.0)
 
-            // Calculate grid coordinates with 10m cell size
-            let gridCellSize: Double = 10.0 // 10 meter grid cells
-            self.gridX = Int(projected.x / gridCellSize)
-            self.gridY = Int(projected.y / gridCellSize)
-        } catch {
-            // Fallback to center coordinates if transformation fails
+        self.gridX = Int((longitude * metersPerDegreeLon) / gridCellSize)
+        self.gridY = Int((latitude * metersPerDegreeLat) / gridCellSize)
+    }
+
+    /// Update grid coordinates with accurate NZTM2000 projection.
+    /// Call this from clustering phase only — not during init or sync.
+    func updateGridCoordinatesProjected(using transformer: CoordinateTransformer) {
+        guard latitude != 0.0, longitude != 0.0 else {
             self.gridX = 0
             self.gridY = 0
+            return
         }
+
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        let projected = transformer.transform(coordinate)
+        let gridCellSize: Double = 10.0
+        self.gridX = Int(projected.x / gridCellSize)
+        self.gridY = Int(projected.y / gridCellSize)
     }
 
     /// Get CLLocation for mapping/distance calculations

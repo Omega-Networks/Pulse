@@ -220,6 +220,12 @@ actor SpatialClusteringActor {
         descriptor.fetchLimit = config.clusteringParameters.maxDevices
 
         let devices = try modelContext.fetch(descriptor)
+
+        // Warm up power status cache for devices that haven't been cached yet
+        for device in devices where device.cachedIsOffline == nil && !device.events.isEmpty {
+            device.refreshPowerStatus()
+        }
+
         dtoCache = devices.map { $0.toDTO() }
         logger.debug("Fetched and cached \(devices.count) device DTOs")
         return dtoCache

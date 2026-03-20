@@ -595,7 +595,7 @@ struct SpatialClusteringTestView: View {
             // For now, we'll simulate this with a realistic dataset
             do {
                 await MainActor.run {
-                    testOutput += "⚠️  Real PowerSense data integration not yet implemented.\n"
+                    testOutput += " Real PowerSense data integration not yet implemented.\n"
                     testOutput += "Running simulation with production-scale dataset instead...\n\n"
                 }
 

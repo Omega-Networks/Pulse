@@ -310,7 +310,7 @@ public actor GPUSpatialIndexManager<SpatialDeviceType: SpatialDevice & Sendable>
         metrics.indexBuildTime = buildTime
         metrics.memoryUsage = estimateMemoryUsage()
 
-        logger.info("✅ GPU spatial index built in \(String(format: "%.3f", buildTime))s")
+        logger.info("GPU spatial index built in \(String(format: "%.3f", buildTime))s")
     }
 
     // MARK: - Neighbor Search (GPU Results)

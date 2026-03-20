@@ -11,7 +11,6 @@
 		067FD0852ECC67B700146D44 /* MockSpatialTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD07C2ECC67B700146D44 /* MockSpatialTypes.swift */; };
 		067FD0902ECC6A2F00146D44 /* ConcaveHull.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD0872ECC6A2F00146D44 /* ConcaveHull.swift */; };
 		067FD0932ECC6A2F00146D44 /* CoordinateTransformer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD08B2ECC6A2F00146D44 /* CoordinateTransformer.swift */; };
-		067FD0942ECC6A2F00146D44 /* CoordinateTransformerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD08C2ECC6A2F00146D44 /* CoordinateTransformerManager.swift */; };
 		067FD0952ECC6A2F00146D44 /* ProjectionSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD08D2ECC6A2F00146D44 /* ProjectionSystem.swift */; };
 		067FD09C2ECC6D1600146D44 /* Array.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD09B2ECC6D1600146D44 /* Array.swift */; };
 		067FD09E2ECC6D5500146D44 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD09D2ECC6D5500146D44 /* Logger.swift */; };
@@ -128,7 +127,6 @@
 		C97DEDB52E816E4F002898A7 /* PowerSenseToolbarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 762AEEBA6971484482E4B4C0 /* PowerSenseToolbarButton.swift */; };
 		C97DEDBB2E822BF5002898A7 /* MapPolygonDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */; };
 		C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */; };
-		C9951ED02E8815380025C136 /* SpatialClusteringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */; };
 		C9951ED62E8BF2380025C136 /* ClusterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */; };
 		C9951EDC2E8CDA0F0025C136 /* PowerSenseMonitorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951EDA2E8CDA0F0025C136 /* PowerSenseMonitorService.swift */; };
 		C9BF5DA22E5B223900FD1AC3 /* PulseAppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */; };
@@ -157,7 +155,6 @@
 		067FD07C2ECC67B700146D44 /* MockSpatialTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSpatialTypes.swift; sourceTree = "<group>"; };
 		067FD0872ECC6A2F00146D44 /* ConcaveHull.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConcaveHull.swift; sourceTree = "<group>"; };
 		067FD08B2ECC6A2F00146D44 /* CoordinateTransformer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateTransformer.swift; sourceTree = "<group>"; };
-		067FD08C2ECC6A2F00146D44 /* CoordinateTransformerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateTransformerManager.swift; sourceTree = "<group>"; };
 		067FD08D2ECC6A2F00146D44 /* ProjectionSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectionSystem.swift; sourceTree = "<group>"; };
 		067FD09B2ECC6D1600146D44 /* Array.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Array.swift; sourceTree = "<group>"; };
 		067FD09D2ECC6D5500146D44 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
@@ -278,7 +275,6 @@
 		C97C4F3D2ACB7CEC009F3795 /* PreviewTrait.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewTrait.swift; sourceTree = "<group>"; };
 		C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapPolygonDemoView.swift; sourceTree = "<group>"; };
 		C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringActor.swift; sourceTree = "<group>"; };
-		C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringTests.swift; sourceTree = "<group>"; };
 		C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterDetailView.swift; sourceTree = "<group>"; };
 		C9951EDA2E8CDA0F0025C136 /* PowerSenseMonitorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseMonitorService.swift; sourceTree = "<group>"; };
 		C9A2B32B2ACAA19D00C0BE08 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -336,7 +332,6 @@
 			isa = PBXGroup;
 			children = (
 				067FD08B2ECC6A2F00146D44 /* CoordinateTransformer.swift */,
-				067FD08C2ECC6A2F00146D44 /* CoordinateTransformerManager.swift */,
 				067FD08D2ECC6A2F00146D44 /* ProjectionSystem.swift */,
 			);
 			path = CoordinateTransformation;
@@ -654,7 +649,6 @@
 		C9951ECF2E8815380025C136 /* PulseTests */ = {
 			isa = PBXGroup;
 			children = (
-				C9951ECE2E8815380025C136 /* SpatialClusteringTests.swift */,
 			);
 			path = PulseTests;
 			sourceTree = "<group>";
@@ -876,7 +870,6 @@
 				06D467DA2ECDC7310092553E /* SpatialClusteringProtocols.swift in Sources */,
 				06D467DB2ECDC7310092553E /* SpatialClusteringSystem.swift in Sources */,
 				4181FEDD2CBF65F500E4D035 /* PatchPanelView.swift in Sources */,
-				067FD0942ECC6A2F00146D44 /* CoordinateTransformerManager.swift in Sources */,
 				4158C9682BF16BAA00BB318C /* DeviceUptimeChart.swift in Sources */,
 				4100DB8C2ADCB9510098B58C /* ItemChart.swift in Sources */,
 				41DD37742D349F45009F37A0 /* TipManager.swift in Sources */,
@@ -948,7 +941,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C9951ED02E8815380025C136 /* SpatialClusteringTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1117,6 +1109,7 @@
 				CURRENT_PROJECT_VERSION = 6;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Pulse/Preview Content\"";
+				DEVELOPMENT_TEAM = QJNZ2WK8TH;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;

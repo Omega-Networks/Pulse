@@ -31,6 +31,7 @@ import OSLog
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(PowerSenseMonitorService.self) private var monitorService: PowerSenseMonitorService?
     @StateObject private var tipManager = TipManager.shared
 
     private let logger = Logger(subsystem: "powersense", category: "settings")
@@ -71,6 +72,11 @@ struct SettingsView: View {
     // Alert State
     @State private var showingAlert = false
     @State private var alertMessage = ""
+
+    // Data Management State
+    @State private var showingDeleteEventsConfirmation = false
+    @State private var showingDeleteAllDataConfirmation = false
+    @State private var isDeletingData = false
     
     // MARK: - Main View
     
@@ -258,6 +264,63 @@ struct SettingsView: View {
                         .font(.caption)
                 }
              }
+
+            Section("Data Management") {
+                HStack {
+                    Text("Devices:")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(powerSenseDeviceCount)")
+                }
+                HStack {
+                    Text("Events:")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(powerSenseEventCount)")
+                }
+
+                Button("Delete All PowerSense Events", role: .destructive) {
+                    showingDeleteEventsConfirmation = true
+                }
+                .disabled(isDeletingData || powerSenseEventCount == 0)
+
+                Button("Delete All PowerSense Data", role: .destructive) {
+                    showingDeleteAllDataConfirmation = true
+                }
+                .disabled(isDeletingData || (powerSenseDeviceCount == 0 && powerSenseEventCount == 0))
+
+                if isDeletingData {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Deleting...")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Delete All PowerSense Events?",
+                isPresented: $showingDeleteEventsConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Events", role: .destructive) {
+                    Task { await deleteAllPowerSenseEvents() }
+                }
+            } message: {
+                Text("This will delete all \(powerSenseEventCount) PowerSense events. Devices will be kept. This cannot be undone.")
+            }
+            .confirmationDialog(
+                "Delete All PowerSense Data?",
+                isPresented: $showingDeleteAllDataConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete All Data", role: .destructive) {
+                    Task { await deleteAllPowerSenseData() }
+                }
+            } message: {
+                Text("This will delete all \(powerSenseDeviceCount) devices and \(powerSenseEventCount) events. This cannot be undone.")
+            }
         }
         .alert(isPresented: $showingAlert) {
             Alert(
@@ -323,8 +386,38 @@ struct SettingsView: View {
         }
     }
     
+    // MARK: - Data Management
+
+    private func deleteAllPowerSenseEvents() async {
+        isDeletingData = true
+        defer { isDeletingData = false }
+
+        logger.info("Deleting all PowerSense events...")
+        let dataService = PowerSenseDataService(modelContext: modelContext)
+        await dataService.clearAllPowerSenseEvents(monitorService: monitorService)
+        await refreshDataCounts()
+
+        alertMessage = "All PowerSense events deleted"
+        showingAlert = true
+        logger.info("PowerSense events deleted successfully")
+    }
+
+    private func deleteAllPowerSenseData() async {
+        isDeletingData = true
+        defer { isDeletingData = false }
+
+        logger.info("Deleting all PowerSense data...")
+        let dataService = PowerSenseDataService(modelContext: modelContext)
+        await dataService.clearAllPowerSenseData()
+        await refreshDataCounts()
+
+        alertMessage = "All PowerSense data deleted"
+        showingAlert = true
+        logger.info("PowerSense data deleted successfully")
+    }
+
     // MARK: - Settings Management
-    
+
     private func loadSettings() async {
         let config = await Configuration.shared
 
@@ -354,9 +447,7 @@ struct SettingsView: View {
     }
     
     private func applySettings() async {
-        print("Applying settings:")
-        print("  NetBox Server: \(netboxApiServer)")
-        print("  Zabbix Server: \(zabbixApiServer)")
+        logger.debug("Applying settings: NetBox=\(netboxApiServer), Zabbix=\(zabbixApiServer)")
         
         // Create local reference and await it
         let config = await Configuration.shared
@@ -371,8 +462,9 @@ struct SettingsView: View {
         )
         
         // Verify the save worked
-        print("After save - NetBox Server: \(await config.getNetboxApiServer())")
-        print("After save - Zabbix Server: \(await config.getZabbixApiServer())")
+        let savedNetbox = await config.getNetboxApiServer()
+        let savedZabbix = await config.getZabbixApiServer()
+        logger.debug("After save — NetBox: \(savedNetbox), Zabbix: \(savedZabbix)")
         
         // Update problem time window
         await config.setProblemTimeWindow(Int(problemTimeWindow * 3600))  // Convert hours to seconds

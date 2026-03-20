@@ -185,7 +185,7 @@ public final class CoordinateTransformer: Sendable {
         let coordinateMemorySize = MemoryLayout<SIMD2<Float>>.size * 2 // Input + output
         self.optimalBatchSize = min(2_000_000, maxBufferSize / coordinateMemorySize)
         
-        print("   ✅ Metal GPU initialization complete")
+        print("   Metal GPU initialization complete")
         print("   Threads per group: \(threadsPerThreadgroup.width)")
         print("   Optimal batch size: \(optimalBatchSize.formatted()) coordinates")
     }
@@ -257,7 +257,7 @@ public final class CoordinateTransformer: Sendable {
             deviceName: device.name
         )
         
-        print("   ✅ GPU transformation complete: \(String(format: "%.0f", throughput)) coords/sec")
+        print("   GPU transformation complete: \(String(format: "%.0f", throughput)) coords/sec")
         
         return (results, metrics)
     }
@@ -580,7 +580,7 @@ public final class CoordinateTransformer: Sendable {
 
         let totalNeighbors = neighborResults.reduce(0) { $0 + Int($1.neighborCount) }
         let avgCellOccupancy = gridSize > 0 ? Double(offlineCoordinates.count) / Double(gridSize) : 0
-        print("   ✅ Optimized GPU grid index built: \(totalNeighbors) neighbor relationships")
+        print("   Optimized GPU grid index built: \(totalNeighbors) neighbor relationships")
         print("   Grid efficiency: \(String(format: "%.3f", avgCellOccupancy)) avg points/cell")
 
         return (gridParams, neighborResults)
@@ -932,7 +932,7 @@ public final class CoordinateTransformer: Sendable {
         )
 
         let gridBuildTime = CFAbsoluteTimeGetCurrent() - gridBuildStart
-        print("✅ GPU Grid Build: Completed in \(String(format: "%.3f", gridBuildTime))s")
+        print("GPU Grid Build: Completed in \(String(format: "%.3f", gridBuildTime))s")
 
         return (gridParams, grid, coordsBuffer, offlineFlagsBuffer)
     }
@@ -1016,7 +1016,7 @@ public final class CoordinateTransformer: Sendable {
     ) async throws -> GPUHullAndConfidenceResult {
 
         let startTime = CFAbsoluteTimeGetCurrent()
-        logger.info("🔺 Phase 3: Starting GPU hull & confidence computation for \(clusterCount) clusters")
+        logger.info("Phase 3: Starting GPU hull & confidence computation for \(clusterCount) clusters")
 
         // Critical: Validate NZTM2000 projection parameters before processing
         try validateNZTM2000Transform()
@@ -1034,15 +1034,15 @@ public final class CoordinateTransformer: Sendable {
 
             do {
                 try captureManager.startCapture(with: captureDescriptor)
-                logger.info("✅ Metal frame capture started successfully")
+                logger.info("Metal frame capture started successfully")
             } catch {
-                logger.warning("⚠️ Failed to start Metal capture: \(error)")
+                logger.warning("Failed to start Metal capture: \(error)")
             }
         }
         #endif
 
         // Debug: Check coordinate ranges RIGHT AT PHASE 3 ENTRY
-        logger.info("🔍 PHASE-3-ENTRY: Checking coordinates at Phase 3 entry...")
+        logger.info("PHASE-3-ENTRY: Checking coordinates at Phase 3 entry...")
         try await debugCoordinatesAtEntry(
             coordsBuffer: coordsBuffer,
             clusterOffsets: clusterOffsets,
@@ -1050,21 +1050,21 @@ public final class CoordinateTransformer: Sendable {
             clusterCount: clusterCount
         )
 
-        logger.info("🔧 Creating hull and confidence buffers...")
+        logger.info("Creating hull and confidence buffers...")
         let hullBuffers = try createHullAndConfidenceBuffers(clusterCount: clusterCount, maxPointsPerCluster: maxPointsPerCluster)
-        logger.info("✅ Hull and confidence buffers created successfully")
+        logger.info("Hull and confidence buffers created successfully")
 
         // Upload cluster offsets
-        logger.info("🔧 Creating cluster offsets buffer...")
+        logger.info("Creating cluster offsets buffer...")
         let clusterOffsetsBuffer = device.makeBuffer(
             bytes: clusterOffsets,
             length: clusterOffsets.count * MemoryLayout<Int32>.size,
             options: .storageModeShared
         )!
-        logger.info("✅ Cluster offsets buffer created")
+        logger.info("Cluster offsets buffer created")
 
         // Phase 3 parameters
-        logger.info("🔧 Setting up Phase 3 parameters...")
+        logger.info("Setting up Phase 3 parameters...")
         let phase3Params = Phase3Parameters(
             clustersCount: Int32(clusterCount),
             maxPointsPerCluster: Int32(maxPointsPerCluster),
@@ -1076,7 +1076,7 @@ public final class CoordinateTransformer: Sendable {
             gridHeight: Int32(gridParams.gridHeight),
             collinearThreshold: Float(0.3) // 0.3m collinear tolerance - more aggressive pruning
         )
-        logger.info("✅ Phase 3 parameters configured")
+        logger.info("Phase 3 parameters configured")
 
         // Debug: Check coordinates BEFORE any processing (sampling stage)
         try await debugCoordinatesAtEntry(
@@ -1106,12 +1106,12 @@ public final class CoordinateTransformer: Sendable {
         logger.info("📊 Original bounds captured: (\(originalMin.x), \(originalMin.y)) to (\(originalMax.x), \(originalMax.y))")
 
         // Phase 3A: DISABLED - Skip bitonic sort due to coordinate corruption
-        logger.info("🔧 Phase 3A: Skipping bitonic sort (disabled due to corruption)")
-        logger.info("✅ QuickHull will work with unsorted coordinates")
+        logger.info("Phase 3A: Skipping bitonic sort (disabled due to corruption)")
+        logger.info("QuickHull will work with unsorted coordinates")
         let sortDuration = 0.0  // No sort performed
 
         // Phase 3B: Build convex hulls with pruning
-        logger.info("🔧 Starting Phase 3B: Parallel QuickHull computation...")
+        logger.info("Starting Phase 3B: Parallel QuickHull computation...")
         let hullTime = CFAbsoluteTimeGetCurrent()
         try await executeQuickHullParallel(
             coordsBuffer: coordsBuffer,
@@ -1122,10 +1122,10 @@ public final class CoordinateTransformer: Sendable {
             clusterCount: clusterCount
         )
         let hullDuration = CFAbsoluteTimeGetCurrent() - hullTime
-        logger.info("✅ Phase 3B completed: Parallel QuickHull (\(String(format: "%.1f", hullDuration * 1000))ms)")
+        logger.info("Phase 3B completed: Parallel QuickHull (\(String(format: "%.1f", hullDuration * 1000))ms)")
 
         // Phase 3C: Calculate confidence using grid
-        logger.info("🔧 Starting Phase 3C: Calculate confidence using grid...")
+        logger.info("Starting Phase 3C: Calculate confidence using grid...")
         let confidenceTime = CFAbsoluteTimeGetCurrent()
         try await executeConfidenceKernel(
             coordsBuffer: coordsBuffer,
@@ -1139,12 +1139,12 @@ public final class CoordinateTransformer: Sendable {
             clusterCount: clusterCount
         )
         let confidenceDuration = CFAbsoluteTimeGetCurrent() - confidenceTime
-        logger.info("✅ Phase 3C completed: Confidence calculation (\(String(format: "%.1f", confidenceDuration * 1000))ms)")
+        logger.info("Phase 3C completed: Confidence calculation (\(String(format: "%.1f", confidenceDuration * 1000))ms)")
 
         let totalDuration = CFAbsoluteTimeGetCurrent() - startTime
 
         logger.info("""
-        ✅ Phase 3 GPU Complete:
+        Phase 3 GPU Complete:
            Sort: \(String(format: "%.1f", sortDuration * 1000))ms
            Hull: \(String(format: "%.1f", hullDuration * 1000))ms
            Confidence: \(String(format: "%.1f", confidenceDuration * 1000))ms
@@ -1176,7 +1176,7 @@ public final class CoordinateTransformer: Sendable {
         phase3Params: Phase3Parameters,
         clusterCount: Int
     ) throws {
-        logger.info("🔧 Starting hull preprocessing to reduce point count...")
+        logger.info("Starting hull preprocessing to reduce point count...")
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw MetalTransformError.commandBufferCreationFailed
@@ -1203,11 +1203,11 @@ public final class CoordinateTransformer: Sendable {
         commandBuffer.waitUntilCompleted()
 
         if let error = commandBuffer.error {
-            logger.error("❌ Preprocessing kernel failed: \\(error.localizedDescription)")
+            logger.error("Preprocessing kernel failed: \\(error.localizedDescription)")
             throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
         }
 
-        logger.info("✅ Hull preprocessing completed")
+        logger.info("Hull preprocessing completed")
     }
 
     /// Execute bitonic sort kernel for coordinate sorting
@@ -1218,42 +1218,42 @@ public final class CoordinateTransformer: Sendable {
         phase3Params: Phase3Parameters,
         clusterCount: Int
     ) throws {
-        logger.info("🔧 Creating command buffer for bitonic sort...")
+        logger.info("Creating command buffer for bitonic sort...")
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw MetalTransformError.commandBufferCreationFailed
         }
-        logger.info("✅ Command buffer and encoder created for bitonic sort")
+        logger.info("Command buffer and encoder created for bitonic sort")
 
-        logger.info("🔧 Setting up pipeline state for bitonicSortByX kernel...")
+        logger.info("Setting up pipeline state for bitonicSortByX kernel...")
         let pipelineState = try getOrCreatePipelineState(functionName: "bitonicSortByX")
         computeEncoder.setComputePipelineState(pipelineState)
-        logger.info("✅ Pipeline state configured")
+        logger.info("Pipeline state configured")
 
-        logger.info("🔧 Setting buffers and parameters...")
+        logger.info("Setting buffers and parameters...")
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
         computeEncoder.setBuffer(clusterOffsetsBuffer, offset: 0, index: 1)
         computeEncoder.setBuffer(tempWorkBuffer, offset: 0, index: 2)
 
         var params = phase3Params
         computeEncoder.setBytes(&params, length: MemoryLayout<Phase3Parameters>.size, index: 3)
-        logger.info("✅ Buffers and parameters set")
+        logger.info("Buffers and parameters set")
 
         let threadgroupSize = MTLSize(width: 256, height: 1, depth: 1)
         let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
-        logger.info("🔧 Dispatching GPU threads: \(numThreadgroups.width) threadgroups × \(threadgroupSize.width) threads")
+        logger.info("Dispatching GPU threads: \(numThreadgroups.width) threadgroups × \(threadgroupSize.width) threads")
 
         computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
         computeEncoder.endEncoding()
-        logger.info("✅ GPU dispatch completed, encoder ended")
+        logger.info("GPU dispatch completed, encoder ended")
 
-        logger.info("🔧 Committing command buffer and waiting for completion...")
+        logger.info("Committing command buffer and waiting for completion...")
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
-        logger.info("✅ Bitonic sort kernel completed successfully")
+        logger.info("Bitonic sort kernel completed successfully")
 
         if let error = commandBuffer.error {
-            logger.error("❌ Bitonic sort kernel failed: \(error.localizedDescription)")
+            logger.error("Bitonic sort kernel failed: \(error.localizedDescription)")
             throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
         }
     }
@@ -1268,19 +1268,19 @@ public final class CoordinateTransformer: Sendable {
         phase3Params: Phase3Parameters,
         clusterCount: Int
     ) async throws {
-        logger.info("🔧 Creating command buffer for hull construction...")
+        logger.info("Creating command buffer for hull construction...")
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw MetalTransformError.commandBufferCreationFailed
         }
-        logger.info("✅ Command buffer and encoder created for hull construction")
+        logger.info("Command buffer and encoder created for hull construction")
 
-        logger.info("🔧 Setting up pipeline state for buildConvexHullSequential kernel...")
+        logger.info("Setting up pipeline state for buildConvexHullSequential kernel...")
         let pipelineState = try getOrCreatePipelineState(functionName: "buildConvexHullSequential")
         computeEncoder.setComputePipelineState(pipelineState)
-        logger.info("✅ Hull pipeline state configured")
+        logger.info("Hull pipeline state configured")
 
-        logger.info("🔧 Setting hull buffers and parameters...")
+        logger.info("Setting hull buffers and parameters...")
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
         computeEncoder.setBuffer(hullVerticesBuffer, offset: 0, index: 1)
         computeEncoder.setBuffer(hullCountsBuffer, offset: 0, index: 2)
@@ -1289,26 +1289,26 @@ public final class CoordinateTransformer: Sendable {
 
         var params = phase3Params
         computeEncoder.setBytes(&params, length: MemoryLayout<Phase3Parameters>.size, index: 5)
-        logger.info("✅ Hull buffers and parameters set")
+        logger.info("Hull buffers and parameters set")
 
         let threadgroupSize = MTLSize(width: 1, height: 1, depth: 1)  // Single thread per cluster
         let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
-        logger.info("🔧 Dispatching hull GPU threads: \(numThreadgroups.width) clusters × \(threadgroupSize.width) thread/cluster (sequential)")
+        logger.info("Dispatching hull GPU threads: \(numThreadgroups.width) clusters × \(threadgroupSize.width) thread/cluster (sequential)")
 
         computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
         computeEncoder.endEncoding()
-        logger.info("✅ Hull GPU dispatch completed, encoder ended")
+        logger.info("Hull GPU dispatch completed, encoder ended")
 
         // Use proper async execution
         commandBuffer.commit()
         await commandBuffer.completed()
 
         if let error = commandBuffer.error {
-            logger.error("❌ Hull construction kernel failed: \(error.localizedDescription)")
+            logger.error("Hull construction kernel failed: \(error.localizedDescription)")
             throw MetalTransformError.gpuExecutionFailed(error.localizedDescription)
         }
 
-        logger.info("✅ Hull construction kernel completed successfully")
+        logger.info("Hull construction kernel completed successfully")
     }
 
     /// Execute QuickHull parallel pipeline (replaces sequential monotone chain)
@@ -1320,10 +1320,10 @@ public final class CoordinateTransformer: Sendable {
         phase3Params: Phase3Parameters,
         clusterCount: Int
     ) async throws {
-        logger.info("🚀 Starting Parallel QuickHull Pipeline")
+        logger.info("Starting Parallel QuickHull Pipeline")
 
         // Debug: Safe coordinate validation without buffer overrun
-        logger.info("🔍 QuickHull Pipeline Entry - Buffer Info:")
+        logger.info("QuickHull Pipeline Entry - Buffer Info:")
         logger.info("   Clusters: \(clusterCount), MaxPoints/Cluster: \(phase3Params.maxPointsPerCluster)")
         logger.info("   CoordBuffer Length: \(coordsBuffer.length) bytes (\(coordsBuffer.length / MemoryLayout<SIMD2<Float>>.size) coordinates)")
 
@@ -1341,7 +1341,7 @@ public final class CoordinateTransformer: Sendable {
         let clusterOffsets = Array(UnsafeBufferPointer(start: offsetsPointer, count: offsetCount))
 
         // Pre-validation: Check for collinear clusters and degenerate cases
-        logger.info("🔍 Pre-validation: Checking \(clusterCount) clusters for QuickHull compatibility")
+        logger.info("Pre-validation: Checking \(clusterCount) clusters for QuickHull compatibility")
         var validClusters: [Int] = []
         var invalidClusters: [Int] = []
 
@@ -1357,13 +1357,13 @@ public final class CoordinateTransformer: Sendable {
             }
         }
 
-        logger.info("✅ Pre-validation complete: \(validClusters.count) valid, \(invalidClusters.count) invalid clusters")
+        logger.info("Pre-validation complete: \(validClusters.count) valid, \(invalidClusters.count) invalid clusters")
         if !invalidClusters.isEmpty {
-            logger.warning("⚠️ Invalid clusters (will need fallback): \(invalidClusters.prefix(10).map(String.init).joined(separator: ", "))\(invalidClusters.count > 10 ? "..." : "")")
+            logger.warning("Invalid clusters (will need fallback): \(invalidClusters.prefix(10).map(String.init).joined(separator: ", "))\(invalidClusters.count > 10 ? "..." : "")")
         }
 
         // Step 1: Initialize QuickHull with leftmost/rightmost split
-        logger.info("🔧 Step 1: Initializing QuickHull segments for \(validClusters.count) clusters")
+        logger.info("Step 1: Initializing QuickHull segments for \(validClusters.count) clusters")
         try await executeInitializeQuickHull(
             coordsBuffer: coordsBuffer,
             segmentsBuffer: segmentsBuffer.buffer,
@@ -1375,7 +1375,7 @@ public final class CoordinateTransformer: Sendable {
         )
 
         // Step 2: Iterative hull expansion using divide-and-conquer
-        logger.info("🔧 Step 2: Iterative hull expansion")
+        logger.info("Step 2: Iterative hull expansion")
         let maxIterations = 20
         var converged = false
         var iteration = 0
@@ -1394,7 +1394,7 @@ public final class CoordinateTransformer: Sendable {
         var useWorkingBuffers = false
 
         while !converged && iteration < maxIterations {
-            logger.debug("📍 QuickHull iteration \(iteration + 1)/\(maxIterations)")
+            logger.debug("QuickHull iteration \(iteration + 1)/\(maxIterations)")
 
             // Find maximum distance points for all segments
             try await executeFindMaxDistanceParallel(
@@ -1456,10 +1456,10 @@ public final class CoordinateTransformer: Sendable {
             iteration += 1
         }
 
-        logger.info("✅ QuickHull converged after \(iteration) iterations")
+        logger.info("QuickHull converged after \(iteration) iterations")
 
         // Step 3: Collect final hull vertices from segments
-        logger.info("🔧 Step 3: Collecting hull vertices from segments")
+        logger.info("Step 3: Collecting hull vertices from segments")
         try await executeCollectHullVertices(
             segmentsBuffer: currentSegmentsBuffer,
             segmentCountsBuffer: currentSegmentCountsBuffer,
@@ -1475,7 +1475,7 @@ public final class CoordinateTransformer: Sendable {
             clusterCount: clusterCount
         )
 
-        logger.info("🏁 Parallel QuickHull Pipeline Complete")
+        logger.info("Parallel QuickHull Pipeline Complete")
     }
 
     /// Enhanced validation for QuickHull input with collinearity detection
@@ -1603,7 +1603,7 @@ public final class CoordinateTransformer: Sendable {
         let yMinShift = abs(globalMin.y - originalBounds.min.y)
         let yMaxShift = abs(globalMax.y - originalBounds.max.y)
 
-        logger.info("📊 \(context) Coordinate Analysis:")
+        logger.info("\(context) Coordinate Analysis:")
         logger.info("   Original bounds: (\(originalBounds.min.x), \(originalBounds.min.y)) to (\(originalBounds.max.x), \(originalBounds.max.y))")
         logger.info("   Current bounds:  (\(globalMin.x), \(globalMin.y)) to (\(globalMax.x), \(globalMax.y))")
         logger.info("   Range change: X=\(String(format: "%.1f", xRangeChange))m, Y=\(String(format: "%.1f", yRangeChange))m")
@@ -1614,7 +1614,7 @@ public final class CoordinateTransformer: Sendable {
            xMinShift > tolerance || xMaxShift > tolerance ||
            yMinShift > tolerance || yMaxShift > tolerance {
 
-            logger.error("🚨 \(context): COORDINATE CORRUPTION DETECTED!")
+            logger.error("\(context): COORDINATE CORRUPTION DETECTED!")
             logger.error("   Range changes exceed tolerance (\(tolerance)m)")
             logger.error("   This indicates bitonic sort memory corruption or buffer overflow")
 
@@ -1626,18 +1626,18 @@ public final class CoordinateTransformer: Sendable {
         }
 
         if !corruptedClusters.isEmpty {
-            logger.warning("⚠️ \(context): \(corruptedClusters.count) clusters have invalid coordinates")
+            logger.warning("\(context): \(corruptedClusters.count) clusters have invalid coordinates")
             return false
         }
 
-        logger.info("✅ \(context): Coordinate ranges validated successfully")
+        logger.info("\(context): Coordinate ranges validated successfully")
         return true
     }
 
     /// Validate NZTM2000 projection parameters with round-trip test
     /// Critical for catching parameter corruption that causes invalid GPS coordinates
     private func validateNZTM2000Transform() throws {
-        logger.info("🔍 Validating NZTM2000 projection parameters...")
+        logger.info("Validating NZTM2000 projection parameters...")
 
         // Use known GPS coordinates and round-trip test for accurate validation
         let knownGPSPoints = [
@@ -1690,7 +1690,7 @@ public final class CoordinateTransformer: Sendable {
             let maxRoundTripError = 1.0  // 1 meter tolerance for round-trip
 
             if roundTripError > maxRoundTripError {
-                logger.error("🚨 NZTM2000 Round-trip Error at test point \(i):")
+                logger.error("NZTM2000 Round-trip Error at test point \(i):")
                 logger.error("   Original: (\(testPoint.x), \(testPoint.y))")
                 logger.error("   Round-trip: (\(forward.x), \(forward.y))")
                 logger.error("   Error: \(String(format: "%.2f", roundTripError))m")
@@ -1701,10 +1701,10 @@ public final class CoordinateTransformer: Sendable {
             }
         }
 
-        logger.info("✅ NZTM2000 projection parameters validated successfully")
+        logger.info("NZTM2000 projection parameters validated successfully")
 
         // Log projection parameters for debugging
-        logger.debug("📊 NZTM2000 Parameters:")
+        logger.debug("NZTM2000 Parameters:")
         logger.debug("   False Easting: 1600000.0m")
         logger.debug("   False Northing: 10000000.0m")
         logger.debug("   Central Meridian: 173°E")
@@ -1725,7 +1725,7 @@ public final class CoordinateTransformer: Sendable {
         let clampedLon = max(minLon, min(maxLon, coordinate.longitude))
 
         if abs(clampedLat - coordinate.latitude) > 0.1 || abs(clampedLon - coordinate.longitude) > 0.1 {
-            logger.warning("🔧 Clamped invalid GPS: (\(coordinate.latitude), \(coordinate.longitude)) → (\(clampedLat), \(clampedLon))")
+            logger.warning("Clamped invalid GPS: (\(coordinate.latitude), \(coordinate.longitude)) → (\(clampedLat), \(clampedLon))")
         }
 
         return CLLocationCoordinate2D(latitude: clampedLat, longitude: clampedLon)
@@ -1747,7 +1747,7 @@ public final class CoordinateTransformer: Sendable {
         let captureManager = MTLCaptureManager.shared()
         if captureManager.isCapturing {
             captureManager.stopCapture()
-            logger.info("📹 Metal frame capture stopped")
+            logger.info("Metal frame capture stopped")
         }
         #endif
     }
@@ -1855,7 +1855,7 @@ public final class CoordinateTransformer: Sendable {
             }
         }
 
-        logger.debug("🎯 QuickHull converged: all max distances < \(threshold)")
+        logger.debug("QuickHull converged: all max distances < \(threshold)")
         return true
     }
 
@@ -1920,7 +1920,7 @@ public final class CoordinateTransformer: Sendable {
         clusterCount: Int
     ) async throws {
         // Full GPU implementation for optimal performance
-        logger.info("🔧 Collecting hull vertices (GPU kernel implementation)")
+        logger.info("Collecting hull vertices (GPU kernel implementation)")
 
         // Create command buffer for GPU execution
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
@@ -1954,18 +1954,18 @@ public final class CoordinateTransformer: Sendable {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             commandBuffer.addCompletedHandler { buffer in
                 if let error = buffer.error {
-                    self.logger.error("❌ Hull vertex collection kernel failed: \(error.localizedDescription)")
+                    self.logger.error("Hull vertex collection kernel failed: \(error.localizedDescription)")
                     continuation.resume(throwing: MetalTransformError.kernelExecutionFailed(error.localizedDescription))
                     return
                 }
 
                 if buffer.status == .error {
-                    self.logger.error("❌ Hull vertex collection buffer status error")
+                    self.logger.error("Hull vertex collection buffer status error")
                     continuation.resume(throwing: MetalTransformError.kernelExecutionFailed("Command buffer status error"))
                     return
                 }
 
-                self.logger.info("✅ Hull vertices collected for \(clusterCount) clusters (GPU implementation)")
+                self.logger.info("Hull vertices collected for \(clusterCount) clusters (GPU implementation)")
                 continuation.resume()
             }
 
@@ -1986,18 +1986,18 @@ public final class CoordinateTransformer: Sendable {
 
         for (clusterIdx, hullCount) in hullCounts.enumerated() {
             if hullCount == 0 {
-                logger.debug("🚨 QuickHull DEGENERATE: Cluster \(clusterIdx) produced 0 vertices")
+                logger.debug("QuickHull DEGENERATE: Cluster \(clusterIdx) produced 0 vertices")
                 degenerateCount += 1
             } else if hullCount >= 3 {
-                logger.debug("✅ QuickHull SUCCESS: Cluster \(clusterIdx) produced \(hullCount) vertices")
+                logger.debug("QuickHull SUCCESS: Cluster \(clusterIdx) produced \(hullCount) vertices")
                 successCount += 1
             } else {
-                logger.debug("⚠️ QuickHull MINIMAL: Cluster \(clusterIdx) produced \(hullCount) vertices (< 3)")
+                logger.debug("QuickHull MINIMAL: Cluster \(clusterIdx) produced \(hullCount) vertices (< 3)")
             }
         }
 
         let successRate = Double(successCount) / Double(clusterCount) * 100.0
-        logger.info("📊 QuickHull Results: \(successCount)/\(clusterCount) success (\(String(format: "%.1f", successRate))%), \(degenerateCount) degenerate")
+        logger.info("QuickHull Results: \(successCount)/\(clusterCount) success (\(String(format: "%.1f", successRate))%), \(degenerateCount) degenerate")
     }
 
     /// Debug coordinate values to identify transformation issues
@@ -2007,7 +2007,7 @@ public final class CoordinateTransformer: Sendable {
         phase3Params: Phase3Parameters,
         clusterCount: Int
     ) async throws {
-        logger.info("🔍 Debugging coordinate values at QuickHull entry...")
+        logger.info("Debugging coordinate values at QuickHull entry...")
 
         let totalCoordinates = Int(phase3Params.clustersCount) * Int(phase3Params.maxPointsPerCluster)
         let coordsPointer = coordsBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: totalCoordinates)
@@ -2027,14 +2027,14 @@ public final class CoordinateTransformer: Sendable {
                 let minY = clusterCoords.map { $0.y }.min() ?? 0
                 let maxY = clusterCoords.map { $0.y }.max() ?? 0
 
-                logger.info("📍 Cluster \(clusterIdx): \(count) points, X[\(String(format: "%.3f", minX)), \(String(format: "%.3f", maxX))], Y[\(String(format: "%.3f", minY)), \(String(format: "%.3f", maxY))]")
+                logger.info("Cluster \(clusterIdx): \(count) points, X[\(String(format: "%.3f", minX)), \(String(format: "%.3f", maxX))], Y[\(String(format: "%.3f", minY)), \(String(format: "%.3f", maxY))]")
 
                 // Check for degenerate coordinates
                 if abs(maxX - minX) < 0.001 && abs(maxY - minY) < 0.001 {
-                    logger.error("❌ Cluster \(clusterIdx): DEGENERATE coordinates - all points collapsed to (\(String(format: "%.6f", minX)), \(String(format: "%.6f", minY)))")
+                    logger.error("Cluster \(clusterIdx): DEGENERATE coordinates - all points collapsed to (\(String(format: "%.6f", minX)), \(String(format: "%.6f", minY)))")
                 }
             } else {
-                logger.error("❌ Cluster \(clusterIdx): Invalid offset/count - start:\(startOffset), count:\(count), total:\(coords.count)")
+                logger.error("Cluster \(clusterIdx): Invalid offset/count - start:\(startOffset), count:\(count), total:\(coords.count)")
             }
         }
     }
@@ -2079,7 +2079,7 @@ public final class CoordinateTransformer: Sendable {
                     if abs(maxX - minX) < 0.001 && abs(maxY - minY) < 0.001 {
                         logger.error("❌ COORDS: Cluster \(clusterIdx) DEGENERATE - all points collapsed!")
                     } else {
-                        logger.info("✅ COORDS: Cluster \(clusterIdx) has valid coordinate spread")
+                        logger.info("COORDS: Cluster \(clusterIdx) has valid coordinate spread")
                     }
                 } else {
                     logger.error("❌ PRE-PROCESSING: Cluster \(clusterIdx) has no coordinates at offset \(startOffset)")
@@ -2107,12 +2107,12 @@ public final class CoordinateTransformer: Sendable {
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw MetalTransformError.commandBufferCreationFailed
         }
-        logger.info("✅ Command buffer and encoder created for confidence calculation")
+        logger.info("Command buffer and encoder created for confidence calculation")
 
         logger.info("🔧 Setting up pipeline state for calculateConfidenceWithGrid kernel...")
         let pipelineState = try getOrCreatePipelineState(functionName: "calculateConfidenceWithGrid")
         computeEncoder.setComputePipelineState(pipelineState)
-        logger.info("✅ Confidence pipeline state configured")
+        logger.info("Confidence pipeline state configured")
 
         logger.info("🔧 Setting confidence buffers and parameters...")
         computeEncoder.setBuffer(coordsBuffer, offset: 0, index: 0)
@@ -2129,7 +2129,7 @@ public final class CoordinateTransformer: Sendable {
 
         var gridParameters = gridParams
         computeEncoder.setBytes(&gridParameters, length: MemoryLayout<GridIndexParameters>.size, index: 9)
-        logger.info("✅ Confidence buffers and parameters set")
+        logger.info("Confidence buffers and parameters set")
 
         let threadgroupSize = MTLSize(width: 64, height: 1, depth: 1)
         let numThreadgroups = MTLSize(width: clusterCount, height: 1, depth: 1)
@@ -2137,7 +2137,7 @@ public final class CoordinateTransformer: Sendable {
 
         computeEncoder.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
         computeEncoder.endEncoding()
-        logger.info("✅ Confidence GPU dispatch completed, encoder ended")
+        logger.info("Confidence GPU dispatch completed, encoder ended")
 
         logger.info("🔧 Committing confidence command buffer with async handler...")
 
@@ -2155,7 +2155,7 @@ public final class CoordinateTransformer: Sendable {
                     return
                 }
 
-                self.logger.info("✅ Confidence calculation kernel completed successfully")
+                self.logger.info("Confidence calculation kernel completed successfully")
                 continuation.resume()
             }
 
@@ -2251,7 +2251,7 @@ public final class CoordinateTransformer: Sendable {
             processingTime: processingTime
         )
 
-        print("✅ GPU DBSCAN: Completed in \(String(format: "%.3f", processingTime * 1000))ms")
+        print("GPU DBSCAN: Completed in \(String(format: "%.3f", processingTime * 1000))ms")
         print("   Phase 1: \(String(format: "%.3f", phase1Duration * 1000))ms (neighbor search)")
         print("   Phase 2a: \(String(format: "%.3f", phase2aDuration * 1000))ms (initialize labels)")
         print("   Phase 2b: \(String(format: "%.3f", propagationDuration * 1000))ms (propagation, \(iterations) iterations)")
@@ -2441,11 +2441,11 @@ public final class CoordinateTransformer: Sendable {
         let propagationTime = CFAbsoluteTimeGetCurrent() - startTime
 
         if iterations >= maxIterations {
-            print("   ⚠️  WARNING: DBSCAN label propagation reached maximum iterations (\(maxIterations)) without convergence")
+            print("    WARNING: DBSCAN label propagation reached maximum iterations (\(maxIterations)) without convergence")
             print("      This may indicate complex clustering topology or inadequate epsilon/minPoints parameters")
             print("      Processing time: \(String(format: "%.3f", propagationTime * 1000))ms")
         } else {
-            print("   ✅ DBSCAN label propagation converged in \(iterations) iterations (\(String(format: "%.3f", propagationTime * 1000))ms)")
+            print("   DBSCAN label propagation converged in \(iterations) iterations (\(String(format: "%.3f", propagationTime * 1000))ms)")
         }
 
         return iterations
