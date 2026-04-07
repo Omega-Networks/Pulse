@@ -27,6 +27,7 @@ import SwiftUI
 import SwiftData
 import UserNotifications
 import TipKit
+import OSLog
 
 /**
  Manages the state and progress of application initialization.
@@ -66,6 +67,7 @@ including SwiftData configuration, TipKit setup, and view state management.
 */
 @main
 struct PulseApp: App {
+    private let logger = Logger(subsystem: "pulse", category: "app")
     @StateObject private var initState = InitializationState()
     let tipManager = TipManager.shared
     @State private var showContentView = false
@@ -397,7 +399,7 @@ struct PulseApp: App {
         let featureFlagEnabled = featureFlagValue as? Bool ?? true  // Default to enabled
 
         guard featureFlagEnabled else {
-            print("⏭️ PowerSense background processing disabled (feature flag)")
+            logger.info("PowerSense background processing disabled (feature flag)")
             return
         }
 
@@ -407,17 +409,17 @@ struct PulseApp: App {
         let isEnabled = await config.isPowerSenseEnabled()
 
         guard isConfigured && isEnabled else {
-            print("⏭️ Skipping PowerSense initialization: not configured/enabled")
+            logger.info("Skipping PowerSense initialization: not configured/enabled")
             return
         }
 
         // Ensure monitor service exists
         guard let service = monitorService else {
-            print("❌ PowerSense monitor service not initialized")
+            logger.error("PowerSense monitor service not initialized")
             return
         }
 
-        print("🚀 Initializing PowerSense background processing...")
+        logger.info("Initializing PowerSense background processing...")
 
         do {
             // Initialize service (pre-warm GPU, perform initial clustering)
@@ -426,9 +428,9 @@ struct PulseApp: App {
             // Start 60-second event polling
             service.startMonitoring()
 
-            print("✅ PowerSense background processing started successfully")
+            logger.info("PowerSense background processing started successfully")
         } catch {
-            print("❌ PowerSense initialization failed: \(error.localizedDescription)")
+            logger.error("PowerSense initialization failed: \(error.localizedDescription)")
         }
     }
 }

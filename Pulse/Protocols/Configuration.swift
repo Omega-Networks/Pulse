@@ -26,6 +26,7 @@
 
 import Foundation
 import Security
+import OSLog
 
 /// Global actor to ensure thread-safe access to configuration values
 @globalActor actor ConfigurationActor {
@@ -37,6 +38,8 @@ import Security
 /// Uses a combination of Keychain (for sensitive data) and UserDefaults (for non-sensitive data)
 @ConfigurationActor
 final class Configuration: @unchecked Sendable {
+    private let logger = Logger(subsystem: "pulse", category: "configuration")
+
     // MARK: - Constants
     
     /// UserDefaults and Keychain keys
@@ -323,7 +326,7 @@ final class Configuration: @unchecked Sendable {
         guard !token.isEmpty else { return }
         let status = saveToKeychain(key: Keys.powerSenseZabbixToken, data: Data(token.utf8))
         if status != errSecSuccess {
-            print("Failed to save PowerSense Zabbix API Token to Keychain: \(status)")
+            logger.error("Failed to save PowerSense Zabbix API Token to Keychain: \(status)")
         }
     }
 

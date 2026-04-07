@@ -152,10 +152,7 @@ public final class CoordinateTransformer: Sendable {
         self.device = device
         self.projectionSystem = projectionSystem
         
-        print("🚀 Initializing Metal GPU CoordinateTransformer...")
-        print("   Device: \(device.name)")
-        print("   Unified Memory: \(device.hasUnifiedMemory)")
-        print("   Max Buffer Length: \(device.maxBufferLength / 1024 / 1024)MB")
+        logger.info("Initializing Metal GPU CoordinateTransformer — device: \(device.name), unified memory: \(device.hasUnifiedMemory)")
         
         guard let commandQueue = device.makeCommandQueue() else {
             throw MetalTransformError.commandQueueCreationFailed
@@ -185,9 +182,7 @@ public final class CoordinateTransformer: Sendable {
         let coordinateMemorySize = MemoryLayout<SIMD2<Float>>.size * 2 // Input + output
         self.optimalBatchSize = min(2_000_000, maxBufferSize / coordinateMemorySize)
         
-        print("   Metal GPU initialization complete")
-        print("   Threads per group: \(threadsPerThreadgroup.width)")
-        print("   Optimal batch size: \(optimalBatchSize.formatted()) coordinates")
+        logger.info("Metal GPU initialization complete — batch size: \(self.optimalBatchSize.formatted()) coordinates")
     }
     
     /// Initialize with optimal projection system for a given center coordinate
@@ -224,7 +219,7 @@ public final class CoordinateTransformer: Sendable {
             return ([], metrics)
         }
         
-        print("   🔥 GPU transforming \(coordinates.count.formatted()) coordinates...")
+        logger.debug("GPU transforming \(coordinates.count.formatted()) coordinates...")
         
         let results: [ProjectedCoordinate]
         let gpuTime: Double
@@ -257,7 +252,7 @@ public final class CoordinateTransformer: Sendable {
             deviceName: device.name
         )
         
-        print("   GPU transformation complete: \(String(format: "%.0f", throughput)) coords/sec")
+        logger.info("GPU transformation complete: \(String(format: "%.0f", throughput)) coords/sec")
         
         return (results, metrics)
     }
@@ -317,7 +312,7 @@ public final class CoordinateTransformer: Sendable {
         let chunkSize = optimalBatchSize
         let totalChunks = (totalCount + chunkSize - 1) / chunkSize
         
-        print("     📊 Processing \(totalCount.formatted()) coordinates in \(totalChunks) GPU batches")
+        logger.debug("Processing \(totalCount.formatted()) coordinates in \(totalChunks) GPU batches")
         
         var allResults: [ProjectedCoordinate] = []
         allResults.reserveCapacity(totalCount)
@@ -336,7 +331,7 @@ public final class CoordinateTransformer: Sendable {
             if (chunkIndex + 1) % max(1, totalChunks / 10) == 0 || chunkIndex == totalChunks - 1 {
                 let progress = Double(chunkIndex + 1) / Double(totalChunks) * 100
                 let processed = min(endIndex, totalCount)
-                print("       GPU Progress: \(String(format: "%.1f", progress))% (\(processed.formatted())/\(totalCount.formatted()))")
+                logger.debug("GPU Progress: \(String(format: "%.1f", progress))%")
             }
         }
         
@@ -492,7 +487,7 @@ public final class CoordinateTransformer: Sendable {
             return (params, [])
         }
 
-        print("🔥 Building GPU grid index for \(offlineCoordinates.count) offline devices...")
+        logger.info("Building GPU grid index for \(offlineCoordinates.count) offline devices...")
 
         // Calculate bounds and grid parameters
         let bounds = SpatialBounds.from(coordinates: offlineCoordinates)
@@ -500,8 +495,7 @@ public final class CoordinateTransformer: Sendable {
         let gridParams = GridIndexParameters(bounds: bounds, cellSize: cellSize, epsilon: Float(epsilon))
 
         let gridSize = Int(gridParams.gridWidth * gridParams.gridHeight)
-        print("   Grid dimensions: \(gridParams.gridWidth)x\(gridParams.gridHeight) = \(gridSize) cells")
-        print("   Cell size: \(cellSize)m, Search radius: \(epsilon)m")
+        logger.debug("Grid: \(gridParams.gridWidth)x\(gridParams.gridHeight) = \(gridSize) cells, cell size: \(cellSize)m")
 
         // Use GPU grid-based spatial indexing for optimal performance
         return try buildGridIndexOptimized(
@@ -520,7 +514,6 @@ public final class CoordinateTransformer: Sendable {
         gridSize: Int
     ) throws -> (gridParams: GridIndexParameters, neighborResults: [GPUNeighborResult]) {
 
-        print("   Using optimized grid-based algorithm...")
 
         // Convert coordinates to GPU format
         let gpuCoords = offlineCoordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
@@ -580,8 +573,7 @@ public final class CoordinateTransformer: Sendable {
 
         let totalNeighbors = neighborResults.reduce(0) { $0 + Int($1.neighborCount) }
         let avgCellOccupancy = gridSize > 0 ? Double(offlineCoordinates.count) / Double(gridSize) : 0
-        print("   Optimized GPU grid index built: \(totalNeighbors) neighbor relationships")
-        print("   Grid efficiency: \(String(format: "%.3f", avgCellOccupancy)) avg points/cell")
+        logger.info("GPU grid index built: \(totalNeighbors) neighbor relationships, \(String(format: "%.3f", avgCellOccupancy)) avg points/cell")
 
         return (gridParams, neighborResults)
     }
@@ -869,7 +861,7 @@ public final class CoordinateTransformer: Sendable {
             throw MetalTransformError.insufficientData("Coordinates and offline flags count mismatch")
         }
 
-        print("🔧 GPU Grid Build: Starting with \(allCoordinates.count) total devices...")
+        logger.info("GPU Grid Build: starting with \(allCoordinates.count) total devices")
 
         // Calculate bounds and grid parameters from ALL coordinates for full coverage
         let bounds = SpatialBounds.from(coordinates: allCoordinates)
@@ -877,8 +869,6 @@ public final class CoordinateTransformer: Sendable {
         let gridParams = GridIndexParameters(bounds: bounds, cellSize: cellSize, epsilon: Float(epsilon))
 
         let gridSize = Int(gridParams.gridWidth * gridParams.gridHeight)
-        print("   Grid dimensions: \(gridParams.gridWidth)x\(gridParams.gridHeight) = \(gridSize) cells")
-
         // Create coordinate buffer with ALL device coordinates
         let gpuCoords = allCoordinates.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
         let coordsBuffer = device.makeBuffer(
@@ -900,7 +890,6 @@ public final class CoordinateTransformer: Sendable {
         let gridBuildStart = CFAbsoluteTimeGetCurrent()
 
         // Phase 1: Count points per cell (with offline filtering)
-        print("   Phase 1: Counting offline points per cell...")
         try executeGridCountKernelWithFlags(
             coordsBuffer: coordsBuffer,
             offlineFlagsBuffer: offlineFlagsBuffer,
@@ -909,8 +898,7 @@ public final class CoordinateTransformer: Sendable {
             coordinateCount: allCoordinates.count
         )
 
-        // Phase 2: CPU prefix sum to convert counts to offsets (GPU prefix scan in Phase 2)
-        print("   Phase 2: Computing cell offsets...")
+        // Phase 2: CPU prefix sum to convert counts to offsets
         let cellCountsPointer = grid.cellCounts.contents.bindMemory(to: Int32.self, capacity: gridSize)
         let cellOffsetsPointer = grid.cellOffsets.contents.bindMemory(to: Int32.self, capacity: gridSize)
 
@@ -922,7 +910,6 @@ public final class CoordinateTransformer: Sendable {
         }
 
         // Phase 3: Build point lists with offline filtering
-        print("   Phase 3: Building point indices (offline only)...")
         try executeGridBuildKernelWithFlags(
             coordsBuffer: coordsBuffer,
             offlineFlagsBuffer: offlineFlagsBuffer,
@@ -932,7 +919,7 @@ public final class CoordinateTransformer: Sendable {
         )
 
         let gridBuildTime = CFAbsoluteTimeGetCurrent() - gridBuildStart
-        print("GPU Grid Build: Completed in \(String(format: "%.3f", gridBuildTime))s")
+        logger.info("GPU Grid Build: completed in \(String(format: "%.3f", gridBuildTime))s")
 
         return (gridParams, grid, coordsBuffer, offlineFlagsBuffer)
     }
@@ -2183,18 +2170,15 @@ public final class CoordinateTransformer: Sendable {
     ) throws -> DBSCANResult {
         let startTime = CFAbsoluteTimeGetCurrent()
 
-        print("🧠 GPU DBSCAN: Starting clustering for \(deviceCount) devices...")
-        print("   Parameters: epsilon=\(dbscanParams.epsilon)m, minPoints=\(dbscanParams.minPoints), threshold=\(dbscanParams.aggregationThreshold)")
+        logger.info("GPU DBSCAN: clustering \(deviceCount) devices (epsilon=\(dbscanParams.epsilon)m, minPoints=\(dbscanParams.minPoints))")
 
         // Create DBSCAN buffers
         let dbscanBuffers = try createDBSCANBuffers(deviceCount: deviceCount)
 
         // Monitor GPU memory usage
         let memoryUsage = getGPUMemoryUsage(deviceCount: deviceCount)
-        print("   🔧 GPU Memory: \(memoryUsage.description)")
 
         // Phase 1: Neighbor search with core point detection
-        print("   Phase 1: Neighbor search and core point detection...")
         let phase1Time = CFAbsoluteTimeGetCurrent()
         try executeDBSCANNeighborSearchKernel(
             coordsBuffer: coordsBuffer,
@@ -2208,7 +2192,6 @@ public final class CoordinateTransformer: Sendable {
         let phase1Duration = CFAbsoluteTimeGetCurrent() - phase1Time
 
         // Phase 2a: Initialize cluster labels for core points
-        print("   Phase 2a: Initialize cluster labels...")
         let phase2aTime = CFAbsoluteTimeGetCurrent()
         try executeDBSCANInitializeLabelsKernel(
             offlineFlagsBuffer: offlineFlagsBuffer,
@@ -2218,7 +2201,6 @@ public final class CoordinateTransformer: Sendable {
         let phase2aDuration = CFAbsoluteTimeGetCurrent() - phase2aTime
 
         // Phase 2b: Iterative label propagation until convergence
-        print("   Phase 2b: Label propagation...")
         let propagationTime = CFAbsoluteTimeGetCurrent()
         let iterations = try executeDBSCANLabelPropagation(
             coordsBuffer: coordsBuffer,
@@ -2232,7 +2214,6 @@ public final class CoordinateTransformer: Sendable {
         let propagationDuration = CFAbsoluteTimeGetCurrent() - propagationTime
 
         // Phase 2c: Finalize labels with path compression
-        print("   Phase 2c: Finalizing labels...")
         let phase2cTime = CFAbsoluteTimeGetCurrent()
         try executeDBSCANFinalizeLabelsKernel(
             offlineFlagsBuffer: offlineFlagsBuffer,
@@ -2251,13 +2232,7 @@ public final class CoordinateTransformer: Sendable {
             processingTime: processingTime
         )
 
-        print("GPU DBSCAN: Completed in \(String(format: "%.3f", processingTime * 1000))ms")
-        print("   Phase 1: \(String(format: "%.3f", phase1Duration * 1000))ms (neighbor search)")
-        print("   Phase 2a: \(String(format: "%.3f", phase2aDuration * 1000))ms (initialize labels)")
-        print("   Phase 2b: \(String(format: "%.3f", propagationDuration * 1000))ms (propagation, \(iterations) iterations)")
-        print("   Phase 2c: \(String(format: "%.3f", phase2cDuration * 1000))ms (finalize labels)")
-        print("   Results: \(result.clusterCount) clusters, \(result.corePoints) core points, \(result.noisePoints) noise")
-        print("   Memory: \(memoryUsage.description)")
+        logger.info("GPU DBSCAN: completed in \(String(format: "%.3f", processingTime * 1000))ms — \(result.clusterCount) clusters, \(result.corePoints) core points, \(result.noisePoints) noise")
 
         return result
     }
@@ -2379,7 +2354,6 @@ public final class CoordinateTransformer: Sendable {
 
         let pipelineState = try getOrCreatePipelineState(functionName: "dbscanLabelPropagationKernel")
 
-        print("   🔄 Starting DBSCAN label propagation (max \(maxIterations) iterations)...")
         let startTime = CFAbsoluteTimeGetCurrent()
 
         for iteration in 0..<maxIterations {
@@ -2427,11 +2401,6 @@ public final class CoordinateTransformer: Sendable {
 
             iterations = iteration + 1
 
-            // Log progress periodically for long-running clusters
-            if iteration > 0 && iteration % 10 == 0 {
-                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-                print("      Iteration \(iteration): labels still propagating (\(String(format: "%.1f", elapsed * 1000))ms elapsed)")
-            }
 
             if changed == 0 {
                 break // Converged
@@ -2441,11 +2410,9 @@ public final class CoordinateTransformer: Sendable {
         let propagationTime = CFAbsoluteTimeGetCurrent() - startTime
 
         if iterations >= maxIterations {
-            print("    WARNING: DBSCAN label propagation reached maximum iterations (\(maxIterations)) without convergence")
-            print("      This may indicate complex clustering topology or inadequate epsilon/minPoints parameters")
-            print("      Processing time: \(String(format: "%.3f", propagationTime * 1000))ms")
+            logger.warning("DBSCAN label propagation reached max iterations (\(maxIterations)) without convergence — may need epsilon/minPoints adjustment")
         } else {
-            print("   DBSCAN label propagation converged in \(iterations) iterations (\(String(format: "%.3f", propagationTime * 1000))ms)")
+            logger.debug("DBSCAN label propagation converged in \(iterations) iterations (\(String(format: "%.3f", propagationTime * 1000))ms)")
         }
 
         return iterations

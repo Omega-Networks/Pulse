@@ -152,7 +152,7 @@ extension ContentView {
                 dispatchNotification()
                 existingProvider.userNotifiedZabbix = true
             } else if lastUpdate < fiveMinutesAgo && existingProvider.userNotifiedZabbix == true {
-//                print("Zabbix data out of date but user notified. Doing nothing.")
+                // Zabbix data out of date but user already notified
             } else {
                 existingProvider.userNotifiedZabbix = false
                 UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["ZabbixUpdateNotification"])
