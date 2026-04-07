@@ -57,9 +57,6 @@ struct PowerSenseToolbarButton: View {
                     .foregroundStyle(powerSenseColor)
             }
             .disabled(!isPowerSenseConfigured)
-//            .sheet(isPresented: $showingDashboard) {
-//                PowerSenseDashboardView.integrated(modelContext: modelContext)
-//            }
 #endif
         }
         .task {
