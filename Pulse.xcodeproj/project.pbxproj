@@ -125,7 +125,6 @@
 		C97C4F3C2ACB7270009F3795 /* PreviewSampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97C4F3B2ACB7270009F3795 /* PreviewSampleData.swift */; };
 		C97C4F3E2ACB7CEC009F3795 /* PreviewTrait.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97C4F3D2ACB7CEC009F3795 /* PreviewTrait.swift */; };
 		C97DEDB52E816E4F002898A7 /* PowerSenseToolbarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 762AEEBA6971484482E4B4C0 /* PowerSenseToolbarButton.swift */; };
-		C97DEDBB2E822BF5002898A7 /* MapPolygonDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */; };
 		C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */; };
 		C9951ED62E8BF2380025C136 /* ClusterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */; };
 		C9951EDC2E8CDA0F0025C136 /* PowerSenseMonitorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9951EDA2E8CDA0F0025C136 /* PowerSenseMonitorService.swift */; };
@@ -273,7 +272,6 @@
 		C97136DE2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseZabbixResource.swift; sourceTree = "<group>"; };
 		C97C4F3B2ACB7270009F3795 /* PreviewSampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSampleData.swift; sourceTree = "<group>"; };
 		C97C4F3D2ACB7CEC009F3795 /* PreviewTrait.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewTrait.swift; sourceTree = "<group>"; };
-		C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapPolygonDemoView.swift; sourceTree = "<group>"; };
 		C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringActor.swift; sourceTree = "<group>"; };
 		C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterDetailView.swift; sourceTree = "<group>"; };
 		C9951EDA2E8CDA0F0025C136 /* PowerSenseMonitorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseMonitorService.swift; sourceTree = "<group>"; };
@@ -493,7 +491,6 @@
 				410A560F2D0F898B00C722E3 /* SyncDashboardView.swift */,
 				4107D86B2C2CD7FC00632BE4 /* ContentView+Toolbar.swift */,
 				41A0BE9B2C8FBF5C00C39B50 /* SettingsView.swift */,
-				C97DEDBA2E822BEF002898A7 /* MapPolygonDemoView.swift */,
 				C96191612ACA552F000198DB /* PulseApp.swift */,
 				C96191672ACA5530000198DB /* Assets.xcassets */,
 				C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */,
@@ -927,7 +924,6 @@
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
 				C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */,
 				C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */,
-				C97DEDBB2E822BF5002898A7 /* MapPolygonDemoView.swift in Sources */,
 				C96191D92ACA5B17000198DB /* EdgeLabel.swift in Sources */,
 				4177A5EC2CE3FF2E00A7C754 /* SyncButton.swift in Sources */,
 				C96192052ACA5D00000198DB /* EventModal.swift in Sources */,
