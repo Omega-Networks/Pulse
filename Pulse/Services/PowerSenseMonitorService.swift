@@ -100,6 +100,14 @@ final class PowerSenseMonitorService {
         await backgroundActor.resumePolling()
     }
 
+    /// Clear cached cluster results and invalidate clustering cache (after event deletion)
+    func clearCachedResults() async {
+        self.cachedResult = nil
+        self.lastUpdateTime = nil
+        await backgroundActor.resetOfflineDeviceCount()
+        logger.info("Cached cluster results cleared")
+    }
+
     /// Force refresh of cached clusters (manual refresh, background)
     func refreshClusters() async throws {
 
@@ -129,9 +137,10 @@ actor BackgroundMonitorActor {
     private let logger = Logger(subsystem: "pulse", category: "powerSenseBackgroundActor")
 
     // State
-    private var previousActiveEventCount = 0
+    private var previousOfflineDeviceCount = 0
     private var pollingTask: Task<Void, Never>?
     private var isPaused = false
+    private var shouldForceRecluster = false
 
     // Metrics
     private var pollCount = 0
@@ -160,14 +169,14 @@ actor BackgroundMonitorActor {
         logger.info("Performing initial clustering...")
         let result = try await clusteringService.clusterDevices()
 
-        // Step 3: Set baseline active event count for change detection
+        // Step 3: Set baseline offline device count for change detection
         let modelContext = ModelContext(modelContainer)
-        previousActiveEventCount = try modelContext.fetchCount(FetchDescriptor<PowerSenseEvent>(
-            predicate: #Predicate { $0.resolvedAt == nil }
+        previousOfflineDeviceCount = try modelContext.fetchCount(FetchDescriptor<PowerSenseDevice>(
+            predicate: #Predicate { $0.cachedIsOffline == true }
         ))
 
         let duration = CFAbsoluteTimeGetCurrent() - startTime
-        logger.info("Initialization complete in \(String(format: "%.1f", duration))s — \(self.previousActiveEventCount) active events")
+        logger.info("Initialization complete in \(String(format: "%.1f", duration))s — \(self.previousOfflineDeviceCount) offline devices")
 
         return result
     }
@@ -199,7 +208,12 @@ actor BackgroundMonitorActor {
 
     func resumePolling() {
         isPaused = false
-        logger.info("Polling resumed after maintenance")
+        shouldForceRecluster = true
+        logger.info("Polling resumed after maintenance — will force recluster on next cycle")
+    }
+
+    func resetOfflineDeviceCount() {
+        previousOfflineDeviceCount = 0
     }
 
     /// Refresh clusters (background)
@@ -210,11 +224,11 @@ actor BackgroundMonitorActor {
 
         let result = try await clusteringService.clusterDevices()
 
-        // Update baseline event count
+        // Update baseline offline device count
         let modelContext = ModelContext(modelContainer)
-        previousActiveEventCount = (try? modelContext.fetchCount(FetchDescriptor<PowerSenseEvent>(
-            predicate: #Predicate { $0.resolvedAt == nil }
-        ))) ?? previousActiveEventCount
+        previousOfflineDeviceCount = (try? modelContext.fetchCount(FetchDescriptor<PowerSenseDevice>(
+            predicate: #Predicate { $0.cachedIsOffline == true }
+        ))) ?? previousOfflineDeviceCount
 
         reclusterCount += 1
         logger.info("Cluster refresh complete: \(result.clusters.count) clusters")
@@ -252,11 +266,14 @@ actor BackgroundMonitorActor {
                 try await verifyActiveEventsWithEventGet()
             }
 
-            // Step 4: Check if active event count changed
+            // Step 4: Check if active event count changed or recluster forced after maintenance
             let changed = try await hasOfflineSetChanged()
+            let forceRecluster = shouldForceRecluster
+            if forceRecluster { shouldForceRecluster = false }
 
-            if changed {
-                logger.info("Active event count changed — re-clustering (background)...")
+            if changed || forceRecluster {
+                let reason = forceRecluster ? "forced after maintenance" : "event count changed"
+                logger.info("Re-clustering (background) — \(reason)...")
                 await clusteringService.invalidateCache()
                 let result = try await clusteringService.clusterDevices()
 
@@ -536,21 +553,21 @@ actor BackgroundMonitorActor {
         """)
     }
 
-    /// Check if active event count has changed (background, lightweight fetchCount)
+    /// Check if offline device count has changed (background, lightweight fetchCount)
     private func hasOfflineSetChanged() async throws -> Bool {
         let modelContext = ModelContext(modelContainer)
-        let activeCount = try modelContext.fetchCount(FetchDescriptor<PowerSenseEvent>(
-            predicate: #Predicate { $0.resolvedAt == nil }
+        let offlineCount = try modelContext.fetchCount(FetchDescriptor<PowerSenseDevice>(
+            predicate: #Predicate { $0.cachedIsOffline == true }
         ))
 
-        if activeCount != previousActiveEventCount {
-            let oldCount = previousActiveEventCount
-            previousActiveEventCount = activeCount
-            logger.info("Active event count changed: \(oldCount) → \(activeCount)")
+        if offlineCount != previousOfflineDeviceCount {
+            let oldCount = previousOfflineDeviceCount
+            previousOfflineDeviceCount = offlineCount
+            logger.info("Offline device count changed: \(oldCount) → \(offlineCount)")
             return true
         }
 
-        logger.debug("Active event count unchanged (\(activeCount))")
+        logger.debug("Offline device count unchanged (\(offlineCount))")
         return false
     }
 

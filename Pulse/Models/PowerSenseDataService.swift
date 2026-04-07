@@ -471,13 +471,18 @@ final class PowerSenseDataService: ObservableObject {
 
     // MARK: - Data Management
 
-    func clearAllPowerSenseEvents(monitorService: PowerSenseMonitorService? = nil) async {
+    func clearAllPowerSenseEvents(monitorService: PowerSenseMonitorService? = nil, clusteringService: ClusteringService? = nil) async {
         // Pause polling to prevent race with background event insertion
         await monitorService?.pauseForMaintenance()
 
         do {
             try await syncActor.clearEvents()
             await updateUIState()
+
+            // Invalidate clustering cache and clear UI overlay
+            await clusteringService?.invalidateCache()
+            await monitorService?.clearCachedResults()
+
             logger.info("PowerSense events cleared successfully")
         } catch {
             logger.error("Clear events failed: \(error.localizedDescription)")
@@ -487,13 +492,18 @@ final class PowerSenseDataService: ObservableObject {
         await monitorService?.resumeAfterMaintenance()
     }
 
-    func clearAllPowerSenseData() async {
+    func clearAllPowerSenseData(monitorService: PowerSenseMonitorService? = nil, clusteringService: ClusteringService? = nil) async {
+        await monitorService?.pauseForMaintenance()
         do {
             try await syncActor.clearAllData()
             await updateUIState()
+            await clusteringService?.invalidateCache()
+            await monitorService?.clearCachedResults()
+            logger.info("PowerSense data cleared successfully")
         } catch {
             logger.error("Clear data failed: \(error)")
         }
+        await monitorService?.resumeAfterMaintenance()
     }
 
     func getDataCounts() async throws -> (deviceCount: Int, eventCount: Int) {

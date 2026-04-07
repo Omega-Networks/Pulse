@@ -129,25 +129,25 @@ struct MapView: View {
     var body: some View {
         mainMapView
             .onAppear {
-                logger.info("🏁 MapView onAppear - PowerSense overlay enabled: \(showPowerSenseOverlay)")
+                logger.info("MapView onAppear - PowerSense overlay enabled: \(showPowerSenseOverlay)")
                 // Only initialize if PowerSense overlay is actually enabled
                 if showPowerSenseOverlay {
                     Task {
                         await showCachedClusters()
                     }
                 } else {
-                    logger.info("⏭️ Skipping PowerSense initialization - overlay disabled")
+                    logger.info("Skipping PowerSense initialization - overlay disabled")
                 }
             }
             .onDisappear {
                 // Clean up overlays to reduce MapKit rendering warnings
-                logger.debug("🧹 MapView disappearing - cleaning up overlays")
+                logger.debug("MapView disappearing - cleaning up overlays")
                 withAnimation(.easeInOut(duration: 0.2)) {
                     spatialClusters = []
                 }
             }
             .onChange(of: showPowerSenseOverlay) { _, isEnabled in
-                logger.info("🔄 PowerSense overlay toggled: \(isEnabled)")
+                logger.info("PowerSense overlay toggled: \(isEnabled)")
                 if isEnabled {
                     Task {
                         await showCachedClusters()
@@ -157,14 +157,24 @@ struct MapView: View {
                     withAnimation(.easeInOut(duration: 0.4)) {
                         spatialClusters = []
                     }
-                    logger.info("🧹 Cleared spatial clusters - overlay disabled")
+                    logger.info("Cleared spatial clusters - overlay disabled")
                 }
             }
             .onChange(of: monitorService.cachedResult) { _, newResult in
                 // Auto-update polygons when background polling detects changes
-                guard showPowerSenseOverlay, let result = newResult else { return }
+                guard showPowerSenseOverlay, let result = newResult else {
+                    // Clear stale clusters and stats when cachedResult is nil (e.g. after event deletion)
+                    if newResult == nil && (!spatialClusters.isEmpty || clusteringStats != nil) {
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            spatialClusters = []
+                            clusteringStats = nil
+                        }
+                        logger.info("Cleared spatial clusters and stats - cached result invalidated")
+                    }
+                    return
+                }
 
-                logger.info("🔄 Background update detected - refreshing \(result.clusters.count) polygons")
+                logger.info("Background update detected - refreshing \(result.clusters.count) polygons")
 
                 let stats = ClusteringStats(
                     totalDevices: result.totalDevices,
@@ -485,7 +495,7 @@ struct MapView: View {
         }
 
         if let result = cachedResult {
-            logger.info("✅ Loading \(result.clusters.count) cached clusters...")
+            logger.info("Loading \(result.clusters.count) cached clusters...")
 
             // Extract stats from result
             let stats = ClusteringStats(
@@ -506,7 +516,7 @@ struct MapView: View {
             }
 
             let duration = CFAbsoluteTimeGetCurrent() - startTime
-            logger.info("✅ Displayed \(result.clusters.count) cached clusters in \(String(format: "%.3f", duration))s")
+            logger.info("Displayed \(result.clusters.count) cached clusters in \(String(format: "%.3f", duration))s")
         } else {
             // Fallback: cache invalid or empty, trigger fresh clustering
             logger.info("Cache invalid or empty - requesting fresh clustering")
@@ -517,7 +527,7 @@ struct MapView: View {
     /// Request fresh clustering when cache is invalid (fallback path)
     private func requestFreshClustering() async {
         guard !isClusteringInProgress else {
-            logger.info("⏸️ Clustering already in progress, skipping")
+            logger.info("Clustering already in progress, skipping")
             return
         }
 
@@ -526,7 +536,7 @@ struct MapView: View {
         }
 
         do {
-            logger.info("🔄 Requesting fresh clustering from monitor service...")
+            logger.info("Requesting fresh clustering from monitor service...")
             try await monitorService.refreshClusters()
 
             // Show the newly cached clusters
@@ -536,7 +546,7 @@ struct MapView: View {
                 isClusteringInProgress = false
             }
         } catch {
-            logger.error("❌ Fresh clustering failed: \(error.localizedDescription)")
+            logger.error("Fresh clustering failed: \(error.localizedDescription)")
 
             await MainActor.run {
                 isClusteringInProgress = false

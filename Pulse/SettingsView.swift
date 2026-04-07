@@ -32,6 +32,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(PowerSenseMonitorService.self) private var monitorService: PowerSenseMonitorService?
+    @Environment(ClusteringService.self) private var clusteringService: ClusteringService?
     @StateObject private var tipManager = TipManager.shared
 
     private let logger = Logger(subsystem: "powersense", category: "settings")
@@ -394,7 +395,7 @@ struct SettingsView: View {
 
         logger.info("Deleting all PowerSense events...")
         let dataService = PowerSenseDataService(modelContext: modelContext)
-        await dataService.clearAllPowerSenseEvents(monitorService: monitorService)
+        await dataService.clearAllPowerSenseEvents(monitorService: monitorService, clusteringService: clusteringService)
         await refreshDataCounts()
 
         alertMessage = "All PowerSense events deleted"
@@ -408,7 +409,7 @@ struct SettingsView: View {
 
         logger.info("Deleting all PowerSense data...")
         let dataService = PowerSenseDataService(modelContext: modelContext)
-        await dataService.clearAllPowerSenseData()
+        await dataService.clearAllPowerSenseData(monitorService: monitorService, clusteringService: clusteringService)
         await refreshDataCounts()
 
         alertMessage = "All PowerSense data deleted"
@@ -476,12 +477,14 @@ struct SettingsView: View {
     
     private func refreshDataCounts() async {
         do {
+            // Use a fresh context to see changes made by background actors
+            let freshContext = ModelContext(modelContext.container)
             let deviceFetch = FetchDescriptor<PowerSenseDevice>()
-            powerSenseDeviceCount = try modelContext.fetchCount(deviceFetch)
-            
+            powerSenseDeviceCount = try freshContext.fetchCount(deviceFetch)
+
             let eventFetch = FetchDescriptor<PowerSenseEvent>()
-            powerSenseEventCount = try modelContext.fetchCount(eventFetch)
-            
+            powerSenseEventCount = try freshContext.fetchCount(eventFetch)
+
             logger.debug("Data counts refreshed: \(powerSenseDeviceCount) devices, \(powerSenseEventCount) events")
         } catch {
             logger.error("Failed to refresh data counts: \(error.localizedDescription)")
