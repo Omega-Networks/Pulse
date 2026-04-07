@@ -33,7 +33,6 @@ final class GPUDBSCANValidationTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         transformer = try CoordinateTransformer(projectionSystem: .nztm2000)
-        print("🚀 Initialized CoordinateTransformer for GPU DBSCAN validation")
     }
 
     override func tearDown() async throws {
@@ -45,8 +44,6 @@ final class GPUDBSCANValidationTests: XCTestCase {
 
     /// Test 1: Validate DBSCAN buffer creation and initialization
     func testDBSCANBufferCreation() async throws {
-        print("🧪 Testing DBSCAN buffer creation...")
-
         let deviceCount = 100
         let dbscanBuffers = try transformer.createDBSCANBuffers(deviceCount: deviceCount)
 
@@ -69,17 +66,12 @@ final class GPUDBSCANValidationTests: XCTestCase {
         XCTAssertTrue(labels.allSatisfy { $0 == -1 }, "All labels should be initialized to -1 (noise)")
         XCTAssertTrue(corePoints.allSatisfy { !$0 }, "All core points should be initialized to false")
         XCTAssertTrue(neighborCounts.allSatisfy { $0 == 0 }, "All neighbor counts should be initialized to 0")
-
-        print("   ✅ Buffer creation validation passed")
     }
 
     /// Test 2: Validate neighbor search kernel with known cluster data
     func testNeighborSearchKernel() async throws {
-        print("🧪 Testing neighbor search kernel...")
-
         // Create test data with a clear cluster in Wellington
         let testDevices = createWellingtonTestCluster()
-        print("   Created \(testDevices.count) test devices")
 
         // Build spatial index
         let spatialIndex = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
@@ -120,10 +112,6 @@ final class GPUDBSCANValidationTests: XCTestCase {
         let offlineDevices = testDevices.filter { $0.isOffline == true }
         let detectedCorePoints = corePoints.enumerated().filter { _, isCore in isCore }.count
 
-        print("   Offline devices: \(offlineDevices.count)")
-        print("   Detected core points: \(detectedCorePoints)")
-        print("   Max neighbor count: \(neighborCounts.max() ?? 0)")
-
         // Assertions
         XCTAssertGreaterThan(detectedCorePoints, 0, "Should detect some core points in cluster")
         XCTAssertLessThanOrEqual(detectedCorePoints, offlineDevices.count, "Core points should not exceed offline devices")
@@ -134,17 +122,12 @@ final class GPUDBSCANValidationTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(neighborCounts[i], 3, "Core point should have at least minPoints neighbors")
             }
         }
-
-        print("   ✅ Neighbor search kernel validation passed")
     }
 
     /// Test 3: Validate complete GPU DBSCAN pipeline with simple cluster
     func testCompleteGPUDBSCANPipeline() async throws {
-        print("🧪 Testing complete GPU DBSCAN pipeline...")
-
         // Create simple test cluster
         let testDevices = createSimpleTestCluster()
-        print("   Created test cluster with \(testDevices.count) devices")
 
         // Build spatial index
         let spatialIndex = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
@@ -174,11 +157,6 @@ final class GPUDBSCANValidationTests: XCTestCase {
 
         let processingTime = CFAbsoluteTimeGetCurrent() - startTime
 
-        // Validate results
-        print("   Results: \(result.clusterCount) clusters, \(result.corePoints) core points, \(result.noisePoints) noise")
-        print("   Processing time: \(String(format: "%.3f", processingTime * 1000))ms")
-        print("   Iterations to convergence: \(result.iterations)")
-
         // Performance assertion
         XCTAssertLessThan(processingTime, 0.1, "GPU DBSCAN should complete in under 100ms for small dataset")
 
@@ -197,16 +175,11 @@ final class GPUDBSCANValidationTests: XCTestCase {
             let uniqueClusters = Set(validLabels)
             XCTAssertEqual(uniqueClusters.count, result.clusterCount, "Cluster count should match unique labels")
         }
-
-        print("   ✅ Complete pipeline validation passed")
     }
 
     /// Test 4: Validate edge cases
     func testEdgeCases() async throws {
-        print("🧪 Testing edge cases...")
-
         // Test 4a: No offline devices
-        print("   Testing no offline devices...")
         let onlineOnlyDevices = createOnlineOnlyDevices()
         let spatialIndex1 = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
         try await spatialIndex1.buildIndex(devices: onlineOnlyDevices)
@@ -232,7 +205,6 @@ final class GPUDBSCANValidationTests: XCTestCase {
         XCTAssertEqual(result1.corePoints, 0, "No offline devices should result in zero core points")
 
         // Test 4b: Single offline device (should be noise)
-        print("   Testing single offline device...")
         let singleOfflineDevices = createSingleOfflineDevice()
         let spatialIndex2 = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
         try await spatialIndex2.buildIndex(devices: singleOfflineDevices)
@@ -256,8 +228,6 @@ final class GPUDBSCANValidationTests: XCTestCase {
 
         XCTAssertEqual(result2.clusterCount, 0, "Single offline device should not form cluster")
         XCTAssertEqual(result2.noisePoints, 1, "Single offline device should be classified as noise")
-
-        print("   ✅ Edge cases validation passed")
     }
 
     // MARK: - Test Data Generation
@@ -359,11 +329,8 @@ final class GPUDBSCANValidationTests: XCTestCase {
 
     /// Test Phase 3: Convex hull computation and validation
     func testConvexHullGeneration() async throws {
-        print("🧪 Phase 3: Testing convex hull generation...")
-
         // Create irregular cluster (pentagon shape + internal points)
         let testDevices = createIrregularTestCluster()
-        print("   Created \(testDevices.count) test devices in irregular pattern")
 
         let spatialIndex = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
         try await spatialIndex.buildIndex(devices: testDevices)
@@ -390,8 +357,6 @@ final class GPUDBSCANValidationTests: XCTestCase {
             maxPointsPerCluster: testDevices.count
         )
 
-        print("   ✅ Hull computation completed in \(String(format: "%.1f", hullResult.totalTime * 1000))ms")
-
         // Validate hull results
         let hullCountsPointer = hullResult.hullBuffers.hullCounts.contents.bindMemory(to: Int32.self, capacity: 1)
         let hullCount = Int(hullCountsPointer[0])
@@ -413,26 +378,19 @@ final class GPUDBSCANValidationTests: XCTestCase {
             let cross = (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)
             if cross <= 0 {
                 isConvex = false
-                print("   ⚠️ Non-convex turn at vertex \(i): cross = \(cross)")
             }
         }
 
         XCTAssertTrue(isConvex, "Hull should be convex (all turns should be in same direction)")
-        print("   ✅ Hull convexity validation passed")
 
         // Validate hull area is reasonable (should be smaller than bounding box)
         let hullArea = calculatePolygonArea(hullVertices.map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) })
         XCTAssertGreaterThan(hullArea, 0, "Hull should have positive area")
-
-        print("   📊 Hull metrics: \(hullCount) vertices, area: \(String(format: "%.3f", hullArea))")
     }
 
     /// Test Phase 3: Confidence score calculation
     func testConfidenceCalculation() async throws {
-        print("🧪 Phase 3: Testing confidence calculation...")
-
         let testDevices = createDenseOfflineCluster()
-        print("   Created \(testDevices.count) devices for confidence testing")
 
         let spatialIndex = GPUSpatialIndexManager<MockSpatialDevice>(transformer: transformer)
         try await spatialIndex.buildIndex(devices: testDevices)
@@ -472,18 +430,12 @@ final class GPUDBSCANValidationTests: XCTestCase {
 
         // For dense offline cluster, confidence should be high
         XCTAssertGreaterThan(confidence, 0.8, "Dense offline cluster should have high confidence")
-
-        print("   📊 Confidence metrics: \(offlineCount)/\(totalCount) = \(String(format: "%.3f", confidence))")
-        print("   ✅ Confidence calculation validation passed")
     }
 
     /// Test Phase 3: End-to-end performance validation
     func testPhase3Performance() async throws {
-        print("🧪 Phase 3: Testing end-to-end performance...")
-
         // Create large test dataset
         let testDevices = createLargeTestDataset(deviceCount: 1000)
-        print("   Created \(testDevices.count) devices for performance testing")
 
         let startTime = CFAbsoluteTimeGetCurrent()
 
@@ -523,14 +475,6 @@ final class GPUDBSCANValidationTests: XCTestCase {
         // Performance assertions
         XCTAssertLessThan(hullResult.totalTime, 0.1, "Phase 3 should complete in <100ms")
         XCTAssertLessThan(totalTime, 0.5, "End-to-end should complete in <500ms")
-
-        print("   ⏱️ Performance metrics:")
-        print("      Sort: \(String(format: "%.1f", hullResult.sortTime * 1000))ms")
-        print("      Hull: \(String(format: "%.1f", hullResult.hullTime * 1000))ms")
-        print("      Confidence: \(String(format: "%.1f", hullResult.confidenceTime * 1000))ms")
-        print("      Total Phase 3: \(String(format: "%.1f", hullResult.totalTime * 1000))ms")
-        print("      End-to-end: \(String(format: "%.1f", totalTime * 1000))ms")
-        print("   ✅ Performance validation passed")
     }
 
     // MARK: - Phase 3 Helper Methods

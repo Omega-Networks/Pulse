@@ -42,8 +42,6 @@ final class ConvexHullTests: XCTestCase {
         // Create clustering actor
         let clusterConfig = SpatialClusteringConfig()
         clusteringActor = try SpatialClusteringActor(modelContainer: modelContainer, config: clusterConfig)
-
-        print("🚀 Initialized test environment for convex hull testing")
     }
 
     override func tearDown() async throws {
@@ -55,8 +53,6 @@ final class ConvexHullTests: XCTestCase {
     // MARK: - Hull Computation Tests
 
     func testConvexHullWithRandomPoints() async throws {
-        print("🔺 Testing CPU convex hull with random points")
-
         // Create 50 random devices in Wellington region
         let context = ModelContext(modelContainer)
         let centerLat = -41.2924
@@ -87,24 +83,16 @@ final class ConvexHullTests: XCTestCase {
         // Run clustering
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Generated 50 random points")
-        print("   Found \(result.clusters.count) clusters")
-
         for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): \(cluster.hullVertices.count) hull vertices")
             XCTAssertGreaterThanOrEqual(cluster.hullVertices.count, 3, "Hull should have at least 3 vertices")
             XCTAssertLessThanOrEqual(cluster.hullVertices.count, 50, "Hull should respect 50-vertex limit")
 
             // Verify hull is closed (first and last are different but form a loop)
             XCTAssertFalse(cluster.hullVertices.isEmpty, "Hull should not be empty")
         }
-
-        print("   ✅ Convex hull test with random points passed!")
     }
 
     func testConvexHullWithCollinearPoints() async throws {
-        print("🔺 Testing CPU convex hull with collinear points")
-
         // Create collinear devices (straight line)
         let context = ModelContext(modelContainer)
         let baseCoord = CLLocationCoordinate2D(latitude: -41.2924, longitude: 174.7787)
@@ -132,21 +120,13 @@ final class ConvexHullTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Generated 20 collinear points")
-        print("   Found \(result.clusters.count) clusters")
-
         // Collinear points should get bounding box fallback
         for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): \(cluster.hullVertices.count) hull vertices (fallback)")
             XCTAssertGreaterThanOrEqual(cluster.hullVertices.count, 3, "Fallback hull should have at least 3 vertices")
         }
-
-        print("   ✅ Convex hull test with collinear points passed!")
     }
 
     func testConvexHullWithDuplicatePoints() async throws {
-        print("🔺 Testing CPU convex hull with duplicate points")
-
         // Create devices at same location (duplicates)
         let context = ModelContext(modelContainer)
         let fixedLat = -41.2924
@@ -175,20 +155,12 @@ final class ConvexHullTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Generated 30 devices with duplicates (3 unique locations)")
-        print("   Found \(result.clusters.count) clusters")
-
         for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): \(cluster.hullVertices.count) vertices from duplicate points")
             XCTAssertGreaterThanOrEqual(cluster.hullVertices.count, 3, "Hull should handle duplicates")
         }
-
-        print("   ✅ Convex hull test with duplicate points passed!")
     }
 
     func testConvexHullVertexLimiting() async throws {
-        print("🔺 Testing CPU convex hull vertex limiting (<50 vertices)")
-
         // Create large circular cluster (200 points)
         let context = ModelContext(modelContainer)
         let centerLat = -41.2924
@@ -222,22 +194,14 @@ final class ConvexHullTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Generated 200 points in circular pattern")
-        print("   Found \(result.clusters.count) clusters")
-
         for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): \(cluster.hullVertices.count) vertices (limit applied)")
             XCTAssertLessThanOrEqual(cluster.hullVertices.count, 50, "Hull MUST respect 50-vertex limit for UI performance")
         }
-
-        print("   ✅ Convex hull vertex limiting test passed!")
     }
 
     // MARK: - Performance Tests
 
     func testConvexHullPerformance() async throws {
-        print("⏱️ Testing CPU convex hull performance")
-
         // Create large cluster (1000 points)
         let context = ModelContext(modelContainer)
         let centerLat = -41.2924
@@ -268,22 +232,12 @@ final class ConvexHullTests: XCTestCase {
         let result = try await clusteringActor.clusterAllDevices()
         let totalTime = CFAbsoluteTimeGetCurrent() - startTime
 
-        print("   Generated 1000 points")
-        print("   Total clustering time: \(String(format: "%.1f", totalTime * 1000))ms")
-        print("   Found \(result.clusters.count) clusters")
-
         // Phase 3 should complete in < 100ms per requirement
         XCTAssertLessThan(result.processingTime, 0.5, "Clustering should complete in < 500ms")
 
-        for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): \(cluster.devices.count) devices → \(cluster.hullVertices.count) vertices")
-        }
-
-        print("   ✅ Convex hull performance test passed!")
     }
 
     func testMultiClusterHullPerformance() async throws {
-        print("⏱️ Testing multi-cluster hull performance")
 
         // Create 5 separate clusters with 200 devices each
         let context = ModelContext(modelContainer)
@@ -322,17 +276,7 @@ final class ConvexHullTests: XCTestCase {
         let result = try await clusteringActor.clusterAllDevices()
         let totalTime = CFAbsoluteTimeGetCurrent() - startTime
 
-        print("   Generated 5 clusters with 200 devices each (1000 total)")
-        print("   Total clustering time: \(String(format: "%.1f", totalTime * 1000))ms")
-        print("   Found \(result.clusters.count) clusters")
-
         XCTAssertGreaterThan(result.clusters.count, 0, "Should find multiple clusters")
         XCTAssertLessThan(totalTime, 1.0, "Multi-cluster processing should complete in < 1s")
-
-        for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): \(cluster.devices.count) devices, \(cluster.hullVertices.count) vertices, confidence: \(String(format: "%.2f", cluster.confidenceRating))")
-        }
-
-        print("   ✅ Multi-cluster hull performance test passed!")
     }
 }

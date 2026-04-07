@@ -40,8 +40,6 @@ final class SamplingAndConfidenceTests: XCTestCase {
 
         let clusterConfig = SpatialClusteringConfig()
         clusteringActor = try SpatialClusteringActor(modelContainer: modelContainer, config: clusterConfig)
-
-        print("🚀 Initialized test environment for sampling and confidence testing")
     }
 
     override func tearDown() async throws {
@@ -53,8 +51,6 @@ final class SamplingAndConfidenceTests: XCTestCase {
     // MARK: - Sampling Tests
 
     func testFarthestPointSamplingWithLargeCluster() async throws {
-        print("🎯 Testing farthest-point sampling with large cluster")
-
         // Create 2000 devices in tight cluster (will trigger sampling at 1000 threshold)
         let context = ModelContext(modelContainer)
         let centerLat = -41.2924
@@ -83,22 +79,14 @@ final class SamplingAndConfidenceTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Generated 2000 devices")
-        print("   Found \(result.clusters.count) clusters")
-
         // Verify sampling was applied (check logs) and hulls are still valid
         for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): \(cluster.devices.count) devices → \(cluster.hullVertices.count) hull vertices")
             XCTAssertGreaterThanOrEqual(cluster.hullVertices.count, 3, "Sampled cluster should have valid hull")
             XCTAssertLessThanOrEqual(cluster.hullVertices.count, 50, "Hull should respect vertex limit")
         }
-
-        print("   ✅ Farthest-point sampling test passed!")
     }
 
     func testSamplingPreservesExtrema() async throws {
-        print("🎯 Testing that sampling preserves extrema points")
-
         // Create rectangular cluster with clear extrema
         let context = ModelContext(modelContainer)
         let minLat = -41.30, maxLat = -41.28
@@ -155,9 +143,6 @@ final class SamplingAndConfidenceTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Generated 1504 devices with explicit extrema")
-        print("   Found \(result.clusters.count) clusters")
-
         // Verify hull includes bounding box corners (extrema preserved)
         for cluster in result.clusters {
             let hullLats = cluster.hullVertices.map { $0.latitude }
@@ -168,23 +153,17 @@ final class SamplingAndConfidenceTests: XCTestCase {
             let hullMinLon = hullLons.min() ?? 0
             let hullMaxLon = hullLons.max() ?? 0
 
-            print("   Cluster \(cluster.clusterId): hull bounds (\(String(format: "%.4f", hullMinLat)), \(String(format: "%.4f", hullMinLon))) to (\(String(format: "%.4f", hullMaxLat)), \(String(format: "%.4f", hullMaxLon)))")
-
             // Hull should approximately match input bounds (allowing for tolerance)
             XCTAssertLessThan(abs(hullMinLat - minLat), 0.001, "Hull should preserve min latitude")
             XCTAssertLessThan(abs(hullMaxLat - maxLat), 0.001, "Hull should preserve max latitude")
             XCTAssertLessThan(abs(hullMinLon - minLon), 0.001, "Hull should preserve min longitude")
             XCTAssertLessThan(abs(hullMaxLon - maxLon), 0.001, "Hull should preserve max longitude")
         }
-
-        print("   ✅ Extrema preservation test passed!")
     }
 
     // MARK: - Confidence Tests
 
     func testConfidenceWithDenseOutageCluster() async throws {
-        print("📊 Testing confidence calculation with dense outage cluster (90% offline)")
-
         let context = ModelContext(modelContainer)
         let centerLat = -41.2924
         let centerLon = 174.7787
@@ -224,21 +203,13 @@ final class SamplingAndConfidenceTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Created 100 devices (90 offline, 10 online)")
-        print("   Found \(result.clusters.count) clusters")
-
         for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): confidence = \(String(format: "%.2f", cluster.confidenceRating))")
             // Should have high confidence (close to 0.9)
             XCTAssertGreaterThan(cluster.confidenceRating, 0.7, "Dense cluster should have high confidence")
         }
-
-        print("   ✅ Dense outage confidence test passed!")
     }
 
     func testConfidenceWithSparseOutageCluster() async throws {
-        print("📊 Testing confidence calculation with sparse outage cluster (30% offline)")
-
         let context = ModelContext(modelContainer)
         let centerLat = -41.2924
         let centerLon = 174.7787
@@ -277,22 +248,14 @@ final class SamplingAndConfidenceTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Created 100 devices (30 offline, 70 online)")
-        print("   Found \(result.clusters.count) clusters")
-
         for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): confidence = \(String(format: "%.2f", cluster.confidenceRating))")
             // Should have lower confidence (around 0.3)
             XCTAssertGreaterThan(cluster.confidenceRating, 0.0, "Sparse cluster should have some confidence")
             XCTAssertLessThan(cluster.confidenceRating, 0.6, "Sparse cluster should have lower confidence")
         }
-
-        print("   ✅ Sparse outage confidence test passed!")
     }
 
     func testConfidenceWithBackgroundNoise() async throws {
-        print("📊 Testing confidence with background noise outside cluster")
-
         let context = ModelContext(modelContainer)
         let clusterLat = -41.2924
         let clusterLon = 174.7787
@@ -331,22 +294,13 @@ final class SamplingAndConfidenceTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Created 50 clustered offline + 200 background online")
-        print("   Found \(result.clusters.count) clusters")
-
         for cluster in result.clusters {
-            print("   Cluster \(cluster.clusterId): \(cluster.devices.count) devices, confidence = \(String(format: "%.2f", cluster.confidenceRating))")
-
             // Confidence should reflect ratio within hull, not just cluster
             XCTAssertGreaterThan(cluster.confidenceRating, 0.0, "Should have measurable confidence")
         }
-
-        print("   ✅ Background noise confidence test passed!")
     }
 
     func testConfidenceCalculationAccuracy() async throws {
-        print("📊 Testing confidence calculation accuracy with known ratios")
-
         let context = ModelContext(modelContainer)
         let centerLat = -41.2924
         let centerLon = 174.7787
@@ -384,18 +338,12 @@ final class SamplingAndConfidenceTests: XCTestCase {
 
         let result = try await clusteringActor.clusterAllDevices()
 
-        print("   Created 100 devices (50 offline, 50 online)")
-        print("   Found \(result.clusters.count) clusters")
-
         for cluster in result.clusters {
             let confidence = cluster.confidenceRating
-            print("   Cluster \(cluster.clusterId): confidence = \(String(format: "%.3f", confidence))")
 
             // Should be approximately 0.5 (allowing for clustering effects)
             XCTAssertGreaterThan(confidence, 0.3, "50/50 ratio should yield ~0.5 confidence (lower bound)")
             XCTAssertLessThan(confidence, 0.7, "50/50 ratio should yield ~0.5 confidence (upper bound)")
         }
-
-        print("   ✅ Confidence accuracy test passed!")
     }
 }
