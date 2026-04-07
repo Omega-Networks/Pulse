@@ -66,46 +66,6 @@ public enum ClusteringError: LocalizedError {
     }
 }
 
-// MARK: - Protocol Abstractions
-
-/// Protocol defining spatial indexing capabilities for any device type
-public protocol SpatialIndexer: Sendable {
-    associatedtype SpatialDeviceType: SpatialDevice & Sendable
-
-    /// Build spatial index from device collection
-    func buildIndex(devices: [SpatialDeviceType]) async throws
-
-    /// Find neighbors within epsilon distance of target device
-    func findNeighbors(for deviceId: String, within epsilon: Double) async throws -> [SpatialDeviceType]
-
-    /// Find neighbors within epsilon distance of a coordinate
-    func findNeighbors(at coordinate: CLLocationCoordinate2D, within epsilon: Double) async throws -> [SpatialDeviceType]
-
-    /// Query devices within a geographic region
-    func queryDevices(in region: GeographicBounds) async throws -> [SpatialDeviceType]
-
-    /// Get total number of indexed devices
-    var deviceCount: Int { get async }
-
-    /// Check if index is ready for queries
-    var isIndexReady: Bool { get async }
-
-    /// Performance metrics for monitoring
-    var performanceMetrics: SpatialIndexMetrics { get async }
-}
-
-/// Protocol defining clustering capabilities
-public protocol SpatialClusterer: Sendable {
-    associatedtype Device: SpatialDevice & Sendable
-    associatedtype ClusterResult
-
-    /// Perform clustering on indexed devices
-    func cluster(devices: [Device], parameters: ClusteringParameters) async throws -> ClusterResult
-
-    /// Validate clustering configuration
-    func validateParameters(_ parameters: ClusteringParameters) throws
-}
-
 // MARK: - Configuration Types
 
 public struct ClusteringParameters: Sendable {

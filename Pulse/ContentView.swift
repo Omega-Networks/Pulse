@@ -30,11 +30,6 @@ import UserNotifications
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    
-    // Add transaction control
-    private let updateQueue = DispatchQueue(label: "com.pulse.mapupdates")
-    @State private var isProcessingUpdates = false
-    
     @Environment(\.openWindow) var openWindow
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \SiteGroup.name, order: .forward) private var siteGroups: [SiteGroup]
@@ -67,8 +62,6 @@ struct ContentView: View {
     //Properties for the iOS version
     @State private var eventMonitoringTimer: Timer?
     @State var zabbixUpdateTimer: Timer?
-    @State private var isMonitoringEnabled = false
-    
     //Properties for notification handling
     @State private var showingNotificationAlert = false
     let notificationHandler = NotificationHandler()

@@ -245,18 +245,3 @@ struct PowerSenseEventProperties: Decodable {
                Double(clock) != nil
     }
 }
-
-// MARK: - OutageStatistics
-
-/// Statistics summary for PowerSense outages
-struct OutageStatistics {
-    let totalOutages: Int
-    let activeOutages: Int
-    let resolvedOutages: Int
-    let averageOutageDuration: TimeInterval?
-
-    var outageRate: Double {
-        guard totalOutages > 0 else { return 0.0 }
-        return Double(activeOutages) / Double(totalOutages)
-    }
-}

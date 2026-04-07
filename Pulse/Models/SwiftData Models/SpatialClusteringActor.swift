@@ -45,27 +45,6 @@ struct ClusterResult: Sendable, Equatable {
     }
 }
 
-struct SimpleCluster: Sendable, Identifiable {
-    let id: Int
-    let deviceCount: Int
-    let latitude: Double
-    let longitude: Double
-    let severity: String
-
-    var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-    }
-
-    var color: String {
-        switch severity {
-        case "critical": return "red"
-        case "major": return "orange"
-        case "moderate": return "yellow"
-        default: return "blue"
-        }
-    }
-}
-
 private struct PointKey: Hashable, Sendable {
     let coord: CLLocationCoordinate2D
 
@@ -544,13 +523,6 @@ actor SpatialClusteringActor {
         })
     }
 
-    private func orientation(_ p: CLLocationCoordinate2D, _ q: CLLocationCoordinate2D, _ r: CLLocationCoordinate2D) -> Int {
-        let val = (q.longitude - p.longitude) * (r.latitude - p.latitude) -
-                  (q.latitude - p.latitude) * (r.longitude - p.longitude)
-        if abs(val) < 1e-10 { return 0 }
-        return val > 0 ? 1 : 2
-    }
-
     // MARK: - Gradient Layers
 
     nonisolated func generateGradientLayers(
@@ -736,8 +708,4 @@ final class ClusteringService: @unchecked Sendable {
     func isReady() async -> Bool {
         return await actor.isIndexerReady()
     }
-}
-
-private func coordinatesEqual(_ lhs: CLLocationCoordinate2D, _ rhs: CLLocationCoordinate2D) -> Bool {
-    return abs(lhs.latitude - rhs.latitude) < 1e-9 && abs(lhs.longitude - rhs.longitude) < 1e-9
 }
