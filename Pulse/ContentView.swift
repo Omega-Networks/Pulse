@@ -64,9 +64,6 @@ struct ContentView: View {
     //Property for PowerSense overlay toggle
     @State var showPowerSenseOverlay = false
 
-    //Property for spatial clustering test view
-    @State var showSpatialClusteringView = false
-    
     //Properties for the iOS version
     @State private var eventMonitoringTimer: Timer?
     @State var zabbixUpdateTimer: Timer?
@@ -138,10 +135,6 @@ struct ContentView: View {
                     )
             }
 #endif
-        }
-        .sheet(isPresented: $showSpatialClusteringView) {
-            SpatialClusteringTestView()
-                .frame(minWidth: 800, minHeight: 600)
         }
         .alert(isPresented: $showingNotificationAlert) {
             Alert(

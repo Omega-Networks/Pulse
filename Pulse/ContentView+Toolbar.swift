@@ -87,13 +87,6 @@ extension ContentView {
 
 
         ToolbarItem() {
-            Button("View Clustering") {
-                showSpatialClusteringView = true
-            }
-            .help("Open spatial clustering visualization")
-        }
-
-        ToolbarItem() {
             // PowerSense overlay toggle
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.3)) {

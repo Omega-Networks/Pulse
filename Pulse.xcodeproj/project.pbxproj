@@ -117,7 +117,6 @@
 		C961920F2ACA5D32000198DB /* TimeCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961920E2ACA5D32000198DB /* TimeCell.swift */; };
 		C96192112ACA5D3D000198DB /* UpdateModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96192102ACA5D3D000198DB /* UpdateModal.swift */; };
 		C962F8EE2E606BBE00B182AE /* AddSiteWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */; };
-		C963258C2E86BAE30018D2CD /* SpatialClusteringTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C963258B2E86BAE30018D2CD /* SpatialClusteringTestView.swift */; };
 		C96F2F952E719BC2007BADE5 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96F2F942E719BBC007BADE5 /* AppConfiguration.swift */; };
 		C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97136DA2E7966A90017CBF7 /* PowerSenseDevice.swift */; };
 		C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97136DB2E7966A90017CBF7 /* PowerSenseEvent.swift */; };
@@ -265,7 +264,6 @@
 		C961920E2ACA5D32000198DB /* TimeCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeCell.swift; sourceTree = "<group>"; };
 		C96192102ACA5D3D000198DB /* UpdateModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateModal.swift; sourceTree = "<group>"; };
 		C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddSiteWindow.swift; sourceTree = "<group>"; };
-		C963258B2E86BAE30018D2CD /* SpatialClusteringTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringTestView.swift; sourceTree = "<group>"; };
 		C96F2F942E719BBC007BADE5 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
 		C97136DA2E7966A90017CBF7 /* PowerSenseDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDevice.swift; sourceTree = "<group>"; };
 		C97136DB2E7966A90017CBF7 /* PowerSenseEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseEvent.swift; sourceTree = "<group>"; };
@@ -447,7 +445,6 @@
 			isa = PBXGroup;
 			children = (
 				C9951ED52E8BF2380025C136 /* ClusterDetailView.swift */,
-				C963258B2E86BAE30018D2CD /* SpatialClusteringTestView.swift */,
 			);
 			path = PowerSenseViews;
 			sourceTree = "<group>";
@@ -896,7 +893,6 @@
 				410A16162BFADBBB009DFEE1 /* SelectedChart.swift in Sources */,
 				C96191A42ACA572E000198DB /* DeviceRole.swift in Sources */,
 				06E9CC462EE03377008DE369 /* PowerSenseDataService.swift in Sources */,
-				C963258C2E86BAE30018D2CD /* SpatialClusteringTestView.swift in Sources */,
 				41D7B54E2C28EBB600D11F4B /* UpdateParameters.swift in Sources */,
 				4114A6EC2BA3B7EF00ABEC8C /* InterfaceStatusCell.swift in Sources */,
 				C97C4F3E2ACB7CEC009F3795 /* PreviewTrait.swift in Sources */,
