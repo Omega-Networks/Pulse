@@ -282,6 +282,11 @@ enum SecureEnclaveKeyManager {
 }
 
 // MARK: - OpenSSH framing helper
+//
+// Scoped private to this file: these helpers have a single call site (the
+// OpenSSH wire-format encoder above) and aren't yet general-purpose. Promote to
+// Extensions/Data+Extensions.swift only when a second call site appears outside
+// the SSH subsystem — premature promotion turns a local helper into an API surface.
 
 private extension Data {
     /// Appends a length-prefixed string. The length is a big-endian uint32.
@@ -292,7 +297,8 @@ private extension Data {
     /// Appends a length-prefixed binary string. The length is a big-endian uint32.
     mutating func appendOpenSSHString(_ payload: Data) {
         var length = UInt32(payload.count).bigEndian
-        withUnsafeBytes(of: &length) { append(contentsOf: $0) }
+        // Disambiguate from Data's own withUnsafeBytes by qualifying the free function.
+        Swift.withUnsafeBytes(of: &length) { append(contentsOf: $0) }
         append(payload)
     }
 }
