@@ -177,22 +177,31 @@ struct SSHCredentialsSettings: View {
 
     // MARK: - Delete
 
+    /// Deletes a credential in the correct order: secret material first, then the
+    /// SwiftData record. If the secret cleanup fails the model is left alone so
+    /// the operator can retry — an orphaned SE key or PEM with no metadata is a
+    /// worse end state than a row the user can delete again.
     private func deleteCredential(_ cred: SSHCredential) {
         let id = cred.id
         let tier = cred.tier
-        modelContext.delete(cred)
+        let label = cred.label
 
         Task {
-            if tier == .secureEnclave {
-                SecureEnclaveKeyManager.deleteKey(for: id)
-            } else {
-                await Configuration.shared.deleteSSHMaterial(for: id)
+            do {
+                try await deleteSecretMaterial(for: id, tier: tier)
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Couldn't delete \(label)'s secret material: \(error). The credential record is unchanged — try again or check Keychain Access."
+                }
+                logger.error("Aborting credential delete for \(id) (\(tier.rawValue)): \(error)")
+                return
             }
 
-            // Clear any Device.defaultCredentialID pointers — leaves the model
-            // consistent without forcing the SSHCredentialsSettings UI to know
-            // about every consuming model.
+            // Secret is gone — remove the row and clear any Device pointers in
+            // the same transaction. Explicit save so the cleanup is durable even
+            // if SwiftData's autosave hasn't fired yet.
             await MainActor.run {
+                modelContext.delete(cred)
                 let devices = (try? modelContext.fetch(
                     FetchDescriptor<Device>(
                         predicate: #Predicate { $0.defaultCredentialID == id }
@@ -201,8 +210,30 @@ struct SSHCredentialsSettings: View {
                 for device in devices {
                     device.defaultCredentialID = nil
                 }
+                do {
+                    try modelContext.save()
+                } catch {
+                    errorMessage = "Device pointer cleanup save failed: \(error). The secret and credential metadata are already gone — re-open Settings to verify state."
+                }
             }
             logger.info("Deleted credential \(id) (\(tier.rawValue))")
+        }
+    }
+
+    private func deleteSecretMaterial(for credentialID: UUID, tier: SSHCredentialTier) async throws {
+        switch tier {
+        case .secureEnclave:
+            try SecureEnclaveKeyManager.deleteKey(for: credentialID)
+        case .portable:
+            let ok = await Configuration.shared.deleteSSHMaterial(for: credentialID)
+            guard ok else { throw SSHCredentialDeletionError.keychainCleanupFailed }
+        }
+    }
+
+    private enum SSHCredentialDeletionError: Error, CustomStringConvertible {
+        case keychainCleanupFailed
+        var description: String {
+            "One or more Keychain material entries refused to delete."
         }
     }
 

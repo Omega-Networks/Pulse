@@ -475,11 +475,28 @@ final class Configuration: @unchecked Sendable {
         return true
     }
 
-    /// Removes both the private key PEM and the passphrase for a credential. Idempotent.
+    /// Removes both the private key PEM and the passphrase for a credential.
+    ///
+    /// Treats `errSecItemNotFound` as success so the caller doesn't need to know
+    /// whether the entry was present. Returns `true` only when *both* Keychain
+    /// deletions either removed an entry or confirmed none existed. Surfacing the
+    /// success bit lets `SSHCredentialsSettings` keep the SwiftData record around
+    /// for a retry when cleanup partially fails — an orphaned PEM with no
+    /// associated credential metadata is worse than an unremoved row.
+    ///
     /// Secure Enclave residency is handled separately by `SecureEnclaveKeyManager`.
-    func deleteSSHMaterial(for credentialID: UUID) {
-        _ = deleteFromKeychain(key: Keys.sshPrivateKeyKey(for: credentialID))
-        _ = deleteFromKeychain(key: Keys.sshPassphraseKey(for: credentialID))
+    @discardableResult
+    func deleteSSHMaterial(for credentialID: UUID) -> Bool {
+        let keyStatus = deleteFromKeychain(key: Keys.sshPrivateKeyKey(for: credentialID))
+        let passphraseStatus = deleteFromKeychain(key: Keys.sshPassphraseKey(for: credentialID))
+        let keyOK = keyStatus == errSecSuccess || keyStatus == errSecItemNotFound
+        let passOK = passphraseStatus == errSecSuccess || passphraseStatus == errSecItemNotFound
+        if !(keyOK && passOK) {
+            logger.error(
+                "Failed to delete SSH material for \(credentialID): key=\(keyStatus) passphrase=\(passphraseStatus)"
+            )
+        }
+        return keyOK && passOK
     }
 
     // MARK: - Example Values (for UI placeholders only)

@@ -55,6 +55,7 @@ enum SecureEnclaveKeyManager {
         case publicKeyExportFailed(CFError?)
         case unexpectedPublicKeyFormat
         case signatureFailed(CFError?)
+        case deletionFailed(OSStatus)
 
         var description: String {
             switch self {
@@ -74,6 +75,8 @@ enum SecureEnclaveKeyManager {
                 return "Secure Enclave public key was not in the expected uncompressed-point format."
             case .signatureFailed(let err):
                 return "Secure Enclave signature failed: \(String(describing: err))"
+            case .deletionFailed(let status):
+                return "Secure Enclave key deletion failed (OSStatus \(status))."
             }
         }
     }
@@ -161,16 +164,22 @@ enum SecureEnclaveKeyManager {
         return ref as! SecKey
     }
 
-    /// Removes the SE-backed key for a credential. Idempotent — succeeds even when no
-    /// key is currently resident (used during `SSHCredential` deletion cleanup).
-    static func deleteKey(for credentialID: UUID) {
+    /// Removes the SE-backed key for a credential. Idempotent — `errSecItemNotFound`
+    /// is treated as success so the caller can use this during cleanup without first
+    /// confirming the key exists.
+    ///
+    /// Throws on any other Keychain failure so callers can leave the surrounding
+    /// SwiftData record alone and retry — an orphaned SE key with no metadata is a
+    /// worse end state than a credential the user can delete again.
+    static func deleteKey(for credentialID: UUID) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: applicationTag(for: credentialID)
         ]
         let status = SecItemDelete(query as CFDictionary)
-        if status != errSecSuccess && status != errSecItemNotFound {
+        guard status == errSecSuccess || status == errSecItemNotFound else {
             logger.error("Failed to delete SE key for \(credentialID): \(status)")
+            throw KeyManagerError.deletionFailed(status)
         }
     }
 
