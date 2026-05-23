@@ -100,7 +100,7 @@ When on:
 
 ### 7. Audit metadata is always on
 
-Independent of the recording toggle, every session emits structured `os_log` events under subsystem `nz.omega.pulse.ssh`:
+Independent of the recording toggle, every session emits structured `os_log` events under the project's `pulse` subsystem with categories beginning `ssh` (e.g. `ssh.secureenclave`, `ssh.credentials`, `ssh.session`):
 
 - `session.open`, `session.close`
 - `auth.success`, `auth.failure`
@@ -191,7 +191,7 @@ These rules are enforced by code, not convention:
 | 5 | Host-key TOFU | First connection records a `HostTrust.pinned` entry. Second connection with a different key shows the mismatch sheet; acceptance updates the entry. |
 | 6 | Cert acceptance | sshd configured with `HostCertificate` signed by a test CA. Pulse accepts when CA is in `HostTrust.trustedCA`; rejects when not, with `cert.rejected` event in `os_log`. |
 | 7 | Encrypted log integrity | Recorded session file is non-zero; opens to AES-GCM authenticated ciphertext; decrypts only via biometric; hash chain validates; flipping one byte in any record causes validation to fail cleanly with no plaintext exposure. |
-| 8 | Audit signal | `log show --predicate 'subsystem == "nz.omega.pulse.ssh"' --last 1h` shows lifecycle events for every session of the test run. |
+| 8 | Audit signal | `log show --predicate 'subsystem == "pulse" AND category BEGINSWITH "ssh"' --last 1h` shows lifecycle events for every session of the test run. |
 | 9 | Web companion | Device with a local HTTP UI renders in `WebView`; toolbar binds to `page.title` / `page.estimatedProgress`. `pulse-tunnel://` URL invokes the scheme handler. Navigation decider blocks unrelated origins. |
 | 10 | Lifecycle | Closing each window deinits `SSHClient` / `WebPage`; `os_log` deinit messages observed. No retain cycles in Instruments. |
 
