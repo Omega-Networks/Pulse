@@ -226,45 +226,6 @@ struct DeviceFaceplate: View {
     }
 }
 
-extension DeviceFaceplate {
-//    private func updateInterfacesOperationalStatus() {
-//        Task.detached(priority: .background) {
-//            await fetchInterfacesOperationalStatus()
-//        }
-//    }
-//    
-//    private func fetchInterfacesOperationalStatus() async {
-//        let context = ModelContext(modelContext.container)
-//        
-//        
-//        guard let device = device.first else { return }
-//        
-//        for interface in device.interfaces ?? [] {
-//            let operationalStatusItem = device.items?.first(where: { item in
-//                item.name.contains("Interface \(interface.name ?? "Error")(): Operational status")
-//            })
-//            
-//            guard let item = operationalStatusItem else { continue }
-//            
-//            let (fetchedData, _) = await device.getHistories(for: item.itemId, selectedPeriod: "1H", valueType: item.valueType)
-//            
-//            // Get the latest status value from the fetched data
-//            if let latestStatus = fetchedData.sorted(by: { $0.key > $1.key }).first?.value,
-//               let intStatus = Int64(latestStatus) {
-//                // Update the Interface model's operationalStatus property
-//                interface.operationalStatus = intStatus
-//            }
-//        }
-//        
-//        // Save the updated Interface models
-//        do {
-//            try context.save()
-//        } catch {
-//            print("Error: \(error.localizedDescription)")
-//        }
-//    }
-}
-
 //MARK: - Separate view for interface port
 private struct InterfacePortView: View {
     let interface: Interface

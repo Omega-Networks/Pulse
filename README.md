@@ -77,7 +77,7 @@ Drill down from geographic overview to detailed site topology, including network
 
 ### Prerequisites
 - **Xcode**: Version 26+ required
-- **Apple Developer Account**: For code signing and CloudKit setup
+- **Apple Developer Account**: For code signing
 - **Infrastructure**: NetBox instance and Zabbix (optional) monitoring system
 
 ### Setup Instructions
@@ -95,7 +95,6 @@ Drill down from geographic overview to detailed site topology, including network
 3. **Edit `Development.xcconfig`** with your team-specific values:
    ```
    DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
-   CLOUDKIT_CONTAINER_ID = iCloud.com.yourorg.pulse
    BUNDLE_IDENTIFIER = com.yourorg.pulse
    ```
 
@@ -107,7 +106,6 @@ Drill down from geographic overview to detailed site topology, including network
 5. **Configure data sources**
    - Add your NetBox endpoint URL
    - Configure Zabbix monitoring credentials
-   - Set up CloudKit container (if using sync features)
 
 Detailed setup instructions to be developed in our [Wiki](https://github.com/omega-networks/pulse/wiki/Installation).
 

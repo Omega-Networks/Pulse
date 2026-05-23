@@ -153,40 +153,11 @@ struct CPUCoresChart: View {
         default: return 10
         }
     }
-}
 
-// MARK: - Refresh Extension
-extension CPUCoresChart {
     func refresh() async {
         await loadCPUCoreItems()
     }
 }
-
-//// MARK: - Time Range Extension
-//extension CPUCoresChart {
-//    private func getTimeRange(for period: String) -> (Date, Date) {
-//        let now = Date()
-//        
-//        switch period {
-//        case "1H":
-//            return (Calendar.current.date(byAdding: .hour, value: -1, to: now)!, now)
-//        case "3H":
-//            return (Calendar.current.date(byAdding: .hour, value: -3, to: now)!, now)
-//        case "6H":
-//            return (Calendar.current.date(byAdding: .hour, value: -6, to: now)!, now)
-//        case "12H":
-//            return (Calendar.current.date(byAdding: .hour, value: -12, to: now)!, now)
-//        case "1D":
-//            return (Calendar.current.date(byAdding: .day, value: -1, to: now)!, now)
-//        case "2D":
-//            return (Calendar.current.date(byAdding: .day, value: -2, to: now)!, now)
-//        case "1W":
-//            return (Calendar.current.date(byAdding: .weekOfYear, value: -1, to: now)!, now)
-//        default:
-//            return (now, now)
-//        }
-//    }
-//}
 
 //#Preview {
 //    CPUCoresChart()

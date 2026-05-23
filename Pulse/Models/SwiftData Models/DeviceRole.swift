@@ -43,9 +43,7 @@ final class DeviceRole {
     init(id: Int64) {
         self.id = id
     }
-}
 
-extension DeviceRole {
     var allowedDeviceTypes: [String] {
         var allowedDeviceTypesArray: [String] = []
         
@@ -59,6 +57,11 @@ extension DeviceRole {
         let uniqueAllowedDeviceTypes = Array(Set(allowedDeviceTypesArray)).sorted()
         return uniqueAllowedDeviceTypes
     }
+    
+    var record: DeviceRoleRecord {
+        DeviceRoleRecord(deviceRole: self)
+    }
+    
 }
 
 #if os(macOS)
@@ -88,11 +91,6 @@ extension UTType {
     }
 }
 
-extension DeviceRole {
-    var record: DeviceRoleRecord {
-        DeviceRoleRecord(deviceRole: self)
-    }
-}
 #endif
 
 

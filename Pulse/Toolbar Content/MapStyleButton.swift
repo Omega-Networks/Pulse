@@ -71,17 +71,32 @@ struct MapStyleView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(selectedStyle == style ? Color.blue : Color.clear, lineWidth: 2)
                         )
-                        .onTapGesture {
-                            DispatchQueue.main.async {
-                                selectedStyle = style
-                            }
-                        }
-                    
-                    Text(style == .imagery ? "Satellite" : style.rawValue.capitalized)
-                        .font(.caption)
+                    MapSelectorButton(style: style)
                 }
             }
         }
+    }
+    
+    //MARK: Temporary fix due to iOS26 bug when applying ONTAPGESTURE to maps.
+    @ViewBuilder
+    private func MapSelectorButton(style: MapStyle) -> some View {
+        var text = style == .imagery ? "Satellite" : style.rawValue.capitalized;
+        if(selectedStyle == style){
+            Button(text) {
+                DispatchQueue.main.async {
+                    selectedStyle = style
+                }
+            }.buttonBorderShape(.capsule)
+            .buttonStyle(.borderedProminent)
+        }else{
+            Button(text) {
+                DispatchQueue.main.async {
+                    selectedStyle = style
+                }
+            }.buttonBorderShape(.capsule)
+            .buttonStyle(.bordered)
+        }
+        
     }
 }
 

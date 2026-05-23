@@ -473,9 +473,7 @@ struct SelectedChart: View {
         formatter.dateFormat = "dd/MM/yyyy 'at' h:mm a"
         return formatter.string(from: date)
     }
-}
 
-extension SelectedChart {
     /**
      * Fetches only the most recent value for text-only display.
      *

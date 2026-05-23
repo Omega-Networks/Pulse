@@ -77,133 +77,130 @@ final class Device {
     
     var localX: Double = 0
     var localY: Double = 0
-}
-
-
-extension Device {
-   // MARK: - Computed Properties
     
-    // --- NEW HELPER PROPERTY ---
-    var supportsCameraStream: Bool {
-        return deviceRole?.id == 11 || deviceRole?.id == 35 // Camera or Edge Node
+    // MARK: - Computed Properties
+     
+     // --- NEW HELPER PROPERTY ---
+     var supportsCameraStream: Bool {
+         return deviceRole?.id == 11 || deviceRole?.id == 35 // Camera or Edge Node
+     }
+    
+    /// Device symbol based on its role
+    var symbolName: String {
+        switch deviceRole?.name {
+        case "Access Switch", "Distribution Switch", "Management Switch":
+            return "custom.switch"
+        case "Core Switch":
+            return "custom.coreswitch"
+        case "Security Router", "Core Firewall", "Management Firewall":
+            return "custom.securityrouter"
+        case "Access Point", "Wireless Bridge":
+            return "custom.wirelessap"
+        case "Camera":
+            return "custom.camera"
+        case "Router", "Terminal Server", "Provider Edge":
+            return "custom.router"
+        case "Certificate":
+            return "custom.scroll.fill"
+        case "Digital Display":
+            return "custom.inset.filled.tv"
+        case "Edge Node":
+            return "custom.externaldrive.fill"
+        default:
+            return "custom.questionmark"
+        }
     }
-   
-   /// Device symbol based on its role
-   var symbolName: String {
-       switch deviceRole?.name {
-       case "Access Switch", "Distribution Switch", "Management Switch":
-           return "custom.switch"
-       case "Core Switch":
-           return "custom.coreswitch"
-       case "Security Router", "Core Firewall", "Management Firewall":
-           return "custom.securityrouter"
-       case "Access Point", "Wireless Bridge":
-           return "custom.wirelessap"
-       case "Camera":
-           return "custom.camera"
-       case "Router", "Terminal Server", "Provider Edge":
-           return "custom.router"
-       case "Certificate":
-           return "custom.scroll.fill"
-       case "Digital Display":
-           return "custom.inset.filled.tv"
-       case "Edge Node":
-           return "custom.externaldrive.fill"
-       default:
-           return "custom.questionmark"
-       }
-   }
-   
-   // MARK: - Event States
-   
-   /// Active events that are not suppressed or resolved
-   private var activeEvents: [Event] {
-       events?.filter {
-           $0.rClock == "0" && $0.suppressed == "0"
-       } ?? []
-   }
-   
-   /// Active events that have not been acknowledged
-   private var unacknowledgedEvents: [Event] {
-       activeEvents.filter {
-           $0.acknowledged == "0"
-       }
-   }
-   
-   /// Current highest severity level among active events
-   var highestSeverity: Int {
-       guard zabbixId != 0 else { return -2 }
-       guard !activeEvents.isEmpty else {
-           return zabbixId != 0 ? -1 : -2
-       }
-       return activeEvents.compactMap { Int($0.severity) }.max() ?? -1
-   }
-   
-   /// Current highest severity level among unacknowledged events
-   var highestUnacknowledgedSeverity: Int {
-       guard zabbixId != 0 else { return -1 }
-       guard !unacknowledgedEvents.isEmpty else {
-           return -1
-       }
-       return unacknowledgedEvents.compactMap { Int($0.severity) }.max() ?? -1
-   }
-   
-    /// Count of active events grouped by severity level
-    var eventCountBySeverity: [String: Int] {
-        guard let events = events else { return [:] }
-        return events
-            .filter { $0.rClock == "0" }  // Only count events in active state
-            .reduce(into: [:]) { counts, event in
-                counts[event.severity, default: 0] += 1
-            }
+    
+    // MARK: - Event States
+    
+    /// Active events that are not suppressed or resolved
+    private var activeEvents: [Event] {
+        events?.filter {
+            $0.rClock == "0" && $0.suppressed == "0"
+        } ?? []
     }
-   
-   // MARK: - Visual Properties
-   
-   /// Color representation of the highest severity
-   var severityColor: Color {
-       switch highestSeverity {
-       case 0: return .gray
-       case 1: return .blue
-       case 2: return .yellow
-       case 3: return .orange
-       case 4: return .red
-       case 5: return .black
-       case -1: return .white
-       default: return .indigo
-       }
-   }
-   
-   /// Color representation of the highest unacknowledged severity
-   var unacknowledgedSeverityColor: Color {
-       switch highestUnacknowledgedSeverity {
-       case 0: return .gray
-       case 1: return .blue
-       case 2: return .yellow
-       case 3: return .orange
-       case 4: return .red
-       case 5: return .black
-       case -1: return .white
-       default: return .indigo
-       }
-   }
-   
-   // MARK: - Helper Methods
-   
-   /// Converts hex color string to SwiftUI Color
-   private func color(fromHex hex: String) -> Color {
-       var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-       hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
-       
-       var rgb: UInt64 = 0
-       Scanner(string: hexSanitized).scanHexInt64(&rgb)
-       
-       let r = Double((rgb & 0xFF0000) >> 16) / 255.0
-       let g = Double((rgb & 0x00FF00) >> 8) / 255.0
-       let b = Double(rgb & 0x0000FF) / 255.0
-       
-       return Color(red: r, green: g, blue: b)
-   }
+    
+    /// Active events that have not been acknowledged
+    private var unacknowledgedEvents: [Event] {
+        activeEvents.filter {
+            $0.acknowledged == "0"
+        }
+    }
+    
+    /// Current highest severity level among active events
+    var highestSeverity: Int {
+        guard zabbixId != 0 else { return -2 }
+        guard !activeEvents.isEmpty else {
+            return zabbixId != 0 ? -1 : -2
+        }
+        return activeEvents.compactMap { Int($0.severity) }.max() ?? -1
+    }
+    
+    /// Current highest severity level among unacknowledged events
+    var highestUnacknowledgedSeverity: Int {
+        guard zabbixId != 0 else { return -1 }
+        guard !unacknowledgedEvents.isEmpty else {
+            return -1
+        }
+        return unacknowledgedEvents.compactMap { Int($0.severity) }.max() ?? -1
+    }
+    
+     /// Count of active events grouped by severity level
+     var eventCountBySeverity: [String: Int] {
+         guard let events = events else { return [:] }
+         return events
+             .filter { $0.rClock == "0" }  // Only count events in active state
+             .reduce(into: [:]) { counts, event in
+                 counts[event.severity, default: 0] += 1
+             }
+     }
+    
+    // MARK: - Visual Properties
+    
+    /// Color representation of the highest severity
+    var severityColor: Color {
+        switch highestSeverity {
+        case 0: return .gray
+        case 1: return .blue
+        case 2: return .yellow
+        case 3: return .orange
+        case 4: return .red
+        case 5: return .black
+        case -1: return .white
+        default: return .indigo
+        }
+    }
+    
+    /// Color representation of the highest unacknowledged severity
+    var unacknowledgedSeverityColor: Color {
+        switch highestUnacknowledgedSeverity {
+        case 0: return .gray
+        case 1: return .blue
+        case 2: return .yellow
+        case 3: return .orange
+        case 4: return .red
+        case 5: return .black
+        case -1: return .white
+        default: return .indigo
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    /// Converts hex color string to SwiftUI Color
+    private func color(fromHex hex: String) -> Color {
+        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
+        
+        var rgb: UInt64 = 0
+        Scanner(string: hexSanitized).scanHexInt64(&rgb)
+        
+        let r = Double((rgb & 0xFF0000) >> 16) / 255.0
+        let g = Double((rgb & 0x00FF00) >> 8) / 255.0
+        let b = Double(rgb & 0x0000FF) / 255.0
+        
+        return Color(red: r, green: g, blue: b)
+    }
 }
 
 //MARK: API request for device as a reference

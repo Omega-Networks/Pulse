@@ -91,9 +91,7 @@ struct SiteRow: View {
             }
         }
     }
-}
 
-extension SiteRow {
     // Method for returning a Color based on an Int64 value
     func color(for value: Int64?) -> Color {
         guard let value = value else {

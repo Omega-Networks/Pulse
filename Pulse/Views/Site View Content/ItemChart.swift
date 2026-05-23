@@ -107,9 +107,7 @@ struct ItemChart: View {
             }
         }
     }
-}
 
-extension ItemChart {
     private func fetchHistoryData(for item: Item) async {
         let historyFetcher = HistoryFetcher(modelContainer: modelContext.container)
         let (fetchedData, isPartialData) = await historyFetcher.getHistories(

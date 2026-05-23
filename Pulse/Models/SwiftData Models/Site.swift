@@ -62,9 +62,7 @@ final class Site {
     init(id: Int64) {
         self.id = id
     }
-}
 
-extension Site {
     // MARK: - Location Properties
     
     var coordinate: CLLocationCoordinate2D {
@@ -129,6 +127,7 @@ extension Site {
         case 5: return .black
         case -1: return .white
         default: return .indigo
+            
         }
     }
 }

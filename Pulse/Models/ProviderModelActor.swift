@@ -28,14 +28,15 @@ import SwiftData
 import Dispatch
 import OSLog
 
-// Protocols and extensions go here
 protocol PropertiesType {
+    
 }
+
 extension SiteGroupProperties: PropertiesType {}
 extension SiteProperties: PropertiesType {}
 extension DeviceProperties: PropertiesType {}
 extension EventProperties: PropertiesType {}
-//extension CableProperties: PropertiesType {}
+extension CableProperties: PropertiesType {}
 extension DeviceRoleProperties: PropertiesType {}
 extension DeviceTypeProperties: PropertiesType {}
 

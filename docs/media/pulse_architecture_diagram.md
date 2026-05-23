@@ -89,7 +89,7 @@ Native Apple applications optimized for different use cases:
 
 ### Architecture Characteristics
 
-**Local-First Design**: All processing happens on your devices - no data leaves your network unless you choose to sync between your own devices via CloudKit.
+**Local-First Design**: All processing happens on your devices — no data leaves your network. Pulse stores everything in on-device SwiftData; nothing is synced to Apple or any third-party service.
 
 **Unified Memory Model**: Instead of querying multiple systems repeatedly, Pulse maintains a comprehensive in-memory model of your entire infrastructure that updates in real-time.
 
