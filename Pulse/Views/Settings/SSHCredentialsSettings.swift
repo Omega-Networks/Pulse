@@ -1,0 +1,489 @@
+//
+//  SSHCredentialsSettings.swift
+//  Pulse
+//
+//  Copyright © 2025–present Omega Networks Limited.
+//
+//  Pulse
+//  The Platform for Unified Leadership in Smart Environments.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
+
+import CryptoKit
+import OSLog
+import SwiftData
+import SwiftUI
+
+/// Settings pane for managing SSH credentials.
+///
+/// Two creation paths:
+///
+/// - **Secure Enclave (default)** — generates a non-exportable ECDSA P-256 key inside
+///   the Enclave. Biometric or device passcode is required for every signature.
+/// - **Legacy (portable key)** — imports a PEM private key (Ed25519, ECDSA, RSA) into
+///   the Keychain. Guarded behind an explicit "Legacy" second screen so it's never
+///   accidentally chosen.
+///
+/// The "Legacy" labelling and the two-step import sheet are structural enforcements
+/// of ADR 0001 §1: the unsafe path is unavailable by default, not just discouraged.
+struct SSHCredentialsSettings: View {
+
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \SSHCredential.label) private var credentials: [SSHCredential]
+
+    @State private var creatingSE = false
+    @State private var importingLegacy = false
+    @State private var pendingDelete: SSHCredential?
+    @State private var errorMessage: String?
+
+    private let logger = Logger(subsystem: "pulse", category: "ssh.credentials")
+
+    var body: some View {
+        Form {
+            credentialsSection
+            createSection
+        }
+        .padding(20)
+        .frame(minWidth: 480, minHeight: 360)
+        .sheet(isPresented: $creatingSE) {
+            CreateSecureEnclaveCredentialSheet { newCred in
+                modelContext.insert(newCred)
+                logger.info("Created SE credential \(newCred.id) — \(newCred.label)")
+            }
+        }
+        .sheet(isPresented: $importingLegacy) {
+            ImportLegacyCredentialSheet { newCred in
+                modelContext.insert(newCred)
+                logger.info("Imported legacy credential \(newCred.id) — \(newCred.label)")
+            }
+        }
+        .confirmationDialog(
+            "Delete this credential?",
+            isPresented: deleteDialogBinding,
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { cred in
+            Button("Delete \(cred.label)", role: .destructive) {
+                deleteCredential(cred)
+            }
+        } message: { cred in
+            if cred.tier == .secureEnclave {
+                Text("This removes the Secure Enclave key. It cannot be recovered or re-issued — generate a new credential and re-enrol the public key on every device that trusted this one.")
+            } else {
+                Text("Removes the private key PEM and any passphrase from the Keychain. The legacy key is gone unless you have a backup.")
+            }
+        }
+        .alert("Couldn't update credentials", isPresented: errorAlertBinding) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    // MARK: - Sections
+
+    private var credentialsSection: some View {
+        Section(header: header("SSH Credentials")) {
+            if credentials.isEmpty {
+                Text("No credentials yet. Create a Secure Enclave-backed credential to get started.")
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(credentials) { cred in
+                    credentialRow(cred)
+                }
+            }
+        }
+    }
+
+    private var createSection: some View {
+        Section(header: header("Add Credential")) {
+            Button {
+                creatingSE = true
+            } label: {
+                Label("Create Secure Enclave credential…", systemImage: "lock.shield")
+            }
+            Button {
+                importingLegacy = true
+            } label: {
+                Label("Import legacy key (PEM)…", systemImage: "doc.badge.ellipsis")
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func credentialRow(_ cred: SSHCredential) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            tierBadge(cred.tier)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(cred.label)
+                    .font(.body.weight(.medium))
+                Text(fingerprintDisplay(of: cred))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                if cred.recordSessions {
+                    Label("Sessions recorded", systemImage: "record.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
+            }
+            Spacer()
+            Button {
+                pendingDelete = cred
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Delete \(cred.label)")
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func tierBadge(_ tier: SSHCredentialTier) -> some View {
+        Group {
+            switch tier {
+            case .secureEnclave:
+                Label("Secure Enclave", systemImage: "lock.shield.fill")
+                    .foregroundStyle(.green)
+            case .portable:
+                Label("Legacy", systemImage: "exclamationmark.shield")
+                    .foregroundStyle(.orange)
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .labelStyle(.titleAndIcon)
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title)
+            .font(.title3)
+            .fontWeight(.bold)
+    }
+
+    // MARK: - Delete
+
+    private func deleteCredential(_ cred: SSHCredential) {
+        let id = cred.id
+        let tier = cred.tier
+        modelContext.delete(cred)
+
+        Task {
+            if tier == .secureEnclave {
+                SecureEnclaveKeyManager.deleteKey(for: id)
+            } else {
+                await Configuration.shared.deleteSSHMaterial(for: id)
+            }
+
+            // Clear any Device.defaultCredentialID pointers — leaves the model
+            // consistent without forcing the SSHCredentialsSettings UI to know
+            // about every consuming model.
+            await MainActor.run {
+                let devices = (try? modelContext.fetch(
+                    FetchDescriptor<Device>(
+                        predicate: #Predicate { $0.defaultCredentialID == id }
+                    )
+                )) ?? []
+                for device in devices {
+                    device.defaultCredentialID = nil
+                }
+            }
+            logger.info("Deleted credential \(id) (\(tier.rawValue))")
+        }
+    }
+
+    // MARK: - Bindings
+
+    private var errorAlertBinding: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
+    }
+
+    private var deleteDialogBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDelete != nil },
+            set: { if !$0 { pendingDelete = nil } }
+        )
+    }
+
+    // MARK: - Fingerprint
+
+    private func fingerprintDisplay(of cred: SSHCredential) -> String {
+        guard !cred.publicKey.isEmpty else { return "no public key" }
+        let hash = SHA256.hash(data: cred.publicKey)
+        let base64 = Data(hash)
+            .base64EncodedString()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        return "SHA256:\(base64)"
+    }
+}
+
+// MARK: - Create Secure Enclave Credential Sheet
+
+private struct CreateSecureEnclaveCredentialSheet: View {
+
+    let onCreate: (SSHCredential) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var label: String = ""
+    @State private var isGenerating = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("New Secure Enclave credential")
+                .font(.title2).fontWeight(.semibold)
+            Text("The private key is generated inside this device's Secure Enclave and cannot be exported. Every signing operation prompts for biometric or device passcode.")
+                .foregroundStyle(.secondary)
+
+            Form {
+                TextField("Label", text: $label, prompt: Text("Core switches"))
+                    .textFieldStyle(.roundedBorder)
+            }
+            .formStyle(.columns)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .foregroundStyle(.red)
+                    .font(.callout)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button {
+                    Task { await generate() }
+                } label: {
+                    if isGenerating {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Generate")
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(label.trimmingCharacters(in: .whitespaces).isEmpty || isGenerating)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 480)
+    }
+
+    private func generate() async {
+        isGenerating = true
+        defer { isGenerating = false }
+        errorMessage = nil
+        let credentialID = UUID()
+        let trimmedLabel = label.trimmingCharacters(in: .whitespaces)
+        do {
+            let wire = try SecureEnclaveKeyManager.generateKey(
+                for: credentialID,
+                label: "Pulse SSH credential — \(trimmedLabel)"
+            )
+            let credential = SSHCredential(
+                id: credentialID,
+                label: trimmedLabel,
+                tier: .secureEnclave,
+                publicKey: wire
+            )
+            onCreate(credential)
+            dismiss()
+        } catch {
+            errorMessage = "\(error)"
+        }
+    }
+}
+
+// MARK: - Import Legacy Credential Sheet
+
+private struct ImportLegacyCredentialSheet: View {
+
+    let onCreate: (SSHCredential) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var step: Step = .warning
+    @State private var label: String = ""
+    @State private var pem: String = ""
+    @State private var passphrase: String = ""
+    @State private var importedKey: SSHKeyImporter.ImportedSSHKey?
+    @State private var errorMessage: String?
+
+    private enum Step {
+        case warning
+        case form
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            switch step {
+            case .warning:
+                warningStep
+            case .form:
+                formStep
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 520, minHeight: 360)
+    }
+
+    // MARK: Step 1 — gated warning
+
+    private var warningStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Legacy (portable key)", systemImage: "exclamationmark.shield.fill")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.orange)
+
+            Text("Portable keys live in the Keychain as exportable bytes. They survive device loss, factory reset, and copy-paste — that's also why they're riskier. The default path (Secure Enclave) keeps the private half on this device only.")
+                .foregroundStyle(.secondary)
+
+            Text("Only continue if you need to import an existing key that a device or vendor already trusts.")
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Continue with legacy import") {
+                    step = .form
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
+    // MARK: Step 2 — paste & validate
+
+    private var formStep: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Import legacy key")
+                .font(.title2).fontWeight(.semibold)
+
+            TextField("Label", text: $label, prompt: Text("Vendor default"))
+                .textFieldStyle(.roundedBorder)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Private key (PEM)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $pem)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(minHeight: 140)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
+            }
+
+            if let importedKey, importedKey.isEncrypted {
+                SecureField("Passphrase", text: $passphrase)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            if let importedKey {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Detected: \(importedKey.algorithm.displayName) (\(importedKey.pemKind.rawValue))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if importedKey.isEncrypted {
+                        Text("Key is encrypted — passphrase required.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack {
+                Button("Validate") {
+                    validate()
+                }
+                .disabled(pem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Spacer()
+
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+
+                Button("Import") { commit() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canImport)
+            }
+        }
+    }
+
+    private var canImport: Bool {
+        guard let importedKey else { return false }
+        guard !label.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        if importedKey.isEncrypted && passphrase.isEmpty { return false }
+        return true
+    }
+
+    private func validate() {
+        errorMessage = nil
+        do {
+            importedKey = try SSHKeyImporter.validate(pem)
+        } catch {
+            importedKey = nil
+            errorMessage = "\(error)"
+        }
+    }
+
+    private func commit() {
+        guard let importedKey else { return }
+        let credentialID = UUID()
+        let trimmedLabel = label.trimmingCharacters(in: .whitespaces)
+        Task {
+            let config = await Configuration.shared
+            let ok = await config.setSSHPrivateKeyPEM(importedKey.normalisedPEM, for: credentialID)
+            guard ok else {
+                await MainActor.run { errorMessage = "Couldn't store the PEM in the Keychain." }
+                return
+            }
+            if importedKey.isEncrypted {
+                _ = await config.setSSHPassphrase(passphrase, for: credentialID)
+            }
+
+            // The portable-tier "publicKey" we store on the SSHCredential here is the
+            // private PEM's identity placeholder: Slice 3 will derive the OpenSSH
+            // wire-format public key from the parsed private material. Until then we
+            // store an empty Data so the schema is satisfied and the fingerprint
+            // display falls back to "no public key" rather than misleading bytes.
+            let credential = SSHCredential(
+                id: credentialID,
+                label: trimmedLabel,
+                tier: .portable,
+                publicKey: Data()
+            )
+            await MainActor.run {
+                onCreate(credential)
+                dismiss()
+            }
+        }
+    }
+}

@@ -116,6 +116,12 @@ struct SettingsView: View {
                 Label("PowerSense", systemImage: "bolt.circle")
             }
 
+            ///SSH credentials (Secure Enclave default, PEM import for legacy keys)
+            SSHCredentialsSettings()
+                .tabItem {
+                    Label("SSH", systemImage: "key.fill")
+                }
+
             ///Sync dashboard - contains Model Object Counts
             SyncDashboardView()
                 .tabItem {
