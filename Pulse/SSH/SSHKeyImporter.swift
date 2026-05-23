@@ -63,19 +63,25 @@ enum SSHKeyImporter {
         case ecdsaP256
         case ecdsaP384
         case ecdsaP521
+        /// Traditional `BEGIN EC PRIVATE KEY` PEMs identify the curve via an OID
+        /// inside the SEC1 ASN.1 payload, which Slice 1 doesn't decode. Surface
+        /// the family without claiming a specific curve so the import UI stays
+        /// truthful. Slice 3's NIOSSH decoder pins down P-256 / P-384 / P-521.
+        case ecdsaUnknownCurve
         case rsa
         case dsa
         case unknown
 
         var displayName: String {
             switch self {
-            case .ed25519:    return "Ed25519"
-            case .ecdsaP256:  return "ECDSA P-256"
-            case .ecdsaP384:  return "ECDSA P-384"
-            case .ecdsaP521:  return "ECDSA P-521"
-            case .rsa:        return "RSA"
-            case .dsa:        return "DSA"
-            case .unknown:    return "Unknown algorithm"
+            case .ed25519:            return "Ed25519"
+            case .ecdsaP256:          return "ECDSA P-256"
+            case .ecdsaP384:          return "ECDSA P-384"
+            case .ecdsaP521:          return "ECDSA P-521"
+            case .ecdsaUnknownCurve:  return "ECDSA (curve detected at sign time)"
+            case .rsa:                return "RSA"
+            case .dsa:                return "DSA"
+            case .unknown:            return "Unknown algorithm"
             }
         }
     }
@@ -147,9 +153,10 @@ enum SSHKeyImporter {
             algorithm = .rsa
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
         case .ecPrivate:
-            // Without parsing the SEC1 ASN.1, treat unknown-curve EC as a generic ECDSA tier.
-            // Slice 3's NIOSSH-backed decoder will pin down the curve.
-            algorithm = .ecdsaP256
+            // The curve OID lives inside the SEC1 ASN.1 payload, which we don't
+            // decode in Slice 1. Surface as the family-level case so the UI doesn't
+            // mislabel a P-384 PEM as P-256. Slice 3 narrows this when NIOSSH lands.
+            algorithm = .ecdsaUnknownCurve
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
         case .pkcs8:
             // OID classification would require ASN.1 parsing. Defer to Slice 3.
