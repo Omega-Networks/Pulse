@@ -54,7 +54,19 @@ final class Device {
     
     //Property to determine rack position
     var rackPosition: Float?
-    
+
+    // MARK: - SSH / Web preferences
+    //
+    // Per ADR 0001 §4 username belongs on the connection, not the credential — so
+    // `defaultUsername` lives here and not on `SSHCredential`. `defaultCredentialID`
+    // points at the operator's preferred `SSHCredential` for this device when one
+    // has been chosen; a nil here means the connect sheet picks at runtime.
+
+    var defaultCredentialID: UUID?
+    var defaultUsername: String?
+    var preferredSSHPort: Int?
+    var preferredWebURL: String?
+
     // MARK: Device Model Relationships
     
     //One-To-Many

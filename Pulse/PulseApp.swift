@@ -93,7 +93,9 @@ struct PulseApp: App {
                 Event.self,
                 SyncProvider.self,
                 PowerSenseDevice.self,
-                PowerSenseEvent.self
+                PowerSenseEvent.self,
+                SSHCredential.self,
+                KnownHost.self
             )
 
             // Initialize clustering service with model container

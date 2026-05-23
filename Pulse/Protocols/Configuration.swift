@@ -60,6 +60,19 @@ final class Configuration: @unchecked Sendable {
         static let powerSenseUpdateInterval = "powerSenseUpdateInterval"
         static let powerSenseMinDeviceThreshold = "powerSenseMinDeviceThreshold"
         static let powerSenseGridSize = "powerSenseGridSize"
+
+        // SSH per-credential material (Keychain, keyed by SSHCredential.id)
+        static let sshCredentialPrefix = "ssh-cred-"
+        static let sshPrivateKeySuffix = "-privateKey"
+        static let sshPassphraseSuffix = "-passphrase"
+
+        static func sshPrivateKeyKey(for credentialID: UUID) -> String {
+            "\(sshCredentialPrefix)\(credentialID.uuidString)\(sshPrivateKeySuffix)"
+        }
+
+        static func sshPassphraseKey(for credentialID: UUID) -> String {
+            "\(sshCredentialPrefix)\(credentialID.uuidString)\(sshPassphraseSuffix)"
+        }
     }
     
     /// Example values for configuration (non-functional placeholders)
@@ -402,6 +415,71 @@ final class Configuration: @unchecked Sendable {
         UserDefaults.standard.removeObject(forKey: Keys.powerSenseMinDeviceThreshold)
         UserDefaults.standard.removeObject(forKey: Keys.powerSenseGridSize)
         _ = deleteFromKeychain(key: Keys.powerSenseZabbixToken)
+    }
+
+    // MARK: - SSH Credential Material
+    //
+    // Typed accessors per ADR 0001 §1 and the implementation briefing's "Configuration
+    // correction": saveToKeychain / loadFromKeychain stay private. SSH callers route
+    // through these specialised methods so a reviewer can grep for the surface area.
+    //
+    // Each accessor is keyed by `SSHCredential.id` so per-credential material is
+    // isolated. Storage rides on the existing kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    // protection class.
+
+    /// Private key PEM for a portable-tier credential. `nil` when no key has been imported.
+    /// Secure Enclave-tier credentials do not have a PEM — their private material lives in
+    /// the Enclave and is never returned to userspace.
+    func sshPrivateKeyPEM(for credentialID: UUID) -> String? {
+        guard let data = loadFromKeychain(key: Keys.sshPrivateKeyKey(for: credentialID)) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Stores a PEM-encoded private key against the credential. Returns true on success.
+    @discardableResult
+    func setSSHPrivateKeyPEM(_ pem: String, for credentialID: UUID) -> Bool {
+        guard !pem.isEmpty else { return false }
+        let status = saveToKeychain(
+            key: Keys.sshPrivateKeyKey(for: credentialID),
+            data: Data(pem.utf8)
+        )
+        if status != errSecSuccess {
+            logger.error("Failed to save SSH private key PEM for \(credentialID): \(status)")
+            return false
+        }
+        return true
+    }
+
+    /// Passphrase protecting a portable-tier private key. `nil` when no passphrase is set.
+    func sshPassphrase(for credentialID: UUID) -> String? {
+        guard let data = loadFromKeychain(key: Keys.sshPassphraseKey(for: credentialID)) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Stores the passphrase for a portable-tier private key. Returns true on success.
+    @discardableResult
+    func setSSHPassphrase(_ passphrase: String, for credentialID: UUID) -> Bool {
+        guard !passphrase.isEmpty else { return false }
+        let status = saveToKeychain(
+            key: Keys.sshPassphraseKey(for: credentialID),
+            data: Data(passphrase.utf8)
+        )
+        if status != errSecSuccess {
+            logger.error("Failed to save SSH passphrase for \(credentialID): \(status)")
+            return false
+        }
+        return true
+    }
+
+    /// Removes both the private key PEM and the passphrase for a credential. Idempotent.
+    /// Secure Enclave residency is handled separately by `SecureEnclaveKeyManager`.
+    func deleteSSHMaterial(for credentialID: UUID) {
+        _ = deleteFromKeychain(key: Keys.sshPrivateKeyKey(for: credentialID))
+        _ = deleteFromKeychain(key: Keys.sshPassphraseKey(for: credentialID))
     }
 
     // MARK: - Example Values (for UI placeholders only)
