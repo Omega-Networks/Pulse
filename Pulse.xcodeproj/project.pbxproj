@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A11CAFE000000000000000B1 /* SSHCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F1 /* SSHCredential.swift */; };
+		A11CAFE000000000000000B2 /* KnownHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F2 /* KnownHost.swift */; };
+		A11CAFE000000000000000B3 /* SecureEnclaveKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */; };
+		A11CAFE000000000000000B4 /* SSHKeyImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F4 /* SSHKeyImporter.swift */; };
+		A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F5 /* SSHCertificateManager.swift */; };
+		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		067FD0842ECC67B700146D44 /* MetalUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD07B2ECC67B700146D44 /* MetalUtilities.swift */; };
 		067FD0852ECC67B700146D44 /* MockSpatialTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD07C2ECC67B700146D44 /* MockSpatialTypes.swift */; };
 		067FD0902ECC6A2F00146D44 /* ConcaveHull.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD0872ECC6A2F00146D44 /* ConcaveHull.swift */; };
@@ -148,6 +154,12 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A11CAFE000000000000000F1 /* SSHCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredential.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F2 /* KnownHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnownHost.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnclaveKeyManager.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F4 /* SSHKeyImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporter.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F5 /* SSHCertificateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCertificateManager.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		067FD07B2ECC67B700146D44 /* MetalUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalUtilities.swift; sourceTree = "<group>"; };
 		067FD07C2ECC67B700146D44 /* MockSpatialTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSpatialTypes.swift; sourceTree = "<group>"; };
 		067FD0872ECC6A2F00146D44 /* ConcaveHull.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConcaveHull.swift; sourceTree = "<group>"; };
@@ -480,6 +492,7 @@
 				C96191922ACA55DA000198DB /* Toolbar Content */,
 				C96191932ACA55F4000198DB /* Views */,
 				C9951EDB2E8CDA0F0025C136 /* Services */,
+				A11CAFE0000000000000DAD1 /* SSH */,
 				C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */,
 				C96191632ACA552F000198DB /* ContentView.swift */,
 				410A560F2D0F898B00C722E3 /* SyncDashboardView.swift */,
@@ -578,6 +591,7 @@
 				C96191D12ACA5A42000198DB /* Graph Views */,
 				C96192002ACA5CC4000198DB /* Table Views */,
 				8A4D5B0C123456789ABCDEF0 /* PowerSenseViews */,
+				A11CAFE0000000000000DAD2 /* Settings */,
 				C96191F12ACA5C03000198DB /* SiteGroupRow.swift */,
 				419D50F82C227D3600CEA439 /* SitesList.swift */,
 			);
@@ -669,8 +683,28 @@
 				C96191AF2ACA5794000198DB /* Site.swift */,
 				C9FCA5162D153E4700D9E851 /* Event.swift */,
 				C96191B12ACA57AD000198DB /* SiteGroup.swift */,
+				A11CAFE000000000000000F1 /* SSHCredential.swift */,
+				A11CAFE000000000000000F2 /* KnownHost.swift */,
 			);
 			path = "SwiftData Models";
+			sourceTree = "<group>";
+		};
+		A11CAFE0000000000000DAD1 /* SSH */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */,
+				A11CAFE000000000000000F4 /* SSHKeyImporter.swift */,
+				A11CAFE000000000000000F5 /* SSHCertificateManager.swift */,
+			);
+			path = SSH;
+			sourceTree = "<group>";
+		};
+		A11CAFE0000000000000DAD2 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */,
+			);
+			path = Settings;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -807,6 +841,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11CAFE000000000000000B1 /* SSHCredential.swift in Sources */,
+				A11CAFE000000000000000B2 /* KnownHost.swift in Sources */,
+				A11CAFE000000000000000B3 /* SecureEnclaveKeyManager.swift in Sources */,
+				A11CAFE000000000000000B4 /* SSHKeyImporter.swift in Sources */,
+				A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */,
+				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
 				C97DEDB52E816E4F002898A7 /* PowerSenseToolbarButton.swift in Sources */,
 				4181FEDF2CBF66CF00E4D035 /* RackUnitView.swift in Sources */,
 				C96191642ACA552F000198DB /* ContentView.swift in Sources */,
