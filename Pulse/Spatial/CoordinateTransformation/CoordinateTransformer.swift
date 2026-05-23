@@ -331,7 +331,7 @@ public final class CoordinateTransformer: Sendable {
             if (chunkIndex + 1) % max(1, totalChunks / 10) == 0 || chunkIndex == totalChunks - 1 {
                 let progress = Double(chunkIndex + 1) / Double(totalChunks) * 100
                 let processed = min(endIndex, totalCount)
-                logger.debug("GPU Progress: \(String(format: "%.1f", progress))%")
+                logger.debug("GPU Progress: \(String(format: "%.1f", progress))% (\(processed)/\(totalCount))")
             }
         }
         
@@ -2233,6 +2233,9 @@ public final class CoordinateTransformer: Sendable {
         )
 
         logger.info("GPU DBSCAN: completed in \(String(format: "%.3f", processingTime * 1000))ms — \(result.clusterCount) clusters, \(result.corePoints) core points, \(result.noisePoints) noise")
+        logger.debug(
+            "GPU DBSCAN phases (ms): search=\(String(format: "%.3f", phase1Duration * 1000)) initLabels=\(String(format: "%.3f", phase2aDuration * 1000)) propagate=\(String(format: "%.3f", propagationDuration * 1000)) finalize=\(String(format: "%.3f", phase2cDuration * 1000)) iterations=\(iterations) gpuMem=\(String(describing: memoryUsage))"
+        )
 
         return result
     }

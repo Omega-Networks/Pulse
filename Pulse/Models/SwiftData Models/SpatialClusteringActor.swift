@@ -321,7 +321,7 @@ actor SpatialClusteringActor {
 
         let enhancedClusters = try await withThrowingTaskGroup(of: DeviceCluster?.self) { group in
             for (clusterIndex, (_, clusterDevices)) in finalClusters.enumerated() {
-                group.addTask { [devices, deviceToProjected, transformer, confidenceIndex] in
+                group.addTask { [deviceToProjected, transformer, confidenceIndex] in
 
                     let projectedCoordinates = clusterDevices.compactMap { deviceToProjected[$0.deviceId] }
                     guard projectedCoordinates.count == clusterDevices.count else { return nil }
