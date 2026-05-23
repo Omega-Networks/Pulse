@@ -365,14 +365,16 @@ struct PowerSenseDeviceProperties: Decodable {
     /// Returns coordinates with reduced precision for privacy
     var privacyLatitude: Double {
         guard let lat = latitude else { return 0.0 }
-        // Reduce precision to ~100m accuracy
-        return Double(Int(lat * 10000)) / 10000
+        // Reduce precision to ~100m accuracy.
+        // Use round() not Int() — Int truncates toward zero, systematically
+        // biasing negative-hemisphere coordinates upward and positive downward.
+        return (lat * 10000).rounded() / 10000
     }
 
     var privacyLongitude: Double {
         guard let lon = longitude else { return 0.0 }
-        // Reduce precision to ~100m accuracy
-        return Double(Int(lon * 10000)) / 10000
+        // Reduce precision to ~100m accuracy (see note on privacyLatitude).
+        return (lon * 10000).rounded() / 10000
     }
 
     // MARK: - Validation

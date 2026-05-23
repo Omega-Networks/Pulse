@@ -123,6 +123,9 @@ final class ConcaveHull {
         let bShifted = (x: b.x - o.x, y: b.y - o.y)
         let sqALen = sqLength(o, a)
         let sqBLen = sqLength(o, b)
+        // Guard against degenerate point sets where a == o or b == o
+        // (zero-length vector has no defined angle — return 0 = perpendicular)
+        guard sqALen > 0, sqBLen > 0 else { return 0 }
         let dot = aShifted.x * bShifted.x + aShifted.y * bShifted.y
         return dot / sqrt(sqALen * sqBLen)
     }
@@ -297,7 +300,10 @@ private class Grid {
     }
 
     private func point2CellXY(_ point: Point) -> (x: Int, y: Int) {
-        return (Int(point.x / cellSize), Int(point.y / cellSize))
+        // Use floor() not Int() — Int truncates toward zero, so adjacent
+        // negative coordinates land in the wrong grid cell (e.g. -0.5 and
+        // 0.5 both → 0). NZTM eastings/northings can be negative at margins.
+        return (Int(floor(point.x / cellSize)), Int(floor(point.y / cellSize)))
     }
 
     func extendBbox(_ bbox: [Double], scaleFactor: Double) -> [Double] {
