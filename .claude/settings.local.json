@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(sed:*)"
-    ],
-    "deny": [],
-    "ask": []
-  }
-}
