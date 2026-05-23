@@ -40,11 +40,13 @@ class InitializationState: ObservableObject {
     @Published var progress: Double = 0
     @Published var currentStep = "Preparing..."
     @Published var showWelcome = false
-    @Published var containerVerified = false
     @Published var contentViewReady = false
     @Published var startExitAnimation = false
     @Published var isConfigured = false
-    let totalSteps = 19.0
+    /// Eight NetBox / Zabbix sync calls plus TipKit configuration. Matches the
+    /// number of `updateProgress` calls inside `verifyContainer` so the bar fills
+    /// to 100% when the real work completes.
+    let totalSteps = 9.0
     
     /**
       Updates the initialization progress and step description.
@@ -219,158 +221,68 @@ struct PulseApp: App {
             return
         }
         
-        let steps = [
-            "Verifying Device Roles...",
-            "Verifying Device Types...",
-            "Verifying Tenants...",
-            "Verifying Regions...",
-            "Verifying Site Groups...",
-            "Verifying Sites...",
-            "Verifying Racks...",
-            "Verifying Devices...",
-            "Verifying Events...",
-            "Final Verification...",
-            "Synchronising Device Roles...",
-            "Synchronising Device Types...",
-            "Synchronising Tenants...",
-            "Synchronising Regions...",
-            "Synchronising Site Groups...",
-            "Synchronising Sites...",
-            "Synchronising Racks...",
-            "Synchronising Devices...",
-            "Setting up Tips..."
-        ]
-          
-          if !initState.containerVerified {
-              
-              do {
-                  let context = modelContainer.mainContext
-                  var index: Int = 0
-                  
-                  let descriptorDeviceRole = FetchDescriptor<DeviceRole>()
-                  _ = try context.fetch(descriptorDeviceRole)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  let descriptorDeviceType = FetchDescriptor<DeviceType>()
-                  _ = try context.fetch(descriptorDeviceType)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  let descriptorTenant = FetchDescriptor<Tenant>()
-                  _ = try context.fetch(descriptorTenant)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  let descriptorRegion = FetchDescriptor<Region>()
-                  _ = try context.fetch(descriptorRegion)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  let descriptorSiteGroup = FetchDescriptor<SiteGroup>()
-                  _ = try context.fetch(descriptorSiteGroup)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  let descriptorSite = FetchDescriptor<Site>()
-                  _ = try context.fetch(descriptorSite)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  let descriptorRack = FetchDescriptor<Rack>()
-                  _ = try context.fetch(descriptorRack)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  let descriptorDevice = FetchDescriptor<Device>()
-                  _ = try context.fetch(descriptorDevice)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  let descriptorEvent = FetchDescriptor<Event>()
-                  _ = try context.fetch(descriptorEvent)
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  // Mark container as verified and show welcome
-                  initState.containerVerified = true
-                  index += 1
-                  initState.updateProgress(index, steps[index])
-                  try? await Task.sleep(for: .milliseconds(20))
-                  
-                  //
-                  let modelActor = ProviderModelActor(modelContainer: modelContainer)
-                  
-                  do {
-                      // Execute all operations sequentially
-                      try await modelActor.getDeviceRoles()
-                      index += 1
-                      initState.updateProgress(index, steps[index])
-                      try await modelActor.getDeviceTypes()
-                      index += 1
-                      initState.updateProgress(index, steps[index])
-                      try await modelActor.getTenants()
-                      index += 1
-                      initState.updateProgress(index, steps[index])
-                      try await modelActor.getRegions()
-                      index += 1
-                      initState.updateProgress(index, steps[index])
-                      try await modelActor.getSiteGroups()
-                      index += 1
-                      initState.updateProgress(index, steps[index])
-                      try await modelActor.getSites()
-                      index += 1
-                      initState.updateProgress(index, steps[index])
-                      try await modelActor.getRacks()
-                      index += 1
-                      initState.updateProgress(index, steps[index])
-                      try await modelActor.getDevices()
-                      index += 1
-                      initState.updateProgress(index, steps[index])
-                  } catch {
-                      print("Sync failed (likely due to missing credentials): \(error)")
-                      // Continue to show app but without data
-                      initState.currentStep = "Running in Offline Mode"
-                      initState.showWelcome = true
-                      try? await Task.sleep(for: .seconds(2))
-                  }
-                  
-                  //Completed
-                  try? await Task.sleep(for: .milliseconds(500))
-                  
-                  initState.showWelcome = true
-                  initState.currentStep = "Welcome to Pulse"
-                  
-                  // Give time to see welcome message
-                  try? await Task.sleep(for: .milliseconds(1500))
-                  
-                  // Trigger exit animation
-                  initState.startExitAnimation = true
-                  
-                  // Wait for animation to complete
-                  try? await Task.sleep(for: .milliseconds(1100))
-                  
-                  // Show ContentView
-                  withAnimation(.easeInOut(duration: 0.5)) {
-                      showContentView = true
-                  }
-      
-                  tipManager.configure()
-                  
-              } catch {
-                  print("Container verification failed: \(error)")
-              }
-          }
-      }
+        // Drive the progress bar from the work that actually happens. Each
+        // updateProgress call sets the label for the step that's about to run, so
+        // the user sees "Synchronising X" while X is in flight, then advances when
+        // it completes. ProviderModelActor isolates the SwiftData I/O to its own
+        // executor; the main thread stays free, so no priority inversions.
+        let modelActor = ProviderModelActor(modelContainer: modelContainer)
+
+        do {
+            initState.updateProgress(0, "Synchronising Device Roles...")
+            try await modelActor.getDeviceRoles()
+
+            initState.updateProgress(1, "Synchronising Device Types...")
+            try await modelActor.getDeviceTypes()
+
+            initState.updateProgress(2, "Synchronising Tenants...")
+            try await modelActor.getTenants()
+
+            initState.updateProgress(3, "Synchronising Regions...")
+            try await modelActor.getRegions()
+
+            initState.updateProgress(4, "Synchronising Site Groups...")
+            try await modelActor.getSiteGroups()
+
+            initState.updateProgress(5, "Synchronising Sites...")
+            try await modelActor.getSites()
+
+            initState.updateProgress(6, "Synchronising Racks...")
+            try await modelActor.getRacks()
+
+            initState.updateProgress(7, "Synchronising Devices...")
+            try await modelActor.getDevices()
+
+            initState.updateProgress(8, "Setting up Tips...")
+            tipManager.configure()
+
+            initState.updateProgress(9, "Ready")
+        } catch {
+            print("Sync failed (likely due to missing credentials): \(error)")
+            initState.currentStep = "Running in Offline Mode"
+            initState.showWelcome = true
+            try? await Task.sleep(for: .seconds(2))
+        }
+
+        // Brief pause so a full bar is visible before the welcome message swaps in.
+        try? await Task.sleep(for: .milliseconds(500))
+
+        initState.showWelcome = true
+        initState.currentStep = "Welcome to Pulse"
+
+        // Time to read the welcome message.
+        try? await Task.sleep(for: .milliseconds(1500))
+
+        // Trigger exit animation.
+        initState.startExitAnimation = true
+
+        // Wait for the loading view to animate out.
+        try? await Task.sleep(for: .milliseconds(1100))
+
+        withAnimation(.easeInOut(duration: 0.5)) {
+            showContentView = true
+        }
+    }
     
     /**
      Attempts to configure TipKit and returns the result.
