@@ -87,6 +87,14 @@ enum SecureEnclaveKeyManager {
     /// from any other ECDSA P-256 keys living on this device.
     private static let tagPrefix = "nz.omega.pulse.ssh."
 
+    /// OpenSSH algorithm identifier for SE-backed keys. Centralised so the wire-format
+    /// encoder and the `authorized_keys` rendering can't drift.
+    private static let opensshAlgorithm = "ecdsa-sha2-nistp256"
+
+    /// OpenSSH curve identifier for the algorithm above. The "nistp256" string is what
+    /// servers compare against the algorithm-name prefix, not the SEC1 OID.
+    private static let opensshCurveName = "nistp256"
+
     /// Stable application tag for a given credential id. The tag is what we look the
     /// key up by — `id` does not appear elsewhere in the Keychain query.
     private static func applicationTag(for credentialID: UUID) -> Data {
@@ -109,6 +117,12 @@ enum SecureEnclaveKeyManager {
         label: String
     ) throws -> Data {
         var accessError: Unmanaged<CFError>?
+        // Stricter than Configuration's `AfterFirstUnlock` access class on purpose:
+        // SE-backed signing keys should only be usable while the device is currently
+        // unlocked, matching Apple's TN3137 guidance for "secure operations gated by
+        // user presence." Don't relax to `AfterFirstUnlock` for "consistency" — the
+        // background-polling justification that motivates the rest of the codebase's
+        // looser class doesn't apply to interactive SSH signing.
         guard let access = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
@@ -161,6 +175,11 @@ enum SecureEnclaveKeyManager {
         guard status == errSecSuccess, let ref = result else {
             throw KeyManagerError.keyNotFound(credentialID)
         }
+        // Force cast here is the documented Keychain contract: when the query has
+        // `kSecClass = kSecClassKey` and `kSecReturnRef = true` and Keychain returns
+        // `errSecSuccess`, the result is always a `SecKey`. The compiler rejects an
+        // `as?` guarded form because `SecKey` is a CoreFoundation toll-free-bridged
+        // type and the cast can't fail at runtime.
         return ref as! SecKey
     }
 
@@ -250,9 +269,9 @@ enum SecureEnclaveKeyManager {
         let wire = try openSSHPublicKeyWireFormat(for: credentialID)
         let base64 = wire.base64EncodedString()
         if let comment, !comment.isEmpty {
-            return "ecdsa-sha2-nistp256 \(base64) \(comment)"
+            return "\(opensshAlgorithm) \(base64) \(comment)"
         }
-        return "ecdsa-sha2-nistp256 \(base64)"
+        return "\(opensshAlgorithm) \(base64)"
     }
 
     // MARK: - Internals
@@ -283,8 +302,8 @@ enum SecureEnclaveKeyManager {
         }
 
         var wire = Data()
-        wire.appendOpenSSHString("ecdsa-sha2-nistp256")
-        wire.appendOpenSSHString("nistp256")
+        wire.appendOpenSSHString(opensshAlgorithm)
+        wire.appendOpenSSHString(opensshCurveName)
         wire.appendOpenSSHString(point)
         return wire
     }

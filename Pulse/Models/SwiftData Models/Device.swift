@@ -62,6 +62,12 @@ final class Device {
     // points at the operator's preferred `SSHCredential` for this device when one
     // has been chosen; a nil here means the connect sheet picks at runtime.
 
+    // TODO: scale — SwiftData (as of macOS 26) doesn't expose a secondary index on
+    // non-unique properties. SSHCredentialsSettings.deleteCredential runs
+    // `FetchDescriptor<Device>(predicate: { $0.defaultCredentialID == id })` during
+    // cleanup, which is a full-table scan at 1M+ devices. Cleanup is rare so the
+    // cost is amortised, but revisit when SwiftData gains `@Attribute(.index)` or
+    // equivalent so we don't silently keep the O(n) path forever.
     var defaultCredentialID: UUID?
     var defaultUsername: String?
     var preferredSSHPort: Int?
