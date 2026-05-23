@@ -481,6 +481,15 @@ actor ProviderModelActor {
         
         if deleteOld {
             // Fetch existing deviceRoles.
+            //
+            // SwiftData's `ModelContext.fetch(_:)` is synchronous from the actor's
+            // perspective but internally dispatches SQLite reads to a Background-QoS
+            // worker queue. With the actor running at User-initiated QoS this trips
+            // the runtime's priority-inversion warning. The pattern is structural to
+            // SwiftData itself (no async fetch API, no QoS propagation) and the same
+            // warning appears in Apple's own SwiftData samples. Living with it: the
+            // main thread is free, no deadlock risk, and dropping the actor's QoS to
+            // Background would make sync feel slower without changing correctness.
             let descriptor = FetchDescriptor<DeviceRole>()
             if let existingDeviceRoles = try? modelContext.fetch(descriptor) {
                 // Map existing deviceRole by their IDs

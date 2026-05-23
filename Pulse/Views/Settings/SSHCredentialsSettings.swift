@@ -28,6 +28,12 @@ import OSLog
 import SwiftData
 import SwiftUI
 
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
+
 /// Settings pane for managing SSH credentials.
 ///
 /// Two creation paths:
@@ -49,6 +55,9 @@ struct SSHCredentialsSettings: View {
     @State private var importingLegacy = false
     @State private var pendingDelete: SSHCredential?
     @State private var errorMessage: String?
+    /// Tracks the most recently copied credential so the row's copy button can show
+    /// transient "Copied" feedback. Cleared after 1.5 seconds.
+    @State private var recentlyCopied: UUID?
 
     private let logger = Logger(subsystem: "pulse", category: "ssh.credentials")
 
@@ -143,6 +152,7 @@ struct SSHCredentialsSettings: View {
                 }
             }
             Spacer()
+            copyPublicKeyButton(for: cred)
             Button {
                 pendingDelete = cred
             } label: {
@@ -152,6 +162,27 @@ struct SSHCredentialsSettings: View {
             .accessibilityLabel("Delete \(cred.label)")
         }
         .padding(.vertical, 4)
+    }
+
+    /// Copy-to-clipboard button for the credential's OpenSSH-format public key
+    /// (the `authorized_keys` line). Enabled for Secure Enclave credentials, which
+    /// have a derivable public key. Disabled for portable-tier credentials until
+    /// the signer derives the public key from the imported PEM.
+    private func copyPublicKeyButton(for cred: SSHCredential) -> some View {
+        let isCopied = recentlyCopied == cred.id
+        let isEnabled = cred.tier == .secureEnclave
+        return Button {
+            copyPublicKey(for: cred)
+        } label: {
+            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .foregroundStyle(isCopied ? .green : .primary)
+        }
+        .buttonStyle(.borderless)
+        .disabled(!isEnabled)
+        .help(isEnabled
+            ? "Copy the OpenSSH public key (authorized_keys line) to the clipboard"
+            : "Public key for portable PEM credentials becomes available once the SSH signer parses the key")
+        .accessibilityLabel("Copy public key for \(cred.label)")
     }
 
     private func tierBadge(_ tier: SSHCredentialTier) -> some View {
@@ -173,6 +204,42 @@ struct SSHCredentialsSettings: View {
         Text(title)
             .font(.title3)
             .fontWeight(.bold)
+    }
+
+    // MARK: - Copy public key
+
+    /// Copies the OpenSSH `authorized_keys` line for a Secure Enclave credential
+    /// to the system clipboard, then flips the row's button icon to a checkmark
+    /// for 1.5 s so the operator sees the action took effect.
+    ///
+    /// Public-key derivation does not require the SE's private material to be
+    /// authenticated, so this does not trigger a biometric prompt.
+    private func copyPublicKey(for cred: SSHCredential) {
+        guard cred.tier == .secureEnclave else { return }
+        do {
+            let line = try SecureEnclaveKeyManager.authorizedKeysLine(
+                for: cred.id,
+                comment: cred.label
+            )
+            #if canImport(AppKit)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(line, forType: .string)
+            #elseif canImport(UIKit)
+            UIPasteboard.general.string = line
+            #endif
+            recentlyCopied = cred.id
+            let id = cred.id
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1500))
+                if recentlyCopied == id {
+                    recentlyCopied = nil
+                }
+            }
+            logger.info("Copied public key for credential \(cred.id)")
+        } catch {
+            errorMessage = "Couldn't copy public key for \(cred.label): \(error)"
+            logger.error("Public key copy failed for \(cred.id): \(error)")
+        }
     }
 
     // MARK: - Delete
