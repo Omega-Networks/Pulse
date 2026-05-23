@@ -140,7 +140,8 @@ struct ContentView: View {
         .toolbar(content: toolbarContent)
 #endif
         .task {
-            ///Delay push notification by 30 seconds to allow CloudKit to sync with Pulse
+            /// Delay Zabbix monitoring start by 30s so initial container/sync
+            /// work finishes before we begin background polling.
             DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
                 startMonitoringZabbixUpdates()
             }

@@ -117,7 +117,6 @@
 		C961920F2ACA5D32000198DB /* TimeCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961920E2ACA5D32000198DB /* TimeCell.swift */; };
 		C96192112ACA5D3D000198DB /* UpdateModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96192102ACA5D3D000198DB /* UpdateModal.swift */; };
 		C962F8EE2E606BBE00B182AE /* AddSiteWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */; };
-		C96F2F952E719BC2007BADE5 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96F2F942E719BBC007BADE5 /* AppConfiguration.swift */; };
 		C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97136DA2E7966A90017CBF7 /* PowerSenseDevice.swift */; };
 		C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97136DB2E7966A90017CBF7 /* PowerSenseEvent.swift */; };
 		C97136DF2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97136DE2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift */; };
@@ -264,7 +263,6 @@
 		C961920E2ACA5D32000198DB /* TimeCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeCell.swift; sourceTree = "<group>"; };
 		C96192102ACA5D3D000198DB /* UpdateModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateModal.swift; sourceTree = "<group>"; };
 		C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddSiteWindow.swift; sourceTree = "<group>"; };
-		C96F2F942E719BBC007BADE5 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
 		C97136DA2E7966A90017CBF7 /* PowerSenseDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDevice.swift; sourceTree = "<group>"; };
 		C97136DB2E7966A90017CBF7 /* PowerSenseEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseEvent.swift; sourceTree = "<group>"; };
 		C97136DE2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseZabbixResource.swift; sourceTree = "<group>"; };
@@ -483,7 +481,6 @@
 				C96191932ACA55F4000198DB /* Views */,
 				C9951EDB2E8CDA0F0025C136 /* Services */,
 				C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */,
-				C96F2F942E719BBC007BADE5 /* AppConfiguration.swift */,
 				C96191632ACA552F000198DB /* ContentView.swift */,
 				410A560F2D0F898B00C722E3 /* SyncDashboardView.swift */,
 				4107D86B2C2CD7FC00632BE4 /* ContentView+Toolbar.swift */,
@@ -845,7 +842,6 @@
 				C96191C72ACA5881000198DB /* FilterButton.swift in Sources */,
 				41FE16212C0EA8F5002BF132 /* InterfacePopover.swift in Sources */,
 				C96191B62ACA57C5000198DB /* Tenant.swift in Sources */,
-				C96F2F952E719BC2007BADE5 /* AppConfiguration.swift in Sources */,
 				C96191B82ACA57D2000198DB /* TenantGroup.swift in Sources */,
 				4171CB852B8C38850001D252 /* SyncProvider.swift in Sources */,
 				C96192032ACA5CF8000198DB /* AcknowledgedCell.swift in Sources */,
@@ -996,7 +992,6 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CLOUDKIT_CONTAINER_ID = "$(CLOUDKIT_CONTAINER_ID)";
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -1064,7 +1059,6 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CLOUDKIT_CONTAINER_ID = "$(CLOUDKIT_CONTAINER_ID)";
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
