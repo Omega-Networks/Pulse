@@ -140,10 +140,17 @@ enum SecureEnclaveKeyManager {
             kSecAttrAccessControl as String: access
         ]
 
+        // `kSecUseDataProtectionKeychain` pins this call to the modern data-protection
+        // keychain. On macOS the default is still the legacy file-based keychain, which
+        // is what `SecKeyCreateRandomKey` would otherwise try to deposit into when
+        // `kSecAttrIsPermanent` is true. SE-token-backed keys live in the data-protection
+        // keychain regardless, so any mismatch between create and subsequent lookups
+        // surfaces as `errSecItemNotFound` even though the key is resident.
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+            kSecUseDataProtectionKeychain as String: true,
             kSecPrivateKeyAttrs as String: privateAttrs
         ]
 
@@ -169,6 +176,7 @@ enum SecureEnclaveKeyManager {
             kSecClass as String: kSecClassKey,
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrApplicationTag as String: applicationTag(for: credentialID),
+            kSecUseDataProtectionKeychain as String: true,
             kSecReturnRef as String: true
         ]
         var result: AnyObject?
@@ -194,7 +202,8 @@ enum SecureEnclaveKeyManager {
     static func deleteKey(for credentialID: UUID) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: applicationTag(for: credentialID)
+            kSecAttrApplicationTag as String: applicationTag(for: credentialID),
+            kSecUseDataProtectionKeychain as String: true
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
@@ -213,6 +222,7 @@ enum SecureEnclaveKeyManager {
             kSecClass as String: kSecClassKey,
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecUseDataProtectionKeychain as String: true,
             kSecReturnAttributes as String: true
         ]
         var result: AnyObject?
