@@ -28,15 +28,15 @@ import Foundation
 /// Reads metadata out of an SSH certificate that has been signed by a CA over an
 /// `SSHCredential`'s public key.
 ///
-/// **Slice 1 status — schema reservation only.** This type defines the metadata shape
-/// the rest of Pulse will refer to (principals, validity window, CA fingerprint, key
-/// id), but the real parser is built in Slice 3 once swift-nio-ssh is linked. Slice 1
-/// keeps the `certificate: Data?` field on `SSHCredential` so v2's certificate-aware
-/// flows do not require a SwiftData migration.
+/// Defines the metadata shape (`keyId`, `principals`, validity window, CA fingerprint)
+/// that the rest of Pulse refers to. The actual decode pipeline depends on
+/// `NIOSSHCertifiedPublicKey` from swift-nio-ssh; while that module isn't linked,
+/// `metadata(for:)` throws `.parserNotAvailableYet` and the credential editor falls
+/// back to displaying the raw blob length.
 ///
-/// Per ADR 0001 §3, certificates are first-class from v1 — meaning the data model
-/// holds them. The UI surface (FreeIPA enrolment, expiry display, automatic
-/// re-enrolment) lands in v2 against this stable schema.
+/// Per ADR 0001 §3, certificates are first-class on the data model so enrolment flows
+/// (FreeIPA, smallstep, Vault) can populate `SSHCredential.certificate` without a
+/// schema migration.
 enum SSHCertificateManager {
 
     /// Algorithm-agnostic projection of an SSH certificate's interesting bits.
@@ -63,7 +63,8 @@ enum SSHCertificateManager {
     }
 
     enum CertificateError: Error, CustomStringConvertible {
-        /// The parser is intentionally absent until Slice 3 wires up swift-nio-ssh.
+        /// Thrown when `metadata(for:)` is called and the swift-nio-ssh bridge isn't
+        /// linked into the current build.
         case parserNotAvailableYet
 
         /// The supplied bytes don't decode as a recognised SSH certificate format.
@@ -72,7 +73,7 @@ enum SSHCertificateManager {
         var description: String {
             switch self {
             case .parserNotAvailableYet:
-                return "SSH certificate parsing lands in Slice 3 (swift-nio-ssh integration)."
+                return "SSH certificate parsing requires the swift-nio-ssh signer module to be linked."
             case .malformedCertificate:
                 return "The supplied bytes are not a valid SSH certificate blob."
             }
@@ -81,18 +82,14 @@ enum SSHCertificateManager {
 
     /// Returns parsed metadata for a serialised certificate blob.
     ///
-    /// **Slice 1 — throws `.parserNotAvailableYet`.** The body is filled in Slice 3
-    /// where `NIOSSHCertifiedPublicKey` is available to decode the wire format.
+    /// Throws `.parserNotAvailableYet` until `NIOSSHCertifiedPublicKey` is available
+    /// to decode the wire format. The signer module supplies that integration.
     static func metadata(for serialised: Data) throws -> CertificateMetadata {
         _ = serialised
         throw CertificateError.parserNotAvailableYet
     }
 
     /// Returns true when the certificate's validity window covers `date`.
-    ///
-    /// Slice 1 callers (none in practice — no UI surface yet) get `false` so the
-    /// schema-reservation field on `SSHCredential.certificateExpiresAt` is never
-    /// surprisingly treated as live.
     static func isValid(_ metadata: CertificateMetadata, at date: Date = .now) -> Bool {
         date >= metadata.validAfter && date <= metadata.validBefore
     }

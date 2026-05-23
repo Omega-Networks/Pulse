@@ -30,13 +30,15 @@ import SwiftData
 
 /// How Pulse decides whether to accept a server host key.
 ///
-/// Polymorphic from v1 so v2 enforcement (CA-attested trust) is a code change against a stable
-/// schema, not a SwiftData migration that could be skipped or fail partially. See ADR 0001 §5.
+/// Polymorphic so adding CA-attested trust is a code change against a stable schema
+/// rather than a SwiftData migration that could be skipped or fail partially. See
+/// ADR 0001 §5.
 enum HostTrust: Codable, Hashable, Sendable {
     /// TOFU pin: the fingerprint observed on first connection is the contract.
     case pinned(fingerprintSHA256: String, algorithm: String)
 
-    /// CA-attested: the host key is signed by a recognised CA. Reserved for v2 enforcement.
+    /// CA-attested: the host key is signed by a recognised CA whose fingerprint and
+    /// principal pattern are stored here.
     case trustedCA(caFingerprintSHA256: String, principalPattern: String)
 
     /// Hard refusal: never accept this host, with the reason recorded.
@@ -48,8 +50,8 @@ enum HostTrust: Codable, Hashable, Sendable {
 /// Persistent record of host-key trust for a single `host:port` endpoint.
 ///
 /// Created on first successful SSH connection (TOFU) and updated when keys rotate.
-/// In v1 only the `.pinned` `HostTrust` case is constructed; the other cases are schema
-/// reservations for the v2 CA-attested flow.
+/// `HostTrust` carries the policy that the host-key delegate consults on every
+/// subsequent connection.
 @Model
 final class KnownHost {
     @Attribute(.unique) var id: UUID

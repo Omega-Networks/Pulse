@@ -419,16 +419,16 @@ final class Configuration: @unchecked Sendable {
 
     // MARK: - SSH Credential Material
     //
-    // Typed accessors per ADR 0001 §1 and the implementation briefing's "Configuration
-    // correction": saveToKeychain / loadFromKeychain stay private. SSH callers route
-    // through these specialised methods so a reviewer can grep for the surface area.
+    // Typed accessors per ADR 0001 §1. The generic `saveToKeychain` / `loadFromKeychain`
+    // helpers stay private; SSH callers route through these specialised methods so the
+    // surface area for credential material is grep-checkable from this file alone.
     //
     // Each accessor is keyed by `SSHCredential.id` so per-credential material is
     // isolated. Storage rides on the existing kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
     // protection class.
 
     /// Private key PEM for a portable-tier credential. `nil` when no key has been imported.
-    /// Secure Enclave-tier credentials do not have a PEM — their private material lives in
+    /// Secure Enclave-tier credentials do not have a PEM: their private material lives in
     /// the Enclave and is never returned to userspace.
     func sshPrivateKeyPEM(for credentialID: UUID) -> String? {
         guard let data = loadFromKeychain(key: Keys.sshPrivateKeyKey(for: credentialID)) else {
@@ -481,8 +481,8 @@ final class Configuration: @unchecked Sendable {
     /// whether the entry was present. Returns `true` only when *both* Keychain
     /// deletions either removed an entry or confirmed none existed. Surfacing the
     /// success bit lets `SSHCredentialsSettings` keep the SwiftData record around
-    /// for a retry when cleanup partially fails — an orphaned PEM with no
-    /// associated credential metadata is worse than an unremoved row.
+    /// for a retry when cleanup partially fails: an orphaned PEM with no associated
+    /// credential metadata is worse than an unremoved row.
     ///
     /// Secure Enclave residency is handled separately by `SecureEnclaveKeyManager`.
     @discardableResult

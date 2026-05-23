@@ -32,9 +32,9 @@ import SwiftUI
 ///
 /// Two creation paths:
 ///
-/// - **Secure Enclave (default)** — generates a non-exportable ECDSA P-256 key inside
+/// - **Secure Enclave (default)**: generates a non-exportable ECDSA P-256 key inside
 ///   the Enclave. Biometric or device passcode is required for every signature.
-/// - **Legacy (portable key)** — imports a PEM private key (Ed25519, ECDSA, RSA) into
+/// - **Legacy (portable key)**: imports a PEM private key (Ed25519, ECDSA, RSA) into
 ///   the Keychain. Guarded behind an explicit "Legacy" second screen so it's never
 ///   accidentally chosen.
 ///
@@ -62,13 +62,13 @@ struct SSHCredentialsSettings: View {
         .sheet(isPresented: $creatingSE) {
             CreateSecureEnclaveCredentialSheet { newCred in
                 modelContext.insert(newCred)
-                logger.info("Created SE credential \(newCred.id) — \(newCred.label)")
+                logger.info("Created SE credential \(newCred.id): \(newCred.label)")
             }
         }
         .sheet(isPresented: $importingLegacy) {
             ImportLegacyCredentialSheet { newCred in
                 modelContext.insert(newCred)
-                logger.info("Imported legacy credential \(newCred.id) — \(newCred.label)")
+                logger.info("Imported legacy credential \(newCred.id): \(newCred.label)")
             }
         }
         .confirmationDialog(
@@ -82,7 +82,7 @@ struct SSHCredentialsSettings: View {
             }
         } message: { cred in
             if cred.tier == .secureEnclave {
-                Text("This removes the Secure Enclave key. It cannot be recovered or re-issued — generate a new credential and re-enrol the public key on every device that trusted this one.")
+                Text("This removes the Secure Enclave key. It cannot be recovered or re-issued. Generate a new credential and re-enrol the public key on every device that trusted this one.")
             } else {
                 Text("Removes the private key PEM and any passphrase from the Keychain. The legacy key is gone unless you have a backup.")
             }
@@ -179,7 +179,7 @@ struct SSHCredentialsSettings: View {
 
     /// Deletes a credential in the correct order: secret material first, then the
     /// SwiftData record. If the secret cleanup fails the model is left alone so
-    /// the operator can retry — an orphaned SE key or PEM with no metadata is a
+    /// the operator can retry. An orphaned SE key or PEM with no metadata is a
     /// worse end state than a row the user can delete again.
     private func deleteCredential(_ cred: SSHCredential) {
         let id = cred.id
@@ -191,15 +191,15 @@ struct SSHCredentialsSettings: View {
                 try await deleteSecretMaterial(for: id, tier: tier)
             } catch {
                 await MainActor.run {
-                    errorMessage = "Couldn't delete \(label)'s secret material: \(error). The credential record is unchanged — try again or check Keychain Access."
+                    errorMessage = "Couldn't delete \(label)'s secret material: \(error). The credential record is unchanged. Try again or check Keychain Access."
                 }
                 logger.error("Aborting credential delete for \(id) (\(tier.rawValue)): \(error)")
                 return
             }
 
-            // Secret is gone — remove the row and clear any Device pointers in
-            // the same transaction. Explicit save so the cleanup is durable even
-            // if SwiftData's autosave hasn't fired yet.
+            // Secret is gone. Remove the row and clear any Device pointers in the
+            // same transaction. Explicit save so the cleanup is durable even if
+            // SwiftData's autosave hasn't fired yet.
             await MainActor.run {
                 modelContext.delete(cred)
                 let devices = (try? modelContext.fetch(
@@ -213,7 +213,7 @@ struct SSHCredentialsSettings: View {
                 do {
                     try modelContext.save()
                 } catch {
-                    errorMessage = "Device pointer cleanup save failed: \(error). The secret and credential metadata are already gone — re-open Settings to verify state."
+                    errorMessage = "Device pointer cleanup save failed: \(error). The secret and credential metadata are already gone. Re-open Settings to verify state."
                 }
             }
             logger.info("Deleted credential \(id) (\(tier.rawValue))")
@@ -325,7 +325,7 @@ private struct CreateSecureEnclaveCredentialSheet: View {
         do {
             let wire = try SecureEnclaveKeyManager.generateKey(
                 for: credentialID,
-                label: "Pulse SSH credential — \(trimmedLabel)"
+                label: "Pulse SSH credential: \(trimmedLabel)"
             )
             let credential = SSHCredential(
                 id: credentialID,
@@ -373,7 +373,7 @@ private struct ImportLegacyCredentialSheet: View {
         .frame(minWidth: 520, minHeight: 360)
     }
 
-    // MARK: Step 1 — gated warning
+    // MARK: Step 1 (gated warning)
 
     private var warningStep: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -381,7 +381,7 @@ private struct ImportLegacyCredentialSheet: View {
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.orange)
 
-            Text("Portable keys live in the Keychain as exportable bytes. They survive device loss, factory reset, and copy-paste — that's also why they're riskier. The default path (Secure Enclave) keeps the private half on this device only.")
+            Text("Portable keys live in the Keychain as exportable bytes. They survive device loss, factory reset, and copy-paste, which is also why they're riskier. The default path (Secure Enclave) keeps the private half on this device only.")
                 .foregroundStyle(.secondary)
 
             Text("Only continue if you need to import an existing key that a device or vendor already trusts.")
@@ -401,7 +401,7 @@ private struct ImportLegacyCredentialSheet: View {
         }
     }
 
-    // MARK: Step 2 — paste & validate
+    // MARK: Step 2 (paste and validate)
 
     private var formStep: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -435,7 +435,7 @@ private struct ImportLegacyCredentialSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if importedKey.isEncrypted {
-                        Text("Key is encrypted — passphrase required.")
+                        Text("Key is encrypted. Passphrase required.")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -500,11 +500,10 @@ private struct ImportLegacyCredentialSheet: View {
                 _ = await config.setSSHPassphrase(passphrase, for: credentialID)
             }
 
-            // The portable-tier "publicKey" we store on the SSHCredential here is the
-            // private PEM's identity placeholder: Slice 3 will derive the OpenSSH
-            // wire-format public key from the parsed private material. Until then we
-            // store an empty Data so the schema is satisfied and the fingerprint
-            // display falls back to "no public key" rather than misleading bytes.
+            // Portable-tier credentials store an empty Data placeholder in `publicKey`
+            // until the signer parses the PEM to derive the OpenSSH wire-format
+            // public key. Empty bytes are intentional so the fingerprint display
+            // falls back to "no public key" rather than showing misleading content.
             let credential = SSHCredential(
                 id: credentialID,
                 label: trimmedLabel,

@@ -31,14 +31,14 @@ import SwiftData
 /// Where the private key material lives and how it's exercised.
 ///
 /// The tier determines the signing path; everything else about the credential is identical
-/// across tiers. There is deliberately no `.password` case in v1 — see ADR 0001 §2.
+/// across tiers. There is deliberately no `.password` case (see ADR 0001 §2).
 enum SSHCredentialTier: String, Codable, Sendable {
     /// Private key resides in the Secure Enclave. Non-exportable. Every signature is
     /// gated by `kSecAccessControlBiometryCurrentSet` (or device passcode). Default for new
-    /// credentials. ECDSA P-256 (only algorithm the SE supports).
+    /// credentials. ECDSA P-256 (the only algorithm the SE supports).
     case secureEnclave
 
-    /// Private key is portable — stored as PEM in the Keychain. Algorithm can be Ed25519,
+    /// Private key is portable: stored as PEM in the Keychain. Algorithm can be Ed25519,
     /// ECDSA, or RSA. Surfaced as "Legacy" in the UI per ADR 0001 §1.
     case portable
 }
@@ -51,13 +51,15 @@ enum SSHCredentialTier: String, Codable, Sendable {
 ///
 /// Deliberately omits:
 ///
-/// - `username` — usernames are per-connection (`Device.defaultUsername` or a per-session
+/// - `username`: usernames are per-connection (`Device.defaultUsername` or a per-session
 ///   override), not per-credential. One key authorises many usernames. See ADR 0001 §4.
-/// - `password` / `authType` — password authentication is not implemented in v1. The tier
-///   is the only discriminator. See ADR 0001 §2.
+/// - `password` / `authType`: password authentication is not supported. The tier is the
+///   only discriminator. See ADR 0001 §2.
 ///
-/// The `certificate` field is a v1 schema reservation; UI for SSH certificate workflows
-/// (FreeIPA enrolment, expiry warnings, re-enrolment) lands in v2 against a stable schema.
+/// The optional `certificate` blob attaches a CA-signed `NIOSSHCertifiedPublicKey` to
+/// the credential without altering the underlying public key. Carried on the model so
+/// enrolment workflows (FreeIPA, smallstep, Vault) can populate it without a SwiftData
+/// migration.
 @Model
 final class SSHCredential {
     @Attribute(.unique) var id: UUID
@@ -65,14 +67,15 @@ final class SSHCredential {
     var tier: SSHCredentialTier
     /// OpenSSH wire-format public key. Exportable on both tiers (this is the public half).
     var publicKey: Data
-    /// Serialised `NIOSSHCertifiedPublicKey`, when a CA has signed `publicKey`. Schema
-    /// reservation in v1; consumed by `SSHCertificateManager` from v2 onwards.
+    /// Serialised `NIOSSHCertifiedPublicKey` when a CA has signed `publicKey`. Parsed
+    /// by `SSHCertificateManager` for the credential editor to display expiry and
+    /// principals.
     var certificate: Data?
     /// Mirrors the certificate's validity window for cheap UI display without re-parsing.
     var certificateExpiresAt: Date?
     /// When true, session byte streams using this credential are recorded under
     /// `~/Library/Application Support/Pulse/Sessions/...`. AES-GCM encrypted with
-    /// SE-wrapped per-session keys. Off by default — opt-in per ADR 0001 §6.
+    /// SE-wrapped per-session keys. Off by default; opt-in per ADR 0001 §6.
     var recordSessions: Bool
     var lastUsedAt: Date?
     var createdAt: Date

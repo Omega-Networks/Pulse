@@ -44,6 +44,6 @@ Production.xcconfig
 xcuserdata/
 project.xcworkspace/xcuserdata/
 
-# Claude Code / AI assistant local state — never commit
+# Claude Code / AI assistant local state. Never commit.
 .claude/
 CLAUDE.md

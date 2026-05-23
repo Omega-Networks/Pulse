@@ -28,11 +28,11 @@ import Foundation
 /// Validates and classifies portable (legacy-tier) SSH private keys imported from PEM
 /// or OpenSSH armor. Stores the normalised PEM via `Configuration.setSSHPrivateKeyPEM`.
 ///
-/// Slice 1 scope is structural: detect the armor, decode the base64 payload, classify
-/// the algorithm cheaply, and surface whether the key is encrypted so the UI can prompt
-/// for a passphrase. The full cryptographic decode (RSA modulus / EC point / Ed25519
-/// scalar) happens in Slice 3 when NIOSSH consumes the key for signing. Splitting the
-/// work this way lets Slice 1 ship the import UX without an SPM dependency.
+/// The importer's scope is structural: detect the armor, decode the base64 payload,
+/// classify the algorithm cheaply, and surface whether the key is encrypted so the UI
+/// can prompt for a passphrase. The full cryptographic decode (RSA modulus / EC point /
+/// Ed25519 scalar) happens later in the signing pipeline, not here. Splitting the work
+/// this way keeps the import UX free of any SSH-library dependency.
 enum SSHKeyImporter {
 
     // MARK: - Result types
@@ -64,9 +64,10 @@ enum SSHKeyImporter {
         case ecdsaP384
         case ecdsaP521
         /// Traditional `BEGIN EC PRIVATE KEY` PEMs identify the curve via an OID
-        /// inside the SEC1 ASN.1 payload, which Slice 1 doesn't decode. Surface
-        /// the family without claiming a specific curve so the import UI stays
-        /// truthful. Slice 3's NIOSSH decoder pins down P-256 / P-384 / P-521.
+        /// inside the SEC1 ASN.1 payload, which this importer doesn't decode.
+        /// Surface the family without claiming a specific curve so the import UI
+        /// stays truthful; the signer narrows this to a specific curve when it
+        /// parses the SEC1 payload for actual signing.
         case ecdsaUnknownCurve
         case rsa
         case dsa
@@ -109,7 +110,7 @@ enum SSHKeyImporter {
             case .payloadNotBase64:
                 return "The PEM body isn't valid base64."
             case .truncatedOpenSSHKey:
-                return "OpenSSH-format key is truncated — the ‘openssh-key-v1’ payload is incomplete."
+                return "OpenSSH-format key is truncated: the ‘openssh-key-v1’ payload is incomplete."
             }
         }
     }
@@ -153,9 +154,10 @@ enum SSHKeyImporter {
             algorithm = .rsa
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
         case .ecPrivate:
-            // The curve OID lives inside the SEC1 ASN.1 payload, which we don't
-            // decode in Slice 1. Surface as the family-level case so the UI doesn't
-            // mislabel a P-384 PEM as P-256. Slice 3 narrows this when NIOSSH lands.
+            // The curve OID lives inside the SEC1 ASN.1 payload, which this importer
+            // doesn't decode. Surface as the family-level case so the UI doesn't
+            // mislabel a P-384 PEM as P-256; the signer narrows the curve when it
+            // parses the SEC1 payload.
             algorithm = .ecdsaUnknownCurve
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
         case .pkcs8:
@@ -211,8 +213,8 @@ enum SSHKeyImporter {
     // MARK: - OpenSSH new-format inspection
 
     /// Inspects an OpenSSH `openssh-key-v1` private key payload enough to classify the
-    /// algorithm and detect whether it's encrypted. We do not decrypt or fully parse —
-    /// that's Slice 3's job once NIOSSH is available.
+    /// algorithm and detect whether it's encrypted. Does not decrypt or fully parse
+    /// the payload: the signer handles that when it actually consumes the key.
     ///
     /// Format (OpenSSH `PROTOCOL.key`):
     ///

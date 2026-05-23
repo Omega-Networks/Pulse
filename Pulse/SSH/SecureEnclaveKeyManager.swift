@@ -30,18 +30,19 @@ import Security
 /// Manages Secure Enclave–resident ECDSA P-256 private keys used as SSH credentials.
 ///
 /// The Secure Enclave only supports ECDSA over the NIST P-256 curve (`secp256r1` /
-/// `prime256v1`) — not Ed25519, not RSA. This is hardware. Modern OpenSSH servers
+/// `prime256v1`); not Ed25519, not RSA. This is hardware. Modern OpenSSH servers
 /// (≥6.5, 2014) accept `ecdsa-sha2-nistp256` so the constraint is purely a
 /// compatibility note, not a security one. See ADR 0001 §1.
 ///
 /// Every signature triggers a biometric / device-passcode prompt because the keys are
 /// created with `.privateKeyUsage` combined with `.biometryCurrentSet`. No caching of
 /// the authorisation across signatures. The prompt is driven by `SecKeyCreateSignature`
-/// itself — callers must not invoke `LAContext.evaluatePolicy` directly.
+/// itself; callers must not invoke `LAContext.evaluatePolicy` directly.
 ///
-/// The NIOSSH signer bridge that exposes these primitives to swift-nio-ssh lives in
-/// Slice 3. Slice 1 deliberately stops at the Security-framework level so the SE
-/// machinery can be built and tested without NIOSSH.
+/// This file stays at the Security-framework level. The bridge that lets swift-nio-ssh
+/// drive these keys lives in a separate signer type, which consumes `privateKey(for:)`
+/// for signature operations and `openSSHPublicKeyWireFormat(for:)` for the SSH-layer
+/// authentication challenge.
 enum SecureEnclaveKeyManager {
 
     // MARK: - Errors
@@ -96,7 +97,7 @@ enum SecureEnclaveKeyManager {
     private static let opensshCurveName = "nistp256"
 
     /// Stable application tag for a given credential id. The tag is what we look the
-    /// key up by — `id` does not appear elsewhere in the Keychain query.
+    /// key up by; `id` does not appear elsewhere in the Keychain query.
     private static func applicationTag(for credentialID: UUID) -> Data {
         Data("\(tagPrefix)\(credentialID.uuidString)".utf8)
     }
@@ -120,9 +121,9 @@ enum SecureEnclaveKeyManager {
         // Stricter than Configuration's `AfterFirstUnlock` access class on purpose:
         // SE-backed signing keys should only be usable while the device is currently
         // unlocked, matching Apple's TN3137 guidance for "secure operations gated by
-        // user presence." Don't relax to `AfterFirstUnlock` for "consistency" — the
-        // background-polling justification that motivates the rest of the codebase's
-        // looser class doesn't apply to interactive SSH signing.
+        // user presence." The background-polling justification that motivates the
+        // looser class on API tokens doesn't apply to interactive SSH signing, so the
+        // stricter class stays.
         guard let access = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
@@ -162,7 +163,7 @@ enum SecureEnclaveKeyManager {
     ///
     /// The returned reference can be passed to `SecKeyCreateSignature` to produce
     /// signatures (which will prompt for biometric / passcode). It cannot be used to
-    /// extract the private key bytes — those never leave the Enclave.
+    /// extract the private key bytes; those never leave the Enclave.
     static func privateKey(for credentialID: UUID) throws -> SecKey {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
@@ -183,12 +184,12 @@ enum SecureEnclaveKeyManager {
         return ref as! SecKey
     }
 
-    /// Removes the SE-backed key for a credential. Idempotent — `errSecItemNotFound`
+    /// Removes the SE-backed key for a credential. Idempotent: `errSecItemNotFound`
     /// is treated as success so the caller can use this during cleanup without first
     /// confirming the key exists.
     ///
     /// Throws on any other Keychain failure so callers can leave the surrounding
-    /// SwiftData record alone and retry — an orphaned SE key with no metadata is a
+    /// SwiftData record alone and retry. An orphaned SE key with no metadata is a
     /// worse end state than a credential the user can delete again.
     static func deleteKey(for credentialID: UUID) throws {
         let query: [String: Any] = [
@@ -205,8 +206,8 @@ enum SecureEnclaveKeyManager {
     /// Lists credential IDs that currently have a Secure Enclave-resident key.
     ///
     /// Used by the credentials UI to reconcile what's in SwiftData against what the
-    /// Enclave actually still holds — and to surface orphans created by manual
-    /// Keychain edits or sysadmin-side deletions.
+    /// Enclave actually still holds, surfacing orphans created by manual Keychain
+    /// edits or sysadmin-side deletions.
     static func resident() -> [UUID] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
@@ -232,8 +233,8 @@ enum SecureEnclaveKeyManager {
     // MARK: - Signing
 
     /// Signs `message` with the SE-backed credential. Uses
-    /// `ecdsaSignatureMessageX962SHA256` — the Enclave hashes the message itself, the
-    /// result is a DER-encoded ASN.1 ECDSA signature.
+    /// `ecdsaSignatureMessageX962SHA256`: the Enclave hashes the message itself and
+    /// returns a DER-encoded ASN.1 ECDSA signature.
     ///
     /// Every invocation prompts for biometric or device passcode. This is the
     /// human-attested signing operation that ADR 0001 §1 requires for every session.
@@ -279,7 +280,7 @@ enum SecureEnclaveKeyManager {
     /// Derives the OpenSSH wire encoding for an SE-resident ECDSA P-256 keypair.
     ///
     /// `SecKeyCopyExternalRepresentation` on the public half returns 65 bytes:
-    /// `0x04 || X(32 bytes) || Y(32 bytes)` — the SEC1 uncompressed point. OpenSSH
+    /// `0x04 || X(32 bytes) || Y(32 bytes)` (the SEC1 uncompressed point). OpenSSH
     /// frames the same value with two length-prefixed strings ahead of it:
     ///
     ///     string  "ecdsa-sha2-nistp256"
@@ -296,7 +297,7 @@ enum SecureEnclaveKeyManager {
             throw KeyManagerError.publicKeyExportFailed(exportError?.takeRetainedValue())
         }
         let point = cfData as Data
-        // 65 bytes for uncompressed P-256; defensive — surface any future surprise loudly.
+        // 65 bytes for uncompressed P-256; defensive check so any future surprise surfaces loudly.
         guard point.count == 65, point.first == 0x04 else {
             throw KeyManagerError.unexpectedPublicKeyFormat
         }
@@ -311,10 +312,10 @@ enum SecureEnclaveKeyManager {
 
 // MARK: - OpenSSH framing helper
 //
-// Scoped private to this file: these helpers have a single call site (the
-// OpenSSH wire-format encoder above) and aren't yet general-purpose. Promote to
-// Extensions/Data+Extensions.swift only when a second call site appears outside
-// the SSH subsystem — premature promotion turns a local helper into an API surface.
+// Scoped private to this file: these helpers have a single call site (the OpenSSH
+// wire-format encoder above) and aren't yet general-purpose. Promote to
+// Extensions/Data+Extensions.swift only when a second call site appears outside the
+// SSH subsystem. Premature promotion turns a local helper into an API surface.
 
 private extension Data {
     /// Appends a length-prefixed string. The length is a big-endian uint32.
@@ -325,7 +326,7 @@ private extension Data {
     /// Appends a length-prefixed binary string. The length is a big-endian uint32.
     mutating func appendOpenSSHString(_ payload: Data) {
         var length = UInt32(payload.count).bigEndian
-        // Disambiguate from Data's own withUnsafeBytes by qualifying the free function.
+        // Qualified call: Data's own `withUnsafeBytes(_:)` shadows the free function.
         Swift.withUnsafeBytes(of: &length) { append(contentsOf: $0) }
         append(payload)
     }

@@ -57,17 +57,16 @@ final class Device {
 
     // MARK: - SSH / Web preferences
     //
-    // Per ADR 0001 §4 username belongs on the connection, not the credential — so
-    // `defaultUsername` lives here and not on `SSHCredential`. `defaultCredentialID`
-    // points at the operator's preferred `SSHCredential` for this device when one
-    // has been chosen; a nil here means the connect sheet picks at runtime.
+    // Username sits on the device (or the per-session override), not the credential:
+    // one key authorises many usernames across different devices. `defaultCredentialID`
+    // points at the operator's preferred `SSHCredential` for this device when one has
+    // been chosen; nil means the connect sheet picks at runtime. See ADR 0001 §4.
 
-    // TODO: scale — SwiftData (as of macOS 26) doesn't expose a secondary index on
-    // non-unique properties. SSHCredentialsSettings.deleteCredential runs
+    // TODO: scale. SwiftData (as of macOS 26) doesn't expose a secondary index on
+    // non-unique properties. `SSHCredentialsSettings.deleteCredential` runs
     // `FetchDescriptor<Device>(predicate: { $0.defaultCredentialID == id })` during
-    // cleanup, which is a full-table scan at 1M+ devices. Cleanup is rare so the
-    // cost is amortised, but revisit when SwiftData gains `@Attribute(.index)` or
-    // equivalent so we don't silently keep the O(n) path forever.
+    // cleanup, which is a full-table scan at 1M+ devices. Cleanup is rare so the cost
+    // is amortised. Revisit when SwiftData gains `@Attribute(.index)` or equivalent.
     var defaultCredentialID: UUID?
     var defaultUsername: String?
     var preferredSSHPort: Int?
