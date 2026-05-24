@@ -12,9 +12,9 @@
 //  than being extracted by external entities. This aligns with our commitment to intergenerational
 //  prosperity through collaborative stewardship of public infrastructure.
 //
-//  This program is free software: communities can deploy it for sovereignty, academia can
-//  extend it for research, and industry can integrate it for resilience — all under the terms
-//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//  Under the terms of the GNU Affero General Public License version 3 as published by the
+//  Free Software Foundation, this program is free software: communities can deploy it for
+//  sovereignty, academia can extend it for research, and industry can integrate it for resilience.
 //
 //  You should have received a copy of the GNU Affero General Public License
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
