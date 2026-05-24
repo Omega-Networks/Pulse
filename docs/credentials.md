@@ -24,6 +24,8 @@ Every signing operation against a Secure Enclave credential prompts for Touch ID
 
 This is structural. The access control flags on the key (`kSecAccessControlBiometryCurrentSet` combined with `.privateKeyUsage` and `.devicePasscode` fallback) tell the Enclave to require user presence per use, and the prompt is driven by the Enclave itself rather than by Pulse asking `LAContext`. You can't relax it from inside Pulse; you'd have to generate a new credential with different access flags, which Pulse doesn't offer.
 
+The biometric requirement is locked to the biometric set in place when the credential was created. Adding a fingerprint, removing one, or changing the device passcode under certain conditions invalidates every SE credential generated against the previous set. This is the correct security posture for credentials that reach production infrastructure, but it's worth knowing before it happens: see the troubleshooting section.
+
 The intent: every SSH session, and every authenticated action within it, has a human at the keyboard. No background process signs on your behalf.
 
 ## Where credentials live
@@ -126,6 +128,9 @@ By far the most common cause is a bundle ID or signing team change between the i
 
 **No biometric prompt fires when signing.**
 Check that Token ID is `com.apple.setoken`. If it isn't, the key isn't actually in the Secure Enclave — something fell back to software at creation time and there's nothing to enforce biometric on. Delete and regenerate.
+
+**Every Secure Enclave credential suddenly fails to authenticate.**
+Touch ID enrolment changed since the credentials were created. Pulse locks SE credentials to the *current* biometric set (`kSecAccessControlBiometryCurrentSet`), which means adding or removing a fingerprint, or in some circumstances changing the device passcode, invalidates every existing SE credential. This is deliberate defence-in-depth: credentials shouldn't silently follow you across changes to the factors that gate them. Delete the affected rows and recreate; re-enrol the new public keys on every device.
 
 **Public key shows "no public key" on a Legacy credential.**
 Expected behaviour until the SSH signer module is wired up. The portable PEM tier doesn't derive the OpenSSH wire-format public key at import time; that happens when the signer parses the PEM for actual use. The Legacy credential is still functional internally; it just can't be enrolled on a server via the Copy public key button yet.
