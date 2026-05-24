@@ -48,7 +48,9 @@ struct DirectTransport: PulseTransport {
         port: Int,
         on eventLoop: EventLoop
     ) -> EventLoopFuture<Channel> {
+        // 10s default; tunnel callers needing slow-first-hop tolerance must wrap or pass channel options.
         NIOTSConnectionBootstrap(group: eventLoop)
+            .connectTimeout(.seconds(10))
             .connect(host: host, port: port)
     }
 }
