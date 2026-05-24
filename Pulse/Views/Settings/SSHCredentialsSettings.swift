@@ -182,24 +182,27 @@ struct SSHCredentialsSettings: View {
     }
 
     /// Copy-to-clipboard button for the credential's OpenSSH-format public key
-    /// (the `authorized_keys` line). Enabled for Secure Enclave credentials, which
-    /// have a derivable public key. Disabled for portable-tier credentials until
-    /// the signer derives the public key from the imported PEM.
+    /// (the `authorized_keys` line). Rendered only when a public key is actually
+    /// available to copy: Secure Enclave credentials always have one; portable
+    /// credentials don't have a public key derived until the signer parses the
+    /// imported PEM. The disabled-button state would be ambiguous (the operator
+    /// can't tell whether to wait or do something), so the button is hidden
+    /// entirely when there's nothing to copy. The row's caption alongside the
+    /// fingerprint explains the state.
+    @ViewBuilder
     private func copyPublicKeyButton(for cred: SSHCredential) -> some View {
-        let isCopied = recentlyCopied == cred.id
-        let isEnabled = cred.tier == .secureEnclave
-        return Button {
-            copyPublicKey(for: cred)
-        } label: {
-            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                .foregroundStyle(isCopied ? .green : .primary)
+        if cred.tier == .secureEnclave {
+            let isCopied = recentlyCopied == cred.id
+            Button {
+                copyPublicKey(for: cred)
+            } label: {
+                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                    .foregroundStyle(isCopied ? .green : .primary)
+            }
+            .buttonStyle(.borderless)
+            .help("Copy the OpenSSH public key (authorized_keys line) to the clipboard")
+            .accessibilityLabel("Copy public key for \(cred.label)")
         }
-        .buttonStyle(.borderless)
-        .disabled(!isEnabled)
-        .help(isEnabled
-            ? "Copy the OpenSSH public key (authorized_keys line) to the clipboard"
-            : "Public key for portable PEM credentials becomes available once the SSH signer parses the key")
-        .accessibilityLabel("Copy public key for \(cred.label)")
     }
 
     private func tierBadge(_ tier: SSHCredentialTier) -> some View {
@@ -365,7 +368,14 @@ struct SSHCredentialsSettings: View {
             Access group: \(attributes.accessGroup)
             Token ID: \(attributes.tokenID)
             Synchronizable: \(attributes.synchronizable)
-            Accessible: \(attributes.accessible)
+            Accessible: \(attributes.accessibleDescription)
+
+            Note: for SE-token keys (Token ID `com.apple.setoken`), the \
+            real access policy (biometric, device passcode, presence) is \
+            enforced by the SecAccessControl object created at key generation, \
+            not by the Accessible attribute. The value above is what the OS \
+            chose for the Keychain entry and may differ from the protection \
+            class requested.
             """
             logger.debug("Inspection for \(cred.id): \(inspectResult ?? "")")
         } catch {
@@ -376,8 +386,20 @@ struct SSHCredentialsSettings: View {
 
     // MARK: - Fingerprint
 
+    /// Returns either the SHA256 OpenSSH fingerprint of the credential's public key,
+    /// or a tier-appropriate placeholder when the public key has not yet been
+    /// derived. Portable credentials store only the PEM private material at import
+    /// time; the OpenSSH-format public key is filled in once the signer parses
+    /// the PEM, which happens later in the SSH client integration.
     private func fingerprintDisplay(of cred: SSHCredential) -> String {
-        guard !cred.publicKey.isEmpty else { return "no public key" }
+        guard !cred.publicKey.isEmpty else {
+            switch cred.tier {
+            case .secureEnclave:
+                return "no public key"
+            case .portable:
+                return "PEM stored — public key derived on first use"
+            }
+        }
         let hash = SHA256.hash(data: cred.publicKey)
         let base64 = Data(hash)
             .base64EncodedString()

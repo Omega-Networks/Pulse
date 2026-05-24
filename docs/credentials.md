@@ -77,7 +77,7 @@ Open Pulse → Settings → SSH (the **SSH** tab between PowerSense and Database
 
 **Import legacy key (PEM)…** Imports a PEM-encoded private key into the regular Keychain. Two-step flow: the first screen labelled "Legacy (portable key)" explains what you're doing and why; you have to actively continue to reach the import form. The form classifies what you paste (Ed25519 / ECDSA / RSA / unknown) and asks for a passphrase only if the key is encrypted. After import, the credential row gets an orange Legacy badge.
 
-**Copy public key (clipboard icon on each row).** Copies the OpenSSH `authorized_keys` line for that credential — `ecdsa-sha2-nistp256 AAAA…label` — to your clipboard so you can paste it into a switch or server's `~/.ssh/authorized_keys`. Available on Secure Enclave rows; disabled on Legacy rows until the SSH signer derives the public key from the imported PEM. Click triggers no biometric prompt; deriving a public key from an SE reference doesn't need user presence.
+**Copy public key (clipboard icon on each row).** Copies the OpenSSH `authorized_keys` line for that credential — `ecdsa-sha2-nistp256 AAAA…label` — to your clipboard so you can paste it into a switch or server's `~/.ssh/authorized_keys`. Available on Secure Enclave rows. Not shown on Legacy rows: the OpenSSH public-key line for a portable PEM is derived by the SSH signer at first use, so the row's caption reads "PEM stored — public key derived on first use" until that derivation has happened. Click triggers no biometric prompt; deriving a public key from an SE reference doesn't need user presence.
 
 **Delete (trash icon).** Removes the secret material first (SE key from the Enclave, or PEM and passphrase from the Keychain), then removes the credential metadata from the local SwiftData store. If the Keychain delete fails, the credential row stays put so you can retry — an orphaned secret with no metadata is a worse end state than a row you can delete again.
 
@@ -90,7 +90,14 @@ Credential: Lab-1
 Access group: ADC5AJV3TU.nz.net.omega.pulse
 Token ID: com.apple.setoken
 Synchronizable: false
-Accessible: ck
+Accessible: dk (kSecAttrAccessibleAlways (deprecated))
+
+Note: for SE-token keys (Token ID `com.apple.setoken`), the
+real access policy (biometric, device passcode, presence) is
+enforced by the SecAccessControl object created at key generation,
+not by the Accessible attribute. The value above is what the OS
+chose for the Keychain entry and may differ from the protection
+class requested.
 ```
 
 What each value should be, and what it tells you:
@@ -98,7 +105,7 @@ What each value should be, and what it tells you:
 - **Access group** — should be `<TeamID>.<BundleID>` for your build. If it's something else, the entitlement file isn't expanding correctly at sign time and SE writes will fail.
 - **Token ID** — should be `com.apple.setoken`. If absent, the key isn't actually in the Enclave (something fell back to software).
 - **Synchronizable** — must be `false`. If `true`, the credential could in principle leave the device via iCloud Keychain, which contradicts the whole credential model.
-- **Accessible** — should be `ck` (the encoded form of `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`). `ak` is also fine for legacy-tier (`AfterFirstUnlock`). Anything else means the access class has been relaxed and should be investigated.
+- **Accessible** — for SE-token keys this attribute is set by the OS on the Keychain entry and does not reflect the protection class Pulse requested via `SecAccessControlCreateWithFlags`. On macOS the value reported back is often `dk` (`kSecAttrAccessibleAlways`); seeing that does **not** mean the key is unprotected. The real policy lives in the SecAccessControl object: `kSecAccessControlBiometryCurrentSet` with a `kSecAccessControlDevicePasscode` fallback. You can confirm that policy is working indirectly — every signature triggers a biometric prompt. For *Legacy* tier credentials (PEM in the regular Keychain, no Token ID), this attribute is meaningful and should be `cku` (`AfterFirstUnlockThisDeviceOnly`).
 
 This is the operator-side self-check. If a credential is misbehaving and you want to be sure the build is configured correctly without dropping into Xcode, run Inspect first.
 
@@ -125,7 +132,7 @@ For fork maintainers specifically: **use a stable bundle ID from the start**. If
 By far the most common cause is a bundle ID or signing team change between the install that created the credential and the install trying to use it. Verify in Debug builds via Inspect; if the access group doesn't match the current build's identity, the credential is from a previous incarnation. Delete and recreate.
 
 **No biometric prompt fires when signing.**
-The access control flags on the credential have been relaxed somehow. Inspect the credential; if Accessible shows anything other than `ck` (or `ak` for legacy), or if Token ID isn't `com.apple.setoken`, something is wrong with how the key was created. Delete and regenerate.
+The access control flags on the credential have been relaxed somehow. Inspect the credential; if Token ID isn't `com.apple.setoken`, the key isn't actually in the Enclave (something fell back to software at creation time) and there's nothing to enforce biometric on. Delete and regenerate. The Accessible attribute on its own isn't diagnostic for SE keys — see the SE caveat in the Debug inspection section above.
 
 **Public key shows "no public key" on a Legacy credential.**
 Expected behaviour until the SSH signer module is wired up. The portable PEM tier doesn't derive the OpenSSH wire-format public key at import time; that happens when the signer parses the PEM for actual use. The Legacy credential is still functional internally; it just can't be enrolled on a server via the Copy public key button yet.
@@ -153,7 +160,7 @@ A five-minute end-to-end procedure to run before pushing changes that touch SSH 
    - Access group ends in `.nz.net.omega.pulse` (or your fork's bundle ID, prefixed by your team ID).
    - Token ID is `com.apple.setoken`.
    - Synchronizable is `false`.
-   - Accessible is `ck`.
+   - The closing note about SecAccessControl is visible (so you know the Accessible attribute alone doesn't tell the full story).
 5. Delete the `Lab-1` row. Confirmation dialog. Confirm.
 6. Create `Lab-2`. Force-quit Pulse (Cmd-Q or Activity Monitor). Re-launch. Confirm `Lab-2` still appears in the list with its original fingerprint.
 7. Click **Import legacy key (PEM)…**. Confirm the first screen says "Legacy (portable key)" in orange. Continue. Paste a known Ed25519 PEM. Validate. Expect "Detected: Ed25519 (OPENSSH PRIVATE KEY)" and no passphrase prompt. Import. Confirm the row has an orange Legacy badge.

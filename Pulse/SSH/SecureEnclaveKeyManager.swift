@@ -358,6 +358,32 @@ extension SecureEnclaveKeyManager {
         let tokenID: String
         let synchronizable: Bool
         let accessible: String
+
+        /// Human-readable rendering of `accessible`. The macOS Keychain stores
+        /// `kSecAttrAccessible` as a short opaque string (`aku`, `ck`, `dk`, …);
+        /// this maps it back to the Apple constant name so an operator inspecting
+        /// the attribute doesn't have to memorise the shorthand.
+        ///
+        /// For SE-token-backed keys, the value the OS reports here doesn't
+        /// necessarily match the protection class passed to
+        /// `SecAccessControlCreateWithFlags`. The real access policy (biometry,
+        /// passcode, presence) is enforced by the `SecAccessControl` object on
+        /// the key, not by this attribute. The annotation makes that explicit so
+        /// a value like `dk` doesn't look like a regression.
+        var accessibleDescription: String {
+            let constantName: String
+            switch accessible {
+            case "ak":   constantName = "kSecAttrAccessibleWhenUnlocked"
+            case "ck":   constantName = "kSecAttrAccessibleAfterFirstUnlock"
+            case "dk":   constantName = "kSecAttrAccessibleAlways (deprecated)"
+            case "aku":  constantName = "kSecAttrAccessibleWhenUnlockedThisDeviceOnly"
+            case "cku":  constantName = "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"
+            case "dku":  constantName = "kSecAttrAccessibleAlwaysThisDeviceOnly (deprecated)"
+            case "akpu": constantName = "kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly"
+            default:     constantName = "unknown encoding"
+            }
+            return "\(accessible) (\(constantName))"
+        }
     }
 
     /// Reads the Keychain attribute record for `credentialID` without touching the
