@@ -311,12 +311,28 @@ enum SecureEnclaveKeyManager {
         guard let cfData = SecKeyCopyExternalRepresentation(publicKey, &exportError) else {
             throw KeyManagerError.publicKeyExportFailed(exportError?.takeRetainedValue())
         }
-        let point = cfData as Data
-        // 65 bytes for uncompressed P-256; defensive check so any future surprise surfaces loudly.
+        return try openSSHWireFormat(secp256r1Point: cfData as Data)
+    }
+
+    /// Encodes a SEC1 uncompressed P-256 public point as `ecdsa-sha2-nistp256`
+    /// OpenSSH wire format per RFC 5656 §3.1:
+    ///
+    ///     string  "ecdsa-sha2-nistp256"
+    ///     string  "nistp256"
+    ///     string  Q                       (65-byte SEC1 point: 0x04 || X || Y)
+    ///
+    /// Each `string` is a big-endian `uint32` length followed by the payload, giving
+    /// a fixed total of `4 + 19 + 4 + 8 + 4 + 65 = 108` bytes.
+    ///
+    /// Internal so the wire-format unit tests can exercise it with a CryptoKit-
+    /// generated point and assert byte-for-byte against the RFC; production callers
+    /// reach this through `openSSHPublicKeyWireFormat(from:)`.
+    internal static func openSSHWireFormat(secp256r1Point point: Data) throws -> Data {
+        // 65 bytes for SEC1 uncompressed P-256; the leading 0x04 distinguishes the
+        // uncompressed form from compressed encodings (0x02 / 0x03).
         guard point.count == 65, point.first == 0x04 else {
             throw KeyManagerError.unexpectedPublicKeyFormat
         }
-
         var wire = Data()
         wire.appendOpenSSHString(opensshAlgorithm)
         wire.appendOpenSSHString(opensshCurveName)

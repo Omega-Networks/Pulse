@@ -22,6 +22,7 @@
 		067FD09E2ECC6D5500146D44 /* Logger+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD09D2ECC6D5500146D44 /* Logger+Extensions.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
 		A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */; };
+		A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */; };
 		06D467DA2ECDC7310092553E /* SpatialClusteringProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06D467D82ECDC7310092553E /* SpatialClusteringProtocols.swift */; };
 		06D467DB2ECDC7310092553E /* SpatialClusteringSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06D467D92ECDC7310092553E /* SpatialClusteringSystem.swift */; };
 		06E9CC462EE03377008DE369 /* PowerSenseDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06E9CC452EE03377008DE369 /* PowerSenseDataService.swift */; };
@@ -171,6 +172,7 @@
 		067FD09D2ECC6D5500146D44 /* Logger+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Logger+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporterTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSSHWireFormatTests.swift; sourceTree = "<group>"; };
 		06D467D82ECDC7310092553E /* SpatialClusteringProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringProtocols.swift; sourceTree = "<group>"; };
 		06D467D92ECDC7310092553E /* SpatialClusteringSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringSystem.swift; sourceTree = "<group>"; };
 		06E9CC452EE03377008DE369 /* PowerSenseDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDataService.swift; sourceTree = "<group>"; };
@@ -670,6 +672,7 @@
 			isa = PBXGroup;
 			children = (
 				A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */,
+				A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */,
 			);
 			path = SSH;
 			sourceTree = "<group>";
@@ -987,6 +990,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */,
+				A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
