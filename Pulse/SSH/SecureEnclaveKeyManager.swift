@@ -133,11 +133,16 @@ enum SecureEnclaveKeyManager {
             throw KeyManagerError.accessControlCreationFailed(accessError?.takeRetainedValue())
         }
 
+        // `kSecAttrSynchronizable: false` is the default for the data-protection
+        // keychain on macOS, but setting it explicitly turns a default-behaviour
+        // assumption into a structural guarantee: a reviewer can grep
+        // `kSecAttrSynchronizable` and confirm SSH keys never opt into iCloud sync.
         let privateAttrs: [String: Any] = [
             kSecAttrIsPermanent as String: true,
             kSecAttrApplicationTag as String: applicationTag(for: credentialID),
             kSecAttrLabel as String: label,
-            kSecAttrAccessControl as String: access
+            kSecAttrAccessControl as String: access,
+            kSecAttrSynchronizable as String: false
         ]
 
         // `kSecUseDataProtectionKeychain` pins this call to the modern data-protection
