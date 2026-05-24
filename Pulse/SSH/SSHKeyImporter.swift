@@ -138,7 +138,13 @@ enum SSHKeyImporter {
             break
         }
 
-        let stripped = base64Body
+        // RFC 1421 traditional encrypted PEM blocks carry headers (`Proc-Type`,
+        // `DEK-Info`) between the BEGIN line and the base64 body, separated by a
+        // blank line. OpenSSH new-format and unencrypted traditional PEMs skip the
+        // header section entirely. Strip any leading header block before decoding so
+        // the headers don't end up in the base64 stream.
+        let payloadBody = stripPEMHeaders(from: base64Body)
+        let stripped = payloadBody
             .split(whereSeparator: \.isWhitespace)
             .joined()
         guard let payload = Data(base64Encoded: stripped) else {
@@ -208,6 +214,28 @@ enum SSHKeyImporter {
     /// versions emit when a passphrase is set on RSA/EC traditional PEM keys.
     private static func hasEncryptedTraditionalPEMHeader(in input: String) -> Bool {
         input.range(of: "Proc-Type: 4,ENCRYPTED", options: .caseInsensitive) != nil
+    }
+
+    /// Strips an RFC 1421 header block from the PEM body if one is present. Headers
+    /// look like `Name: Value` and terminate at the first blank line; once that line
+    /// is found, everything after it is the base64 body. Bodies without headers fall
+    /// through unchanged.
+    private static func stripPEMHeaders(from body: String) -> String {
+        let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let firstNonEmpty = lines.firstIndex(where: {
+            !$0.trimmingCharacters(in: .whitespaces).isEmpty
+        }) else {
+            return body
+        }
+        // PEM headers are `Name: Value`. If the first content line doesn't contain a
+        // colon it's already base64; nothing to strip.
+        guard lines[firstNonEmpty].contains(":") else { return body }
+        guard let blankIndex = lines[firstNonEmpty...].firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespaces).isEmpty
+        }) else {
+            return body
+        }
+        return lines[(blankIndex + 1)...].joined(separator: "\n")
     }
 
     // MARK: - OpenSSH new-format inspection
