@@ -22,9 +22,9 @@ If you must use Ed25519 or RSA — older industrial gear, vendor defaults that h
 
 Every signing operation against a Secure Enclave credential prompts for Touch ID or your device passcode. There is no per-session cache. Connecting to a host, re-authenticating mid-session, running a `git fetch` over SSH inside a Pulse-managed shell — each signature triggers a prompt.
 
-This is structural. The access control flags on the key (`kSecAccessControlBiometryCurrentSet` combined with `.privateKeyUsage` and `.devicePasscode` fallback) tell the Enclave to require user presence per use, and the prompt is driven by the Enclave itself rather than by Pulse asking `LAContext`. You can't relax it from inside Pulse; you'd have to generate a new credential with different access flags, which Pulse doesn't offer.
+This is structural. The access control flags on the key (`kSecAccessControlBiometryAny` combined with `.privateKeyUsage` and `.devicePasscode` fallback) tell the Enclave to require user presence per use, and the prompt is driven by the Enclave itself rather than by Pulse asking `LAContext`. You can't relax it from inside Pulse; you'd have to generate a new credential with different access flags, which Pulse doesn't offer.
 
-The biometric requirement is locked to the biometric set in place when the credential was created. Adding a fingerprint, removing one, or changing the device passcode under certain conditions invalidates every SE credential generated against the previous set. This is the correct security posture for credentials that reach production infrastructure, but it's worth knowing before it happens: see the troubleshooting section.
+The biometric requirement survives changes to your Touch ID enrolment. Adding or removing a fingerprint, or changing the device passcode, does not invalidate existing credentials. The stricter alternative (`biometryCurrentSet`) would protect against an attacker who already possesses your device passcode enrolling their own biometric — a niche threat already gated by passcode possession. The operational cost of invalidating every credential on a routine Touch ID change isn't worth that marginal extra coverage.
 
 The intent: every SSH session, and every authenticated action within it, has a human at the keyboard. No background process signs on your behalf.
 
@@ -92,7 +92,7 @@ Credential: Lab-1
 Access group: ADC5AJV3TU.nz.net.omega.pulse
 Token ID: com.apple.setoken
 Synchronizable: false
-Access control: biometryCurrentSet OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly
+Access control: biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly
 ```
 
 What each value should be, and what it tells you:
@@ -100,7 +100,7 @@ What each value should be, and what it tells you:
 - **Access group** — should be `<TeamID>.<BundleID>` for your build. If it's something else, the entitlement file isn't expanding correctly at sign time and SE writes will fail.
 - **Token ID** — should be `com.apple.setoken`. If absent, the key isn't actually in the Enclave (something fell back to software).
 - **Synchronizable** — must be `false`. If `true`, the credential could in principle leave the device via iCloud Keychain, which contradicts the whole credential model.
-- **Access control** — sourced from the SecAccessControl flags set at creation for SE credentials; decoded from `kSecAttrAccessible` for portable ones. SE credentials should always show `biometryCurrentSet OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`. Portable credentials should show `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Anything else is a misconfiguration.
+- **Access control** — sourced from the SecAccessControl flags set at creation for SE credentials; decoded from `kSecAttrAccessible` for portable ones. SE credentials should always show `biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`. Portable credentials should show `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Anything else is a misconfiguration.
 
 This is the operator-side self-check. If a credential is misbehaving and you want to be sure the build is configured correctly without dropping into Xcode, run Inspect first.
 
@@ -129,9 +129,6 @@ By far the most common cause is a bundle ID or signing team change between the i
 **No biometric prompt fires when signing.**
 Check that Token ID is `com.apple.setoken`. If it isn't, the key isn't actually in the Secure Enclave — something fell back to software at creation time and there's nothing to enforce biometric on. Delete and regenerate.
 
-**Every Secure Enclave credential suddenly fails to authenticate.**
-Touch ID enrolment changed since the credentials were created. Pulse locks SE credentials to the *current* biometric set (`kSecAccessControlBiometryCurrentSet`), which means adding or removing a fingerprint, or in some circumstances changing the device passcode, invalidates every existing SE credential. This is deliberate defence-in-depth: credentials shouldn't silently follow you across changes to the factors that gate them. Delete the affected rows and recreate; re-enrol the new public keys on every device.
-
 **Public key shows "no public key" on a Legacy credential.**
 Expected behaviour until the SSH signer module is wired up. The portable PEM tier doesn't derive the OpenSSH wire-format public key at import time; that happens when the signer parses the PEM for actual use. The Legacy credential is still functional internally; it just can't be enrolled on a server via the Copy public key button yet.
 
@@ -158,7 +155,7 @@ A five-minute end-to-end procedure to run before pushing changes that touch SSH 
    - Access group ends in `.nz.net.omega.pulse` (or your fork's bundle ID, prefixed by your team ID).
    - Token ID is `com.apple.setoken`.
    - Synchronizable is `false`.
-   - Access control is `biometryCurrentSet OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`.
+   - Access control is `biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`.
 5. Delete the `Lab-1` row. Confirmation dialog. Confirm.
 6. Create `Lab-2`. Force-quit Pulse (Cmd-Q or Activity Monitor). Re-launch. Confirm `Lab-2` still appears in the list with its original fingerprint.
 7. Click **Import legacy key (PEM)…**. Confirm the first screen says "Legacy (portable key)" in orange. Continue. Paste a known Ed25519 PEM. Validate. Expect "Detected: Ed25519 (OPENSSH PRIVATE KEY)" and no passphrase prompt. Import. Confirm the row has an orange Legacy badge.

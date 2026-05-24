@@ -127,7 +127,7 @@ enum SecureEnclaveKeyManager {
         guard let access = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            [.privateKeyUsage, .biometryCurrentSet, .or, .devicePasscode],
+            [.privateKeyUsage, .biometryAny, .or, .devicePasscode],
             &accessError
         ) else {
             throw KeyManagerError.accessControlCreationFailed(accessError?.takeRetainedValue())
@@ -398,7 +398,7 @@ extension SecureEnclaveKeyManager {
         let accessControl: String
         if isSecureEnclave {
             accessControl =
-                "biometryCurrentSet OR devicePasscode, " +
+                "biometryAny OR devicePasscode, " +
                 "privateKeyUsage, " +
                 "WhenUnlockedThisDeviceOnly"
         } else {
