@@ -58,6 +58,11 @@ struct SSHCredentialsSettings: View {
     /// Tracks the most recently copied credential so the row's copy button can show
     /// transient "Copied" feedback. Cleared after 1.5 seconds.
     @State private var recentlyCopied: UUID?
+    #if DEBUG
+    /// Holds the formatted output of the debug "Inspect key attributes" action.
+    /// Drives the inspection alert; non-nil when a result is awaiting display.
+    @State private var inspectResult: String?
+    #endif
 
     private let logger = Logger(subsystem: "pulse", category: "ssh.credentials")
 
@@ -101,6 +106,13 @@ struct SSHCredentialsSettings: View {
         } message: {
             Text(errorMessage ?? "")
         }
+        #if DEBUG
+        .alert("Key attributes", isPresented: inspectAlertBinding) {
+            Button("OK", role: .cancel) { inspectResult = nil }
+        } message: {
+            Text(inspectResult ?? "")
+        }
+        #endif
     }
 
     // MARK: - Sections
@@ -162,6 +174,11 @@ struct SSHCredentialsSettings: View {
             .accessibilityLabel("Delete \(cred.label)")
         }
         .padding(.vertical, 4)
+        #if DEBUG
+        .contextMenu {
+            Button("Inspect key attributes") { inspect(cred) }
+        }
+        #endif
     }
 
     /// Copy-to-clipboard button for the credential's OpenSSH-format public key
@@ -319,6 +336,43 @@ struct SSHCredentialsSettings: View {
             set: { if !$0 { pendingDelete = nil } }
         )
     }
+
+    #if DEBUG
+    private var inspectAlertBinding: Binding<Bool> {
+        Binding(
+            get: { inspectResult != nil },
+            set: { if !$0 { inspectResult = nil } }
+        )
+    }
+
+    // MARK: - Debug inspection
+
+    /// Reads the Keychain attributes for an SE credential and renders them into the
+    /// inspection alert. Lets the operator confirm at runtime that keys land in the
+    /// expected access group, are on the data-protection keychain, aren't
+    /// synchronisable, and use the correct accessibility class.
+    ///
+    /// Compiled out of Release builds.
+    private func inspect(_ cred: SSHCredential) {
+        guard cred.tier == .secureEnclave else {
+            inspectResult = "Legacy credentials don't have an SE record to inspect."
+            return
+        }
+        do {
+            let attributes = try SecureEnclaveKeyManager.inspect(cred.id)
+            inspectResult = """
+            Credential: \(cred.label)
+            Access group: \(attributes.accessGroup)
+            Token ID: \(attributes.tokenID)
+            Synchronizable: \(attributes.synchronizable)
+            Accessible: \(attributes.accessible)
+            """
+            logger.debug("Inspection for \(cred.id): \(inspectResult ?? "")")
+        } catch {
+            inspectResult = "Inspection failed: \(error)"
+        }
+    }
+    #endif
 
     // MARK: - Fingerprint
 

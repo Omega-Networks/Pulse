@@ -325,3 +325,49 @@ enum SecureEnclaveKeyManager {
     }
 }
 
+// MARK: - Debug inspection
+
+#if DEBUG
+
+extension SecureEnclaveKeyManager {
+
+    /// Snapshot of the Keychain attributes for an SE-resident key. Backs the
+    /// Settings → SSH context-menu "Inspect key attributes" action so the operator
+    /// can confirm at runtime that keys land in the expected access group, are
+    /// pinned to the data-protection keychain, and aren't synchronisable.
+    ///
+    /// Compiled out of Release builds.
+    struct KeyInspection {
+        let accessGroup: String
+        let tokenID: String
+        let synchronizable: Bool
+        let accessible: String
+    }
+
+    /// Reads the Keychain attribute record for `credentialID` without touching the
+    /// private material. Attribute lookup does not require user presence, so this
+    /// does not trigger a biometric prompt. Throws `keyNotFound` if no SE key is
+    /// resident under the credential's application tag.
+    static func inspect(_ credentialID: UUID) throws -> KeyInspection {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: applicationTag(for: credentialID),
+            kSecUseDataProtectionKeychain as String: true,
+            kSecReturnAttributes as String: true
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let attrs = result as? [String: Any] else {
+            throw KeyManagerError.keyNotFound(credentialID)
+        }
+        return KeyInspection(
+            accessGroup: attrs[kSecAttrAccessGroup as String] as? String ?? "(none)",
+            tokenID: attrs[kSecAttrTokenID as String] as? String ?? "(none)",
+            synchronizable: (attrs[kSecAttrSynchronizable as String] as? Bool) ?? false,
+            accessible: (attrs[kSecAttrAccessible as String] as? String) ?? "(none)"
+        )
+    }
+}
+
+#endif
+
