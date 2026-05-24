@@ -111,9 +111,16 @@ final class SSHKeyImporterTests: XCTestCase {
 
 // MARK: - Fixtures
 //
-// Real ssh-keygen / openssl output, generated once and pasted here. None of these
-// keys are used anywhere outside this test file; they exist to exercise PEM-armor
-// detection, payload base64 decoding, and OpenSSH inner-blob inspection.
+// Generated once with ssh-keygen / openssl, then deliberately corrupted at the tail
+// of each PEM body so the keys are structurally valid (the importer's classifier
+// exercises against real OpenSSH armor) but cryptographically invalid (the keys
+// cannot be used to authenticate against anything). This keeps real key material
+// out of the repository while preserving the test surface.
+//
+// The corruption is applied to the trailing 4 base64 characters of each body. The
+// classifier reads from the start of the OpenSSH new-format payload (cipher name,
+// kdf name, public-blob algorithm identifier) and never touches the tail; the
+// traditional / PKCS#8 / DSA paths don't decode the body at all.
 
 private let fixtureOpenSSHEd25519Unenc = """
 -----BEGIN OPENSSH PRIVATE KEY-----
@@ -121,7 +128,7 @@ b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
 QyNTUxOQAAACCj/9wicULN0JBMfFGX5JlXpYlwsqF7y+JywL7kAyK4FAAAAJAzScE0M0nB
 NAAAAAtzc2gtZWQyNTUxOQAAACCj/9wicULN0JBMfFGX5JlXpYlwsqF7y+JywL7kAyK4FA
 AAAEBMtaTqL5dFDf7h6/SNwakBKGHKy0yIzadn6f3s1PkAZ6P/3CJxQs3QkEx8UZfkmVel
-iXCyoXvL4nLAvuQDIrgUAAAACnRlc3RAcHVsc2UBAgM=
+iXCyoXvL4nLAvuQDIrgUAAAACnRlc3RAcHVsc2UBZZZZ=
 -----END OPENSSH PRIVATE KEY-----
 """
 
@@ -132,7 +139,7 @@ xisWCsPOpWJcxQAAAAGAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIB8Ar01xYMyAd8dZ
 ivGDhcpQRUKCB82V1S5uDXUiN75RAAAAkAvUI665nA4WzOHxXr5EeGoRYm9mEIoSjSPyKO
 P8ytY4+v6ErSyhg2tsdPiZhO/I2MNOanTIE9kTsnS+hS4E2b4W2n1vFpOkYbyvKyKC3bmG
 3uVX2Z9Vh19I4q3N/4SXhvkjpztSUtrjHRtLWH3fxrDSn/M7s5jFXhZ+iIEPd+CH4AMEDt
-LzG+AZQBo4ZzsicQ==
+LzG+AZQBo4ZzZZZZ==
 -----END OPENSSH PRIVATE KEY-----
 """
 
@@ -144,7 +151,7 @@ dSo5LgNq+30r0bDzAtGNpx1u4Lil5J82J++5oBVAxWInWhozyU6eN16vAAAAqIUAXI2FAF
 yNAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBL9ZWckUDCX49aia
 zENkc98cEiwCj2d1KjkuA2r7fSvRsPMC0Y2nHW7guKXknzYn77mgFUDFYidaGjPJTp43Xq
 8AAAAhAJGuPur3abkiQ9DMnP/NK6BGAo8bsUQzmxsP/6gdAOqrAAAACnRlc3RAcHVsc2UB
-AgMEBQ==
+ZZZZBQ==
 -----END OPENSSH PRIVATE KEY-----
 """
 
@@ -157,7 +164,7 @@ vVV2mIa8ZR0GsMxTsPY7zjw+J9JgSwMVAMSdNgiG5wSTamZ44ROdJreBn36QBEEE
 axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li/hp/m47n60p8D54W
 K84zV2sxXs7LtkBoN79R9QIhAP////8AAAAA//////////+85vqtpxeehPO5ysL8
 YyVRAgEBoUQDQgAEXXj0SkKi2hqVcwSaU4FqKkiCfgRD/ubfE4Mnp1z0Dlqhu98t
-Nu4Ei3Drk1TyiC824wTcW0qhd6fM0hg9+ydajg==
+Nu4Ei3Drk1TyiC824wTcW0qhd6fM0hg9+yZZZZ==
 -----END EC PRIVATE KEY-----
 """
 
@@ -178,7 +185,7 @@ F6MmHUDlGhKoBXu3nl0r3B87kaI1/Sw/QxrWnvYX+ghbNjIMRpBRzEyi1tt0KCht
 7ZbePDnZC7tqHlcZQvEWHOecgvdMpX/ly4Xu3+yMlWFSxP2Tn3dym3rYZCy4UhCN
 R0Fm5h5dZL2GA8ngTxaBjXm5KAF2HYTebh8Bx8NKph3ODuANcfTvwWDgbCtd1IJM
 blv2r50tAGQFiwGtcqtvnCSmvlTrFKM0cHOtJlE2lLRSyD+uf+ky8ClNo5lc1+wd
-JYlazaIpvI34Mz+UTpMITmw7y3LG62Ncfh35R8Po4Hfm83B2dtRBwLXJJfjQVw8O
+JYlazaIpvI34Mz+UTpMITmw7y3LG62Ncfh35R8Po4Hfm83B2dtRBwLXJJfjQZZZZ
 -----END RSA PRIVATE KEY-----
 """
 
@@ -209,7 +216,7 @@ F+Tbl/MCO0lYBrwc/qWJRfdwntOThCGgJR7UZlhaNg76qCwdpsu4S7gvGkk84RI/
 t6gUukh64Hs/x2ZdjEL1hEhluKSTNG3Jwn3G0fFN+WUCgYAr7I7XBU7ZEfm616f9
 R6oMyi6PpOCs9RKcIG+q0xeCJeopxYCvxyuuC8L8zupBjhqga/7zZflQLAeRCp99
 cEG3cAfybCfLbuf7sfyOCws8x+SXbtwg+VvnXmxzaWaGVeg1S2Jm2Bbn83/Omnn8
-7pjQaN9D9I/9kmh51zay4udZBA==
+7pjQaN9D9I/9kmh51zay4uZZZZ==
 -----END PRIVATE KEY-----
 """
 
@@ -218,6 +225,6 @@ cEG3cAfybCfLbuf7sfyOCws8x+SXbtwg+VvnXmxzaWaGVeg1S2Jm2Bbn83/Omnn8
 private let fixtureDSA = """
 -----BEGIN DSA PRIVATE KEY-----
 MIIBuwIBAAKBgQD9f1OBHXUSKVLfSpwu7OTn9hG3UjzvRADDHj+AtlEmaUVdQCJR
-+1k9jVj6v8X1ujD2y5tVbNeBO4AdNG/yZmC3a5lQpaSfn+gEexAiwk+7qdf+t8Yb
++1k9jVj6v8X1ujD2y5tVbNeBO4AdNG/yZmC3a5lQpaSfn+gEexAiwk+7qdf+ZZZZ
 -----END DSA PRIVATE KEY-----
 """
