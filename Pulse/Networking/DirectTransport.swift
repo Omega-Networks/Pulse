@@ -38,11 +38,6 @@ import NIOTransportServices
 /// Per ADR 0001 §8 this implementation stays small. Connection pooling,
 /// retry policy, and host pre-resolution all belong in the caller.
 struct DirectTransport: PulseTransport {
-    /// Shared event-loop group for direct TCP transport. Network.framework
-    /// owns per-connection lifecycles underneath, so a single loop suffices
-    /// and explicit shutdown is unnecessary.
-    static let sharedEventLoopGroup = NIOTSEventLoopGroup(loopCount: 1)
-
     func connect(
         to host: String,
         port: Int,
