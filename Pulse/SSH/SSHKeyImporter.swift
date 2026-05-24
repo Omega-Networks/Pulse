@@ -157,6 +157,11 @@ enum SSHKeyImporter {
         case .opensshPrivate:
             (algorithm, isEncrypted) = try classifyOpenSSH(payload: payload)
         case .rsaPrivate:
+            // TODO: NZISM 17.1.40 — enforce RSA modulus ≥ 2048 bits (3072 for
+            // hardened deployments) when the signer parses the actual key
+            // material. The importer today only classifies the armor; the
+            // modulus length lives in the PKCS#1 / PKCS#8 ASN.1 payload, which
+            // Slice 3's signer will decode for signing anyway.
             algorithm = .rsa
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
         case .ecPrivate:
@@ -287,6 +292,9 @@ enum SSHKeyImporter {
         case "ecdsa-sha2-nistp384":    mapped = .ecdsaP384
         case "ecdsa-sha2-nistp521":    mapped = .ecdsaP521
         case "ssh-rsa", "rsa-sha2-256", "rsa-sha2-512":
+            // TODO: NZISM 17.1.40 — see the matching note in the body-classifier
+            // RSA arm. The modulus length sits inside the OpenSSH key blob's
+            // public-key payload, which the signer decodes anyway.
             mapped = .rsa
         default:
             mapped = .unknown
