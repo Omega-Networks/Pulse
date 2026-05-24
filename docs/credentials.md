@@ -144,6 +144,10 @@ Nothing in Pulse's SSH credential model is syncable. Both tiers are `ThisDeviceO
 
 Operators with multiple Macs maintain separate credential sets per machine. The Inspect feature on either machine should show the same access group string (because it's derived from team + bundle, which are identical across machines), but the credentials themselves are independent. Audit logs from each machine show distinct fingerprints.
 
+## Memory residency of secret material
+
+Imported passphrases and PEM bodies pass through SwiftUI `@State` strings on their way to the Keychain. After the import sheet dismisses, those strings remain in process memory until Swift's allocator reclaims them — there is no zero-on-dealloc primitive for `String` in the Swift standard library. An attacker with code execution inside the Pulse process at the wrong moment could observe them; an attacker who has reached that level can observe much more besides. For v1 we treat this as an accepted limitation rather than an active vulnerability. Future work will move the import path onto a `Data`-backed buffer that can be explicitly zeroed before release.
+
 ## Lab test procedure
 
 A five-minute end-to-end procedure to run before pushing changes that touch SSH credentials. Done on an Apple Silicon Mac with Touch ID enabled.

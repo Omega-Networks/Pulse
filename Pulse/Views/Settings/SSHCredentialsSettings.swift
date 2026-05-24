@@ -486,6 +486,10 @@ private struct ImportLegacyCredentialSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var step: Step = .warning
     @State private var label: String = ""
+    // TODO: secret-material lifetime. SwiftUI @State retains these strings until
+    // the view releases, and Swift String has no zero-on-dealloc primitive. Move
+    // to a Data-backed buffer with explicit zeroing in a future slice. Documented
+    // as a known limitation in docs/credentials.md.
     @State private var pem: String = ""
     @State private var passphrase: String = ""
     @State private var importedKey: SSHKeyImporter.ImportedSSHKey?
