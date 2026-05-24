@@ -166,6 +166,16 @@ A five-minute end-to-end procedure to run before pushing changes that touch SSH 
 
 If every step matches expectations, the credential model is intact for this build. Any deviation — particularly in step 4's Inspect output — is a signal to investigate before shipping.
 
+## NZISM and similar regulatory frameworks
+
+Pulse's credential model aligns with NZISM section 17 (Cryptography) by default: ECDSA P-256 (an approved algorithm per NZISM 17.1.40), SHA-256, hardware-generated and hardware-protected keys via the Secure Enclave (a hardware cryptographic module per NZISM 17.2.5), no deprecated algorithms accepted (DSA refused at import; no SHA-1 or 3DES anywhere), and per-signature human attestation contributing to multi-factor authentication per NZISM 16.4.
+
+Outstanding:
+
+- RSA key-size enforcement for legacy imports lands with the Slice 3 signer. Until then, imported RSA keys are not checked against the NZISM 17.1.40 minimum (2048 bits, 3072 for newer ratings).
+- SSH authentication-event audit logging is partial in v1 (credential lifecycle is logged; per-session auth events arrive with the SSH client integration).
+- Centralised audit collection (NZISM 18.1) is a deployment concern. `os_log` events under the `pulse` subsystem can be forwarded to a SIEM via standard macOS logging pipelines.
+
 ## Related
 
 - [ADR 0001 — SSH terminal & in-app web foundations](architecture/0001-ssh-terminal-and-web-foundations.md) — the underlying decisions.
