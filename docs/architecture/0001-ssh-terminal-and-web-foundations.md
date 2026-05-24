@@ -36,6 +36,7 @@ This ADR captures the non-negotiables. The implementation plan is layered on top
 - SE keys produce only a public-key export. `SecKeyCopyExternalRepresentation` on the private half must return `nil`; this is enforced by SE itself and verified in tests.
 - Each device (each Mac, each iPad) that runs Pulse generates its own SE key with its own public key. Credentials do not sync. This is a feature.
 - Biometric or device passcode is required *per signing operation* via `kSecAccessControlBiometryCurrentSet` (with `or devicePasscode` fallback). Every SSH session begins with a human attestation.
+- SE keys land in the default `$(AppIdentifierPrefix)$(CFBundleIdentifier)` access group. Both the Team ID and the bundle ID are part of the credential's reachability contract: changing either renders existing SE keys unreachable from the new build (they remain in the Enclave but no entitled app can find them via the Keychain). This is intentional. Forks, beta channels with a `.beta` suffix, or any re-signing under a different team require operators to re-enrol on first launch. See `docs/credentials.md`.
 
 ### 2. Passwords are not a v1 auth method
 
@@ -210,6 +211,7 @@ These rules are enforced by code, not convention:
 - Biometric-gated session log keys mean historical logs become unrecoverable if the SE wrapping key is lost. Operators who need long-term archives must use the biometric-gated export flow and place the decrypted bundle in their existing archive.
 - TOFU acceptance is recorded permanently until forgotten. The runbook must teach the "Forget this host" gesture and when to use it (legitimate key rotation events).
 - "Record sessions" is opt-in per credential. Production-change credentials should have it on. The runbook must say so and the credential editor should suggest it during creation.
+- SE credentials are bound to this signed build of Pulse. Changing the bundle identifier or signing team between releases requires operators to re-enrol every device. This is by design: credentials should not silently follow an operator across trust boundaries. The credentials guide (`docs/credentials.md`) explains the consequence for forks and beta channels.
 
 ## Review
 
