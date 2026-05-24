@@ -69,6 +69,48 @@ final class DirectTransportTests: XCTestCase {
         wait(for: [received.expectation], timeout: 2.0)
         XCTAssertEqual(received.snapshot(), payload)
     }
+
+    /// IPv6 dual-stack loopback round trip. Same shape as
+    /// `testLoopbackRoundTrip` but binds the listener and the client to
+    /// `::1`. Exercises that Network.framework reaches IPv6 endpoints
+    /// through `DirectTransport`. Omega's network is dual stack, so this
+    /// proves the seam covers both families rather than implicitly
+    /// assuming IPv4.
+    func testLoopbackRoundTripIPv6() throws {
+        let group = NIOTSEventLoopGroup(loopCount: 1)
+        defer { try? group.syncShutdownGracefully() }
+
+        let listenerChannel = try NIOTSListenerBootstrap(group: group)
+            .childChannelInitializer { channel in
+                channel.pipeline.addHandler(EchoHandler())
+            }
+            .bind(host: "::1", port: 0)
+            .wait()
+        defer { try? listenerChannel.close().wait() }
+
+        guard let port = listenerChannel.localAddress?.port else {
+            return XCTFail("Listener did not report a bound port")
+        }
+
+        let payload = Array("pulse-transport-roundtrip-v6\n".utf8)
+        let received = ReceivedBytes(expecting: payload.count)
+
+        let clientChannel = try DirectTransport()
+            .connect(to: "::1", port: port, on: group.next())
+            .flatMap { channel in
+                channel.pipeline.addHandler(CollectorHandler(into: received))
+                    .map { channel }
+            }
+            .wait()
+        defer { try? clientChannel.close().wait() }
+
+        var buffer = clientChannel.allocator.buffer(capacity: payload.count)
+        buffer.writeBytes(payload)
+        try clientChannel.writeAndFlush(buffer).wait()
+
+        wait(for: [received.expectation], timeout: 2.0)
+        XCTAssertEqual(received.snapshot(), payload)
+    }
 }
 
 // MARK: - Handlers
