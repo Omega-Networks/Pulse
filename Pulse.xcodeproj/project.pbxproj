@@ -82,6 +82,7 @@
 		A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F9 /* DirectTransport.swift */; };
 		A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */; };
 		A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */; };
+		A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A003 /* DirectTransportTests.swift */; };
 		C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = C93291702FC30A3900624995 /* NIOTransportServices */; };
 		C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */; };
 		C96191622ACA552F000198DB /* PulseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191612ACA552F000198DB /* PulseApp.swift */; };
@@ -236,6 +237,7 @@
 		A11CAFE000000000000000F9 /* DirectTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTransport.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporterTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSSHWireFormatTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A003 /* DirectTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTransportTests.swift; sourceTree = "<group>"; };
 		C926516F2E71AFA2004564DD /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
 		C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceOverviewView.swift; sourceTree = "<group>"; };
 		C961915E2ACA552F000198DB /* Pulse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pulse.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -509,6 +511,14 @@
 			path = SSH;
 			sourceTree = "<group>";
 		};
+		A11CAFE0000000000000DAD5 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE0000000000000A003 /* DirectTransportTests.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
 		C96191552ACA552F000198DB = {
 			isa = PBXGroup;
 			children = (
@@ -707,6 +717,7 @@
 			isa = PBXGroup;
 			children = (
 				A11CAFE0000000000000DAD3 /* SSH */,
+				A11CAFE0000000000000DAD5 /* Networking */,
 			);
 			path = PulseTests;
 			sourceTree = "<group>";
@@ -1010,6 +1021,7 @@
 			files = (
 				A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */,
 				A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */,
+				A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
