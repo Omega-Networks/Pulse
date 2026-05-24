@@ -91,13 +91,6 @@ Access group: ADC5AJV3TU.nz.net.omega.pulse
 Token ID: com.apple.setoken
 Synchronizable: false
 Accessible: dk (kSecAttrAccessibleAlways (deprecated))
-
-Note: for SE-token keys (Token ID `com.apple.setoken`), the
-real access policy (biometric, device passcode, presence) is
-enforced by the SecAccessControl object created at key generation,
-not by the Accessible attribute. The value above is what the OS
-chose for the Keychain entry and may differ from the protection
-class requested.
 ```
 
 What each value should be, and what it tells you:
@@ -160,7 +153,7 @@ A five-minute end-to-end procedure to run before pushing changes that touch SSH 
    - Access group ends in `.nz.net.omega.pulse` (or your fork's bundle ID, prefixed by your team ID).
    - Token ID is `com.apple.setoken`.
    - Synchronizable is `false`.
-   - The closing note about SecAccessControl is visible (so you know the Accessible attribute alone doesn't tell the full story).
+   - The Accessible value is decoded with its constant name (`xx (kSecAttr…)`). The specific encoding is OS-chosen for SE keys; the meaningful check is Token ID + the per-signature biometric prompt. See the Accessible note above for context.
 5. Delete the `Lab-1` row. Confirmation dialog. Confirm.
 6. Create `Lab-2`. Force-quit Pulse (Cmd-Q or Activity Monitor). Re-launch. Confirm `Lab-2` still appears in the list with its original fingerprint.
 7. Click **Import legacy key (PEM)…**. Confirm the first screen says "Legacy (portable key)" in orange. Continue. Paste a known Ed25519 PEM. Validate. Expect "Detected: Ed25519 (OPENSSH PRIVATE KEY)" and no passphrase prompt. Import. Confirm the row has an orange Legacy badge.

@@ -369,13 +369,6 @@ struct SSHCredentialsSettings: View {
             Token ID: \(attributes.tokenID)
             Synchronizable: \(attributes.synchronizable)
             Accessible: \(attributes.accessibleDescription)
-
-            Note: for SE-token keys (Token ID `com.apple.setoken`), the \
-            real access policy (biometric, device passcode, presence) is \
-            enforced by the SecAccessControl object created at key generation, \
-            not by the Accessible attribute. The value above is what the OS \
-            chose for the Keychain entry and may differ from the protection \
-            class requested.
             """
             logger.debug("Inspection for \(cred.id): \(inspectResult ?? "")")
         } catch {
