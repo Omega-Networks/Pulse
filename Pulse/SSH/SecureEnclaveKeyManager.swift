@@ -347,48 +347,34 @@ enum SecureEnclaveKeyManager {
 
 extension SecureEnclaveKeyManager {
 
-    /// Snapshot of the Keychain attributes for an SE-resident key. Backs the
+    /// Snapshot of the Keychain attributes for a Pulse SSH credential. Backs the
     /// Settings → SSH context-menu "Inspect key attributes" action so the operator
     /// can confirm at runtime that keys land in the expected access group, are
-    /// pinned to the data-protection keychain, and aren't synchronisable.
+    /// pinned to the data-protection keychain, aren't synchronisable, and use the
+    /// expected access-control policy.
+    ///
+    /// For Secure Enclave-token credentials the policy is sourced from the
+    /// `SecAccessControl` flags we set at creation, not from `kSecAttrAccessible`.
+    /// The OS sets that attribute for SE entries independently of the real policy,
+    /// and there is no public API to introspect a stored `SecAccessControl`. The
+    /// values we report are the constants the generator uses; if those constants
+    /// ever change, the report changes with them.
     ///
     /// Compiled out of Release builds.
     struct KeyInspection {
         let accessGroup: String
         let tokenID: String
         let synchronizable: Bool
-        let accessible: String
-
-        /// Human-readable rendering of `accessible`. The macOS Keychain stores
-        /// `kSecAttrAccessible` as a short opaque string (`aku`, `ck`, `dk`, …);
-        /// this maps it back to the Apple constant name so an operator inspecting
-        /// the attribute doesn't have to memorise the shorthand.
-        ///
-        /// For SE-token-backed keys, the value the OS reports here doesn't
-        /// necessarily match the protection class passed to
-        /// `SecAccessControlCreateWithFlags`. The real access policy (biometry,
-        /// passcode, presence) is enforced by the `SecAccessControl` object on
-        /// the key, not by this attribute. The annotation makes that explicit so
-        /// a value like `dk` doesn't look like a regression.
-        var accessibleDescription: String {
-            let constantName: String
-            switch accessible {
-            case "ak":   constantName = "kSecAttrAccessibleWhenUnlocked"
-            case "ck":   constantName = "kSecAttrAccessibleAfterFirstUnlock"
-            case "dk":   constantName = "kSecAttrAccessibleAlways (deprecated)"
-            case "aku":  constantName = "kSecAttrAccessibleWhenUnlockedThisDeviceOnly"
-            case "cku":  constantName = "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"
-            case "dku":  constantName = "kSecAttrAccessibleAlwaysThisDeviceOnly (deprecated)"
-            case "akpu": constantName = "kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly"
-            default:     constantName = "unknown encoding"
-            }
-            return "\(accessible) (\(constantName))"
-        }
+        /// Human-readable description of the access policy gating use of this key.
+        /// For SE credentials: sourced from the SecAccessControl flags configured
+        /// in `generateKey`. For portable credentials: decoded from the meaningful
+        /// `kSecAttrAccessible` attribute.
+        let accessControl: String
     }
 
     /// Reads the Keychain attribute record for `credentialID` without touching the
     /// private material. Attribute lookup does not require user presence, so this
-    /// does not trigger a biometric prompt. Throws `keyNotFound` if no SE key is
+    /// does not trigger a biometric prompt. Throws `keyNotFound` if no key is
     /// resident under the credential's application tag.
     static func inspect(_ credentialID: UUID) throws -> KeyInspection {
         let query: [String: Any] = [
@@ -402,12 +388,50 @@ extension SecureEnclaveKeyManager {
         guard status == errSecSuccess, let attrs = result as? [String: Any] else {
             throw KeyManagerError.keyNotFound(credentialID)
         }
+
+        let tokenID = (attrs[kSecAttrTokenID as String] as? String) ?? "(none)"
+        let isSecureEnclave = tokenID == "com.apple.setoken"
+
+        // SE-token entries: the kSecAttrAccessible value reported by the OS is
+        // vestigial. Source the policy from the SecAccessControl flags we set in
+        // generateKey. Portable entries: kSecAttrAccessible is meaningful.
+        let accessControl: String
+        if isSecureEnclave {
+            accessControl =
+                "biometryCurrentSet OR devicePasscode, " +
+                "privateKeyUsage, " +
+                "WhenUnlockedThisDeviceOnly"
+        } else {
+            let raw = (attrs[kSecAttrAccessible as String] as? String) ?? "(none)"
+            accessControl = decodePortableAccessibility(raw)
+        }
+
         return KeyInspection(
             accessGroup: attrs[kSecAttrAccessGroup as String] as? String ?? "(none)",
-            tokenID: attrs[kSecAttrTokenID as String] as? String ?? "(none)",
+            tokenID: tokenID,
             synchronizable: (attrs[kSecAttrSynchronizable as String] as? Bool) ?? false,
-            accessible: (attrs[kSecAttrAccessible as String] as? String) ?? "(none)"
+            accessControl: accessControl
         )
+    }
+
+    /// Decodes the short-form `kSecAttrAccessible` tag into the matching Apple
+    /// constant name. Used only for portable-tier credentials where the attribute
+    /// reflects the real policy. SE-token credentials route around this entirely
+    /// (see `inspect(_:)`).
+    ///
+    /// The deprecated `kSecAttrAccessibleAlways` variants (`dk`, `dku`) are
+    /// deliberately absent from the decoder. Pulse never sets those on portable
+    /// items, so seeing them here would be a regression to surface — not a value
+    /// to politely decode.
+    private static func decodePortableAccessibility(_ raw: String) -> String {
+        switch raw {
+        case "ak":   return "kSecAttrAccessibleWhenUnlocked"
+        case "ck":   return "kSecAttrAccessibleAfterFirstUnlock"
+        case "aku":  return "kSecAttrAccessibleWhenUnlockedThisDeviceOnly"
+        case "cku":  return "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"
+        case "akpu": return "kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly"
+        default:     return "\(raw) (unrecognised)"
+        }
     }
 }
 

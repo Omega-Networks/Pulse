@@ -368,7 +368,7 @@ struct SSHCredentialsSettings: View {
             Access group: \(attributes.accessGroup)
             Token ID: \(attributes.tokenID)
             Synchronizable: \(attributes.synchronizable)
-            Accessible: \(attributes.accessibleDescription)
+            Access control: \(attributes.accessControl)
             """
             logger.debug("Inspection for \(cred.id): \(inspectResult ?? "")")
         } catch {
