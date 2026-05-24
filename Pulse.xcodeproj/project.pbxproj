@@ -79,6 +79,7 @@
 		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
 		A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F8 /* PulseTransport.swift */; };
+		A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F9 /* DirectTransport.swift */; };
 		A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */; };
 		A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */; };
 		C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = C93291702FC30A3900624995 /* NIOTransportServices */; };
@@ -232,6 +233,7 @@
 		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F8 /* PulseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTransport.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F9 /* DirectTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTransport.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporterTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSSHWireFormatTests.swift; sourceTree = "<group>"; };
 		C926516F2E71AFA2004564DD /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
@@ -485,6 +487,7 @@
 			isa = PBXGroup;
 			children = (
 				A11CAFE000000000000000F8 /* PulseTransport.swift */,
+				A11CAFE000000000000000F9 /* DirectTransport.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -881,6 +884,7 @@
 				A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */,
 				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
 				A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */,
+				A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */,
 				C97DEDB52E816E4F002898A7 /* PowerSenseToolbarButton.swift in Sources */,
 				4181FEDF2CBF66CF00E4D035 /* RackUnitView.swift in Sources */,
 				C96191642ACA552F000198DB /* ContentView.swift in Sources */,
