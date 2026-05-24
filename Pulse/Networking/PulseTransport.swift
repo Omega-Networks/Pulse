@@ -24,7 +24,6 @@
 //
 
 import NIOCore
-import NIOTransportServices
 
 /// The single outbound seam for byte-level operator traffic to managed infrastructure.
 ///
