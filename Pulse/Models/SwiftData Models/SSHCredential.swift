@@ -66,6 +66,13 @@ final class SSHCredential {
     var label: String
     var tier: SSHCredentialTier
     /// OpenSSH wire-format public key. Exportable on both tiers (this is the public half).
+    ///
+    /// Populated at credential-creation time by `SSHCredentialsSettings.commit()`
+    /// via `SSHKeyImporter.derivePublicKey`. Credentials imported before Slice 3
+    /// landed the derivation path may carry an empty placeholder; the auth path
+    /// does not backfill, so such credentials must be re-imported to get a
+    /// non-empty `publicKey` for the credential-editor's copy-button and
+    /// downstream display.
     var publicKey: Data
     /// Serialised `NIOSSHCertifiedPublicKey` when a CA has signed `publicKey`. Parsed
     /// by `SSHCertificateManager` for the credential editor to display expiry and

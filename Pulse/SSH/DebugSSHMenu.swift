@@ -70,6 +70,10 @@ struct DebugSSHWindow: View {
     static let windowID = "debug-ssh"
 
     @Environment(\.modelContext) private var modelContext
+    // `@Query` without a fetch limit because credentials are operator-owned
+    // and bounded in practice (<50); unlike the device picker that the slice
+    // replaced with a free-form host field, this query won't grow with fleet
+    // size. If credentials ever cross ~500 the picker UX needs rethinking.
     @Query(sort: \SSHCredential.label) private var credentials: [SSHCredential]
 
     @State private var selectedCredentialID: UUID?
