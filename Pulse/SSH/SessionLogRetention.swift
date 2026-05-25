@@ -195,8 +195,9 @@ enum SessionLogRetention {
         do {
             entries = try store.enumerateSessions()
         } catch {
-            logger.error("session.recording.purgeFailed reason=\(String(describing: error), privacy: .public)")
-            return .failed(reason: String(describing: error))
+            let reason = String(describing: error)
+            SessionRecordingAudit.purgeFailed(reason: reason)
+            return .failed(reason: reason)
         }
 
         let threshold = referenceDate.addingTimeInterval(-maxAge)
@@ -216,14 +217,17 @@ enum SessionLogRetention {
             }
         }
 
-        let oldestISO = oldestPurged.map { SessionLogTimestamp.iso8601(from: $0) } ?? "nil"
-        if perEntryErrors.isEmpty {
-            logger.notice(
-                "session.recording.purged count=\(purgedCount, privacy: .public) oldestPurgedDate=\(oldestISO, privacy: .public)"
-            )
-        } else {
+        SessionRecordingAudit.purged(count: purgedCount, oldestPurgedDate: oldestPurged)
+        if !perEntryErrors.isEmpty {
+            // Per-entry deletion failures are surfaced through the
+            // PurgeOutcome's perEntryErrors field rather than the
+            // audit log: they're a deployment-environment concern
+            // (file locked, permission denied, disk full) rather than
+            // a security-relevant event. A standalone log line keeps
+            // them visible to operators inspecting `log show` without
+            // multiplying the audit-event vocabulary.
             logger.error(
-                "session.recording.purged count=\(purgedCount, privacy: .public) oldestPurgedDate=\(oldestISO, privacy: .public) perEntryErrors=\(perEntryErrors.count, privacy: .public)"
+                "session.recording.purge: \(perEntryErrors.count, privacy: .public) per-entry deletion error(s) — \(perEntryErrors.joined(separator: " | "), privacy: .public)"
             )
         }
         return .completed(

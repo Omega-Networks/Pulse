@@ -521,8 +521,11 @@ actor SessionLogWriter {
             throw WriterError.metaWriteFailed(String(describing: error))
         }
 
-        Self.logger.notice(
-            "session.recording.opened sessionID=\(sessionID.uuidString, privacy: .public) credentialID=\(credentialID.uuidString, privacy: .public) deviceID=\(deviceID.map(String.init) ?? "nil", privacy: .public) path=\(paths.pulselogRelativePath, privacy: .public)"
+        SessionRecordingAudit.recordingOpened(
+            sessionID: sessionID,
+            credentialID: credentialID,
+            deviceID: deviceID,
+            pulselogRelativePath: paths.pulselogRelativePath
         )
 
         return SessionLogWriter(
@@ -589,8 +592,9 @@ actor SessionLogWriter {
         case .alreadyStopped:
             return false
         case .overflowJustStopped:
-            Self.logger.error(
-                "session.recording.failed sessionID=\(self.sessionID.uuidString, privacy: .public) reason=back_pressure_overflow"
+            SessionRecordingAudit.recordingFailed(
+                sessionID: sessionID,
+                reason: .backPressureOverflow
             )
             // Finalise .meta off the calling thread.
             Task { await self.finaliseAfterStructuralStop() }
@@ -687,8 +691,9 @@ actor SessionLogWriter {
             return false
         }
         guard !alreadyStopped else { return }
-        Self.logger.error(
-            "session.recording.failed sessionID=\(self.sessionID.uuidString, privacy: .public) reason=\(reason.auditReason, privacy: .public)"
+        SessionRecordingAudit.recordingFailed(
+            sessionID: sessionID,
+            reason: reason.toAuditFailureReason()
         )
         // Already actor-isolated (transitionToStopped is private and
         // only called from processRecord); call directly rather than
@@ -761,9 +766,19 @@ actor SessionLogWriter {
             encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
             let data = try encoder.encode(meta)
             try store.writeMeta(to: paths.meta, data: data)
-            Self.logger.notice(
-                "session.recording.closed sessionID=\(self.sessionID.uuidString, privacy: .public) recordCount=\(self.meta.record_count ?? 0, privacy: .public) durationMs=\(self.meta.duration_ms ?? 0, privacy: .public) chainHead=\(self.previousChainHash, privacy: .public)"
-            )
+            // Only emit the closed audit event on a normal close path.
+            // If the writer was already structurally-stopped, the
+            // corresponding `session.recording.failed` event has
+            // already fired and a `closed` event here would
+            // double-count in any downstream consumer.
+            if !alreadyStopped {
+                SessionRecordingAudit.recordingClosed(
+                    sessionID: sessionID,
+                    recordCount: meta.record_count ?? 0,
+                    chainHeadHash: previousChainHash,
+                    durationMs: meta.duration_ms ?? 0
+                )
+            }
         } catch {
             Self.logger.error(
                 "session.recording: failed to write .meta on close: \(String(describing: error), privacy: .public)"
@@ -826,3 +841,27 @@ extension SessionLogWriter {
 }
 
 #endif
+
+// MARK: - StopReason → audit FailureReason
+
+extension SessionLogWriter.StopReason {
+    /// Maps an internal `StopReason` to the public audit
+    /// `FailureReason` shape. Only the structural-failure cases map;
+    /// `.closedNormally` is never paired with a
+    /// `session.recording.failed` event and triggering this case
+    /// is a programmer error.
+    func toAuditFailureReason() -> SessionRecordingAudit.FailureReason {
+        switch self {
+        case .sealFailure(let detail):
+            return .sealFailure(detail: detail)
+        case .writeFailure(let detail):
+            return .writeFailure(detail: detail)
+        case .encodeFailure(let detail):
+            return .encodeFailure(detail: detail)
+        case .backPressureOverflow:
+            return .backPressureOverflow
+        case .closedNormally:
+            preconditionFailure("StopReason.closedNormally must never be emitted as a session.recording.failed audit event")
+        }
+    }
+}
