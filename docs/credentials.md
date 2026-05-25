@@ -32,7 +32,7 @@ The intent: every SSH session, and every authenticated action within it, has a h
 
 Pulse has two credential tiers, distinguished by where the private material lives.
 
-**Secure Enclave (default).** Private key material resides in the Enclave. Pulse's Keychain holds only a reference (the Keychain entry is the standard handle macOS uses to find SE-backed keys; the key itself isn't in the Keychain database). The reference is tagged with `nz.omega.pulse.ssh.<UUID>` so Pulse can find it, lives under the access group `<TeamID>.<BundleID>`, uses the access class `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, and is explicitly non-synchronisable.
+**Secure Enclave (default).** Private key material resides in the Enclave hardware and never leaves. The Keychain holds only an opaque reference — CryptoKit's `SecureEnclave.P256.Signing.PrivateKey.dataRepresentation`, an SE-encrypted blob that's useless to any other app and any other device. The blob lives in a `kSecClassGenericPassword` item under service `<bundle-id>.ssh` (for the Omega distribution build: `nz.net.omega.pulse.ssh`) and account `<credentialUUID>`. The service deriving from `Bundle.main.bundleIdentifier` rather than a hardcoded string makes the bundle reachability contract structural: a fork with a different `BUNDLE_IDENTIFIER` automatically lands credentials in a disjoint keychain namespace. The item lives under the access group `<TeamID>.<BundleID>`, uses access class `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, is pinned to the data-protection keychain, and is explicitly non-synchronisable.
 
 **Legacy portable (PEM).** Private key material is a PEM-encoded byte string in the regular file-based Keychain, at key `ssh-cred-<UUID>-privateKey`. If the key has a passphrase, the passphrase lives at `ssh-cred-<UUID>-passphrase`. Access class `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` so background polling can read it when the device is unlocked-but-locked-screen.
 
@@ -90,7 +90,7 @@ In Debug builds of Pulse, right-clicking any credential row shows an **Inspect k
 ```
 Credential: Lab-1
 Access group: ADC5AJV3TU.nz.net.omega.pulse
-Token ID: com.apple.setoken
+Token ID: (CryptoKit SE.P256 — generic-password storage)
 Synchronizable: false
 Access control: biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly
 ```
@@ -98,7 +98,7 @@ Access control: biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThis
 What each value should be, and what it tells you:
 
 - **Access group** — should be `<TeamID>.<BundleID>` for your build. If it's something else, the entitlement file isn't expanding correctly at sign time and SE writes will fail.
-- **Token ID** — should be `com.apple.setoken`. If absent, the key isn't actually in the Enclave (something fell back to software).
+- **Token ID** — under Slice 3+ this field reports `(CryptoKit SE.P256 — generic-password storage)`. The placeholder string is honest about the storage shape: SE keys are stored as opaque CryptoKit `dataRepresentation` blobs in `kSecClassGenericPassword` items, which don't carry a `kSecAttrTokenID`. If this field shows `com.apple.setoken` you're looking at a pre-Slice-3 orphan that the current build cannot reach (see Troubleshooting). If blank, the key isn't actually SE-backed (something fell back to software).
 - **Synchronizable** — must be `false`. If `true`, the credential could in principle leave the device via iCloud Keychain, which contradicts the whole credential model.
 - **Access control** — sourced from the SecAccessControl flags set at creation for SE credentials; decoded from `kSecAttrAccessible` for portable ones. SE credentials should always show `biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`. Portable credentials should show `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Anything else is a misconfiguration.
 
@@ -149,7 +149,14 @@ Operators with multiple Macs maintain separate credential sets per machine. The 
 
 ## Memory residency of secret material
 
-Imported passphrases and PEM bodies pass through SwiftUI `@State` strings on their way to the Keychain. After the import sheet dismisses, those strings remain in process memory until Swift's allocator reclaims them — there is no zero-on-dealloc primitive for `String` in the Swift standard library. An attacker with code execution inside the Pulse process at the wrong moment could observe them; an attacker who has reached that level can observe much more besides. For v1 we treat this as an accepted limitation rather than an active vulnerability. Future work will move the import path onto a `Data`-backed buffer that can be explicitly zeroed before release.
+Imported PEM bodies and passphrases are held as `Data`-backed `@State` buffers in the legacy-import sheet (Slice 3 commit `baf9ce9`). On dismissal — Cancel, successful commit, or window close — `Data.resetBytes(in:)` zeroes the persistent buffers; no Pulse-owned plaintext residue remains after the sheet goes away. The `Configuration` setters accept `Data` directly and write `kSecValueData` to the Keychain without round-tripping through an intermediate `String`.
+
+This is bounded but not absolute. Two residual exposures remain, called out honestly rather than papered over:
+
+- **The SwiftUI text-input layer.** `TextEditor` and `SecureField` bind to `String`. Each keystroke materialises an ephemeral `String` via the `Binding<String>` adapter; the underlying AppKit/UIKit text-input maintains its own buffer Pulse cannot reach. Those instances are dropped to the runtime allocator without being zeroed.
+- **The SSH auth-signing path.** When `SSHAuthDelegate` loads a portable PEM for signing, the bytes pass through a transient `String` to satisfy CryptoKit's `pemRepresentation` initialisers. The window is bounded by the SSH handshake duration (milliseconds) rather than by sheet lifetime, but the `String` is unzeroable. The conversion happens at the CryptoKit API boundary and cannot be avoided without writing our own PEM parser, which would be a worse trade than the residual exposure.
+
+The improvement Slice 3 delivered is real: the persistent post-dismissal plaintext residue is gone. The improvement is not absolute: an attacker with code execution inside the Pulse process at the wrong moment can still observe secret material in the transient cases above. An attacker who has reached that level can observe much more besides.
 
 ## Lab test procedure
 
@@ -175,8 +182,8 @@ Pulse's credential model aligns with NZISM section 17 (Cryptography) by default:
 
 Outstanding:
 
-- RSA key-size enforcement for legacy imports lands with the Slice 3 signer. Until then, imported RSA keys are not checked against the NZISM 17.1.40 minimum (2048 bits, 3072 for newer ratings).
-- SSH authentication-event audit logging is partial in v1 (credential lifecycle is logged; per-session auth events arrive with the SSH client integration).
+- RSA portable signing is not supported in v1. The Slice 3 plan originally specified modulus enforcement at the importer (NZISM 17.1.40); implementation surfaced that `swift-nio-ssh` 0.13.0 carries no RSA private-key signing path, so v1 rejects RSA at the importer's front door with operator-facing remediation guidance. The modulus-enforcement code shipped briefly as defensive scaffolding and was deleted at the close of Slice 3 (recoverable from `git show 4238b35` if upstream NIOSSH ever ships RSA signing); the front-door reject is the single source of truth for the policy. Operators with RSA keys regenerate as ECDSA P-256/384/521 or Ed25519.
+- SSH authentication-event audit logging is complete in v1 (Slice 3 wired this up end-to-end). Credential lifecycle under `ssh.credentials`, host-key decisions under `ssh.session`, auth outcomes under `ssh.auth`, certificate presentation outcomes under `ssh.certificates`, session lifecycle under `ssh.session`. Filter the full set with `log show --predicate 'subsystem == "pulse" AND category BEGINSWITH "ssh"'`.
 - Centralised audit collection (NZISM 18.1) is a deployment concern. `os_log` events under the `pulse` subsystem can be forwarded to a SIEM via standard macOS logging pipelines.
 
 ## Related
