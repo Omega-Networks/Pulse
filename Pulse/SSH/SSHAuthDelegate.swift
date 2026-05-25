@@ -115,10 +115,17 @@ final class SSHAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked 
 
     // Mutable state, protected by the lock. The delegate's
     // `nextAuthenticationType` may be invoked from any thread; the lock
-    // serialises the attempt counter and the offered-cert flag.
+    // serialises the attempt counter, the offered-cert flag, and the
+    // load-failure latch.
     private let stateLock = NSLock()
     private var _attemptIndex = 0
     private var _offeredCert = false
+    /// One-shot latch. Once a key-load failure (or any other
+    /// `computeNextOffer` throw) has emitted `auth.failure`, subsequent
+    /// `nextAuthenticationType` callbacks return `nil` immediately with
+    /// no further emission. Prevents the same failure from logging on
+    /// every NIOSSH retry callback for one connection attempt.
+    private var _loadFailed = false
 
     private let authLogger = Logger(subsystem: "pulse", category: "ssh.auth")
     private let certLogger = Logger(subsystem: "pulse", category: "ssh.certificates")
@@ -173,6 +180,10 @@ final class SSHAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked 
                 let offer = try await self.computeNextOffer()
                 nextChallengePromise.succeed(offer)
             } catch {
+                // Latch the load-failure state under the lock before we emit
+                // and complete the promise. Subsequent NIOSSH callbacks see
+                // `_loadFailed == true` and short-circuit without re-logging.
+                self.stateLock.withLock { self._loadFailed = true }
                 self.authLogger.error(
                     "auth.failure user=\(username, privacy: .public) host=\(host, privacy: .public) port=\(port) error=\(String(describing: error), privacy: .public)"
                 )
@@ -184,10 +195,16 @@ final class SSHAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked 
     // MARK: - Offer construction
 
     private func computeNextOffer() async throws -> NIOSSHUserAuthenticationOffer? {
-        let (attempt, alreadyOfferedCert): (Int, Bool) = stateLock.withLock {
-            let snapshot = (_attemptIndex, _offeredCert)
+        // Snapshot + bump under the lock. If a prior call latched
+        // `_loadFailed`, return `nil` immediately and do not emit — the
+        // original failure already logged its `auth.failure`.
+        let (attempt, alreadyOfferedCert, loadFailed): (Int, Bool, Bool) = stateLock.withLock {
+            let snapshot = (_attemptIndex, _offeredCert, _loadFailed)
             _attemptIndex += 1
             return snapshot
+        }
+        if loadFailed {
+            return nil
         }
 
         switch attempt {

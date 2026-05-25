@@ -285,4 +285,54 @@ final class SSHAuthDelegateTests: XCTestCase {
             }
         }
     }
+
+    /// One-shot latch contract: once a key-load failure has fired
+    /// `auth.failure`, subsequent `nextAuthenticationType` callbacks return
+    /// `nil` immediately without re-emitting. NIOSSH retries
+    /// `nextAuthenticationType` after a rejected offer; without the latch,
+    /// a portable-PEM-unavailable failure on attempt 1 would re-throw on
+    /// attempt 2 and double-log the same failure under the operator's
+    /// single connection attempt.
+    ///
+    /// Direct log-emission counting is awkward without an `OSLog` mock;
+    /// the structural check here is the promise-resolution shape:
+    /// attempt 1 fails with `portablePEMUnavailable`, attempt 2 succeeds
+    /// with a `nil` offer (the latched short-circuit, no throw). Manual
+    /// `log show` verification covers the "no second emission" claim.
+    func testLoadFailureLatchesAfterFirstAttempt() async throws {
+        let delegate = SSHAuthDelegate(
+            username: "alice",
+            host: "10.0.0.1",
+            port: 22,
+            credentialID: UUID(),
+            tier: .portable,
+            certificateBlob: nil,
+            pemProvider: { nil },
+            now: { .now }
+        )
+        let loop = EmbeddedEventLoop()
+        defer { try? loop.syncShutdownGracefully() }
+
+        // Attempt 1: pemProvider returns nil → loadPrivateKey throws →
+        // computeNextOffer rethrows → catch latches _loadFailed and fails
+        // the promise with portablePEMUnavailable.
+        let p1 = loop.makePromise(of: NIOSSHUserAuthenticationOffer?.self)
+        delegate.nextAuthenticationType(availableMethods: .publicKey, nextChallengePromise: p1)
+        do {
+            _ = try await p1.futureResult.get()
+            return XCTFail("attempt 1 should have thrown portablePEMUnavailable")
+        } catch let error as SSHAuthDelegateError {
+            guard case .portablePEMUnavailable = error else {
+                return XCTFail("expected portablePEMUnavailable on attempt 1, got \(error)")
+            }
+        }
+
+        // Attempt 2: the latch fires; computeNextOffer returns nil without
+        // calling loadPrivateKey again, so the promise resolves to nil-
+        // success rather than failing again.
+        let p2 = loop.makePromise(of: NIOSSHUserAuthenticationOffer?.self)
+        delegate.nextAuthenticationType(availableMethods: .publicKey, nextChallengePromise: p2)
+        let secondOffer = try await p2.futureResult.get()
+        XCTAssertNil(secondOffer, "second callback should short-circuit to nil under the latch")
+    }
 }
