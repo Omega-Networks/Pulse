@@ -103,16 +103,6 @@ enum SSHKeyImporter {
         case unsupportedKeyKind(PEMKind)
         case payloadNotBase64
         case truncatedOpenSSHKey
-        /// RSA modulus is below the NZISM 17.1.40 hard floor of 2048 bits.
-        /// The associated value is the observed bit length so the UI can
-        /// surface a precise message ("found 1024 bits, need 2048+").
-        ///
-        /// Note: under the Slice 3 7b₁ v1 scope, RSA is rejected at the front
-        /// door before the modulus check runs (see `unsupportedAlgorithmInV1`).
-        /// This case remains as defensive scaffolding for the day upstream
-        /// `swift-nio-ssh` lands RSA private-key signing and the front-door
-        /// reject can be relaxed.
-        case rsaModulusTooSmall(observed: Int)
         /// Algorithm classified successfully but the v1 portable tier doesn't
         /// sign with it. `remediation` is operator-facing next-step copy.
         /// See ADR 0001 §1 v1 portable scope amendment.
@@ -123,8 +113,10 @@ enum SSHKeyImporter {
         /// prohibition. `remediation` tells the operator how to re-export
         /// without the passphrase.
         case encryptedPortableKeyNotSupportedInV1(remediation: String)
-        /// PKCS#1 / PKCS#8 ASN.1 payload doesn't parse far enough for us to
-        /// reach the modulus. Treated like a truncation: the user re-imports.
+        /// PKCS#8 ASN.1 payload didn't parse far enough to reach the
+        /// AlgorithmIdentifier OID; treated like a truncation. Thrown by
+        /// `pkcs8RSAInnerPKCS1`, which still runs at validate-time so the
+        /// front-door reject can fire for PKCS#8 RSA inputs.
         case truncatedASN1
         /// `derivePublicKey(from:)` can't recover the public key from the
         /// imported PEM without information that isn't present at import time
@@ -152,10 +144,8 @@ enum SSHKeyImporter {
                 return "The PEM body isn't valid base64."
             case .truncatedOpenSSHKey:
                 return "OpenSSH-format key is truncated: the ‘openssh-key-v1’ payload is incomplete."
-            case .rsaModulusTooSmall(let observed):
-                return "RSA key has a \(observed)-bit modulus; Pulse requires at least 2048 bits per NZISM 17.1.40."
             case .truncatedASN1:
-                return "ASN.1 payload is truncated or malformed; the modulus length could not be read."
+                return "ASN.1 payload is truncated or malformed."
             case .publicKeyDerivationDeferred:
                 return "Public key can't be derived from this PEM at import time; it will be filled in on first use."
             case .publicKeyDerivationNotSupported(let reason):
@@ -170,9 +160,8 @@ enum SSHKeyImporter {
 
     // MARK: - Logging
 
-    /// Lifecycle and policy emissions during import. Per ADR 0001 §7, every
-    /// SSH-adjacent audit signal lives under a `ssh.*` category. The modulus
-    /// warning band (2048..<3072) fires through this logger as `credential.weakRSA`.
+    /// Lifecycle emissions during import. Per ADR 0001 §7, every
+    /// SSH-adjacent audit signal lives under a `ssh.*` category.
     private static let logger = Logger(subsystem: "pulse", category: "ssh.credentials")
 
     // MARK: - v1 portable-tier scope (ADR §1 amendment)
@@ -195,33 +184,6 @@ enum SSHKeyImporter {
         "`ssh-keygen -p -P \"oldpassphrase\" -N \"\" -f /path/to/key`. " +
         "Pulse v1 protects the imported key at rest via the data-protection keychain; " +
         "the Secure Enclave path (default) is recommended for new credentials."
-
-    // MARK: - RSA policy
-
-    /// NZISM 17.1.40 hard floor. Keys below this are rejected; the policy is not
-    /// per-tenant configurable in v1. A per-site override (`Site.allowsLegacyRSA`)
-    /// is a future schema addition if a deployment ever needs to weaken it.
-    private static let rsaModulusHardFloor = 2048
-
-    /// Hardened-deployment recommendation. Keys in `2048..<3072` are accepted
-    /// but emit a warning so the operator can rotate them ahead of any future
-    /// hardening policy change.
-    private static let rsaModulusHardenedFloor = 3072
-
-    /// Applies the RSA modulus policy: reject below 2048, warn 2048..<3072,
-    /// silently accept >= 3072. The `context` argument is interpolated into
-    /// the warning emission so an operator scanning `log show` can tell which
-    /// key path the warning came from.
-    private static func enforceRSAModulusPolicy(bits: Int, context: String) throws {
-        if bits < rsaModulusHardFloor {
-            throw ImporterError.rsaModulusTooSmall(observed: bits)
-        }
-        if bits < rsaModulusHardenedFloor {
-            logger.warning(
-                "Imported RSA key has a \(bits)-bit modulus (\(context)); accepted but below the 3072-bit hardened-deployment recommendation."
-            )
-        }
-    }
 
     // MARK: - Public API
 
@@ -265,21 +227,16 @@ enum SSHKeyImporter {
         case .opensshPrivate:
             (algorithm, isEncrypted) = try classifyOpenSSH(payload: payload)
         case .rsaPrivate:
-            algorithm = .rsa
-            isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
-            // Front-door reject. RSA portable signing is deferred (see ADR
-            // §1 v1 portable scope amendment); the modulus check below is
-            // unreachable through normal flow today but stays as defensive
-            // scaffolding for when upstream NIOSSH lands RSA signing.
+            // Front-door reject. RSA portable signing is deferred per ADR §1
+            // v1 portable scope amendment — upstream swift-nio-ssh has no
+            // RSA private-key signing path. The classification stays at the
+            // PEM-kind level (we know it's RSA from the armor); we don't
+            // decode the ASN.1 because the credential never reaches the
+            // signing pipeline.
             throw ImporterError.unsupportedAlgorithmInV1(
                 name: "RSA",
                 remediation: rsaRemediation
             )
-            // unreachable; preserved for the day the reject above is relaxed:
-            // if !isEncrypted {
-            //     let bits = try rsaModulusBitsFromPKCS1(payload)
-            //     try enforceRSAModulusPolicy(bits: bits, context: "PKCS#1 traditional PEM")
-            // }
         case .ecPrivate:
             // The curve OID lives inside the SEC1 ASN.1 payload, which this importer
             // doesn't decode. Surface as the family-level case so the UI doesn't
@@ -449,49 +406,14 @@ enum SSHKeyImporter {
         return (mapped, isEncrypted)
     }
 
-    // MARK: - RSA modulus extraction (dormant under v1 scope)
+    // MARK: - PKCS#8 RSA detection (front-door reject support)
 
-    // The helpers below are unreachable through normal flow under the Slice 3 7b₁
-    // v1 scope (RSA imports are rejected at the front door in `validate`). They
-    // remain in place as defensive scaffolding for the day upstream `swift-nio-ssh`
-    // gains RSA private-key signing support and the front-door reject is relaxed;
-    // a future contributor lifting that reject inherits a working NZISM 17.1.40
-    // modulus check without re-implementing commit 4238b35.
-
-    /// Reads the modulus `n` from a PKCS#1 RSAPrivateKey DER payload and returns
-    /// its bit length. The structure is:
-    ///
-    ///     RSAPrivateKey ::= SEQUENCE {
-    ///         version           INTEGER,
-    ///         modulus           INTEGER, -- n
-    ///         publicExponent    INTEGER, -- e
-    ///         ...
-    ///     }
-    ///
-    /// We only need the first two integers; the rest of the structure is
-    /// untouched. Used by both the traditional `BEGIN RSA PRIVATE KEY` arm and
-    /// the inner payload of PKCS#8 PrivateKeyInfo for RSA keys.
-    private static func rsaModulusBitsFromPKCS1(_ payload: Data) throws -> Int {
-        let bytes = [UInt8](payload)
-        var cursor = 0
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x30) // SEQUENCE
-        _ = try readASN1Length(bytes, cursor: &cursor)
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02) // INTEGER (version)
-        let versionLength = try readASN1Length(bytes, cursor: &cursor)
-        cursor += versionLength
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02) // INTEGER (modulus n)
-        let modulusLength = try readASN1Length(bytes, cursor: &cursor)
-        guard cursor + modulusLength <= bytes.count else {
-            throw ImporterError.truncatedASN1
-        }
-        let modulus = Array(bytes[cursor..<(cursor + modulusLength)])
-        return asn1IntegerBitLength(modulus)
-    }
-
-    /// If `payload` is a PKCS#8 PrivateKeyInfo wrapping an RSA key, returns the
-    /// inner PKCS#1 RSAPrivateKey payload (the OCTET STRING contents) for the
-    /// modulus check. Returns nil for non-RSA PKCS#8 keys so the caller can
-    /// fall through to `.unknown` without raising.
+    /// Returns non-nil when `payload` is a PKCS#8 PrivateKeyInfo wrapping an
+    /// RSA key. The caller (`validate`) only checks for non-nil to fire the
+    /// v1 front-door reject; the returned payload is not consumed. Non-RSA
+    /// PKCS#8 returns nil so the classifier falls through to `.unknown`,
+    /// and CryptoKit's `pemRepresentation` initialisers handle the curve
+    /// detection at signing time in the auth delegate.
     ///
     /// PKCS#8 PrivateKeyInfo:
     ///     SEQUENCE {
@@ -529,22 +451,6 @@ enum SSHKeyImporter {
         let octetLen = try readASN1Length(bytes, cursor: &cursor)
         guard cursor + octetLen <= bytes.count else { throw ImporterError.truncatedASN1 }
         return Data(bytes[cursor..<(cursor + octetLen)])
-    }
-
-    /// Reads `mpint e, mpint n` from an OpenSSH new-format public-key blob whose
-    /// algorithm prefix has already been consumed (the caller passes the full
-    /// blob; this function skips the `ssh-rsa` string itself). Returns the bit
-    /// length of `n`.
-    private static func rsaModulusBitsFromOpenSSHPublicBlob(_ publicBlob: Data) throws -> Int {
-        var cursor = 0
-        // Skip the algorithm-name SSH string ("ssh-rsa", "rsa-sha2-256", or
-        // "rsa-sha2-512"). The caller already inspected it.
-        _ = try readSSHString(from: publicBlob, cursor: &cursor)
-        // mpint e — discard
-        _ = try readSSHString(from: publicBlob, cursor: &cursor)
-        // mpint n — the modulus
-        let n = try readSSHString(from: publicBlob, cursor: &cursor)
-        return asn1IntegerBitLength([UInt8](n))
     }
 
     // MARK: - OpenSSH new-format private-key decoder
@@ -761,51 +667,34 @@ enum SSHKeyImporter {
     /// encoded as the second field of an `authorized_keys` line) from a
     /// successfully-validated `ImportedSSHKey`.
     ///
-    /// Supported paths:
+    /// Supported path: OpenSSH new-format (any algorithm, encrypted or not).
+    /// The public-key blob lives unencrypted in the payload regardless of
+    /// cipher, so this works for password-protected keys too.
     ///
-    /// - OpenSSH new-format (any algorithm, encrypted or not): the public-key
-    ///   blob lives unencrypted in the payload regardless of cipher, so this
-    ///   works for password-protected keys too.
-    /// - Traditional `BEGIN RSA PRIVATE KEY` (unencrypted): n and e read from
-    ///   the PKCS#1 ASN.1, repacked as `ssh-rsa` wire format.
-    /// - PKCS#8 `BEGIN PRIVATE KEY` carrying rsaEncryption (unencrypted): same
-    ///   as PKCS#1 after descending into the OCTET STRING.
-    ///
-    /// Encrypted traditional / PKCS#8 keys and traditional EC PEMs raise
-    /// `publicKeyDerivationDeferred` or `publicKeyDerivationNotSupported`. The
-    /// credential is still stored with an empty `publicKey` placeholder; the
-    /// auth delegate's first-use path backfills once the signer can read the
-    /// private half (after passphrase or for EC PEMs after SEC1 decoding).
+    /// Other PEM kinds raise `publicKeyDerivationNotSupported`. The realistic
+    /// callers — `SSHCredentialsSettings.commit()` and the auth delegate's
+    /// first-use backfill — only reach this function after `validate()`, and
+    /// `validate()` rejects traditional `BEGIN RSA PRIVATE KEY`, PKCS#8 RSA,
+    /// any encrypted PEM, and DSA at the front door per the v1 portable
+    /// scope. The non-OpenSSH branches stay for switch exhaustiveness; they
+    /// are unreachable through normal flow.
     static func derivePublicKey(from key: ImportedSSHKey) throws -> Data {
-        guard let (_, base64Body) = extractPEM(from: key.normalisedPEM) else {
-            throw ImporterError.noPEMArmorFound
-        }
-        let stripped = stripPEMHeaders(from: base64Body)
-            .split(whereSeparator: \.isWhitespace)
-            .joined()
-        guard let payload = Data(base64Encoded: stripped) else {
-            throw ImporterError.payloadNotBase64
-        }
-
         switch key.pemKind {
         case .opensshPrivate:
+            guard let (_, base64Body) = extractPEM(from: key.normalisedPEM) else {
+                throw ImporterError.noPEMArmorFound
+            }
+            let stripped = stripPEMHeaders(from: base64Body)
+                .split(whereSeparator: \.isWhitespace)
+                .joined()
+            guard let payload = Data(base64Encoded: stripped) else {
+                throw ImporterError.payloadNotBase64
+            }
             return try opensshPublicBlobFromNewFormat(payload: payload)
-        case .rsaPrivate:
-            if key.isEncrypted {
-                throw ImporterError.publicKeyDerivationDeferred
-            }
-            let (n, e) = try rsaModulusAndExponentFromPKCS1(payload)
-            return opensshWireForRSA(n: n, e: e)
-        case .pkcs8:
-            guard let inner = try pkcs8RSAInnerPKCS1(payload) else {
-                throw ImporterError.publicKeyDerivationNotSupported(reason: "PKCS#8 non-RSA")
-            }
-            let (n, e) = try rsaModulusAndExponentFromPKCS1(inner)
-            return opensshWireForRSA(n: n, e: e)
-        case .encryptedPkcs8:
-            throw ImporterError.publicKeyDerivationDeferred
-        case .ecPrivate:
-            throw ImporterError.publicKeyDerivationNotSupported(reason: "traditional EC PEM")
+        case .rsaPrivate, .pkcs8, .encryptedPkcs8, .ecPrivate:
+            throw ImporterError.publicKeyDerivationNotSupported(
+                reason: "PEM kind \(key.pemKind.rawValue) is rejected by `validate()` under the v1 portable scope"
+            )
         case .dsaPrivate:
             throw ImporterError.unsupportedKeyKind(.dsaPrivate)
         }
@@ -827,70 +716,6 @@ enum SSHKeyImporter {
         _ = try readSSHString(from: payload, cursor: &cursor) // kdfoptions
         _ = try readUInt32(from: payload, cursor: &cursor)    // number of keys
         return try readSSHString(from: payload, cursor: &cursor)
-    }
-
-    /// PKCS#1 INTEGER pair extractor: pulls the modulus and public exponent
-    /// without re-reading version (the modulus check arm already validated
-    /// the SEQUENCE prefix, but `derivePublicKey` may be called on a freshly
-    /// parsed payload, so the structural walk repeats here).
-    private static func rsaModulusAndExponentFromPKCS1(_ payload: Data) throws -> (n: Data, e: Data) {
-        let bytes = [UInt8](payload)
-        var cursor = 0
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x30)
-        _ = try readASN1Length(bytes, cursor: &cursor)
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02)
-        let versionLen = try readASN1Length(bytes, cursor: &cursor)
-        cursor += versionLen
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02)
-        let nLen = try readASN1Length(bytes, cursor: &cursor)
-        guard cursor + nLen <= bytes.count else { throw ImporterError.truncatedASN1 }
-        let n = Data(bytes[cursor..<(cursor + nLen)])
-        cursor += nLen
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02)
-        let eLen = try readASN1Length(bytes, cursor: &cursor)
-        guard cursor + eLen <= bytes.count else { throw ImporterError.truncatedASN1 }
-        let e = Data(bytes[cursor..<(cursor + eLen)])
-        return (n, e)
-    }
-
-    /// Builds the OpenSSH wire format for an RSA public key:
-    ///     string  "ssh-rsa"
-    ///     mpint   e
-    ///     mpint   n
-    private static func opensshWireForRSA(n: Data, e: Data) -> Data {
-        var wire = Data()
-        wire.append(sshWireString(Data("ssh-rsa".utf8)))
-        wire.append(sshWireMpint(e))
-        wire.append(sshWireMpint(n))
-        return wire
-    }
-
-    /// uint32 length-prefixed SSH string.
-    private static func sshWireString(_ payload: Data) -> Data {
-        var out = Data(capacity: 4 + payload.count)
-        var len = UInt32(payload.count).bigEndian
-        withUnsafeBytes(of: &len) { out.append(contentsOf: $0) }
-        out.append(payload)
-        return out
-    }
-
-    /// SSH `mpint` wire format: length-prefixed two's-complement big-endian.
-    /// Unsigned values whose high bit is set get a 0x00 prefix to keep the
-    /// integer positive when re-decoded as two's complement.
-    private static func sshWireMpint(_ raw: Data) -> Data {
-        var bytes = [UInt8](raw)
-        // Strip incidental leading zeros (ASN.1 INTEGERs may carry a sign
-        // byte; mpints are also free of them).
-        while bytes.count > 1 && bytes.first == 0x00 {
-            bytes.removeFirst()
-        }
-        if bytes.isEmpty {
-            return sshWireString(Data([0x00]))
-        }
-        if bytes[0] >= 0x80 {
-            bytes.insert(0x00, at: 0)
-        }
-        return sshWireString(Data(bytes))
     }
 
     // MARK: - ASN.1 primitives
@@ -922,20 +747,6 @@ enum SSHKeyImporter {
         }
         cursor += countBytes
         return length
-    }
-
-    /// Returns the bit length of a big-endian unsigned integer represented as a
-    /// byte sequence. Handles the leading sign byte that both DER INTEGER and
-    /// SSH mpint use to keep large unsigned values positive.
-    private static func asn1IntegerBitLength(_ raw: [UInt8]) -> Int {
-        var i = 0
-        // Strip leading zero bytes (the DER/mpint sign byte, plus any incidental
-        // leading zeros — shouldn't appear in well-formed payloads but be safe).
-        while i < raw.count && raw[i] == 0 { i += 1 }
-        guard i < raw.count else { return 0 }
-        let firstNonzero = raw[i]
-        let remaining = raw.count - i - 1
-        return remaining * 8 + (8 - Int(firstNonzero.leadingZeroBitCount))
     }
 
     // MARK: - SSH wire format helpers
