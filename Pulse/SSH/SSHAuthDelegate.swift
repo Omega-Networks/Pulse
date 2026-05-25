@@ -236,8 +236,13 @@ final class SSHAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked 
                 let metadata = try SSHCertificateManager.metadata(for: blob)
                 if SSHCertificateManager.isValid(metadata, at: now()) {
                     stateLock.withLock { _offeredCert = true }
+                    // `cert.offered` — the delegate's local validity check
+                    // passed and we're presenting the cert to NIOSSH. The
+                    // server may still reject. The post-hoc `cert.accepted`
+                    // emission lives in `SSHClient` and fires only on
+                    // session-open with `didOfferCertificate == true`.
                     certLogger.info(
-                        "cert.accepted user=\(self.username, privacy: .public) host=\(self.host, privacy: .public) port=\(self.port) credential=\(self.credentialID, privacy: .public) keyID=\(metadata.keyID, privacy: .public) ca=\(metadata.caFingerprintSHA256, privacy: .public)"
+                        "cert.offered user=\(self.username, privacy: .public) host=\(self.host, privacy: .public) port=\(self.port) credential=\(self.credentialID, privacy: .public) keyID=\(metadata.keyID, privacy: .public) ca=\(metadata.caFingerprintSHA256, privacy: .public)"
                     )
                     return NIOSSHUserAuthenticationOffer(
                         username: username,

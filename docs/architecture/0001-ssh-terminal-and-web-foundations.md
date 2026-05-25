@@ -113,7 +113,7 @@ Independent of the recording toggle, every session emits structured `os_log` eve
 - `session.open`, `session.close`
 - `auth.success`, `auth.failure`
 - `host.pinned`, `host.mismatch`, `host.ca-accepted`, `host.ca-rejected`
-- `cert.accepted`, `cert.rejected`, `cert.expired`
+- `cert.offered`, `cert.accepted`, `cert.rejected`, `cert.expired` — `cert.offered` emits when the auth delegate decides to present a stored certificate; `cert.accepted` confirms the server accepted it after session-open. Two separate events because the audit log needs to distinguish delegate-side intent from server-side outcome.
 - `credential.created`, `credential.deleted`, `credential.rotated`
 
 Metadata fields: `deviceID`, `credentialID`, `username`, `host`, `port`, `openedAt`, `closedAt`, `exitCause`. Session contents and key material are never included. This signal is captured by `log show` and falls into sysdiagnose by default — it is recoverable even when the device is examined offline.

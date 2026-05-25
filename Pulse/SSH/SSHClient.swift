@@ -232,8 +232,12 @@ actor SSHClient {
             "auth.success user=\(self.username, privacy: .public) host=\(self.host, privacy: .public) port=\(self.port) credential=\(self.credentialID, privacy: .public)"
         )
         if authDelegate.didOfferCertificate {
+            // Post-hoc cert acceptance: the delegate emitted `cert.offered`
+            // at presentation time; this `cert.accepted` confirms the
+            // server actually accepted the offered cert (we'd be in a
+            // different code path on rejection — see `cert.rejected`).
             certLogger.info(
-                "cert.accepted confirmed=true user=\(self.username, privacy: .public) host=\(self.host, privacy: .public) port=\(self.port)"
+                "cert.accepted user=\(self.username, privacy: .public) host=\(self.host, privacy: .public) port=\(self.port)"
             )
         }
 
