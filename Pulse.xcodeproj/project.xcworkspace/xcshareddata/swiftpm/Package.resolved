@@ -1,6 +1,15 @@
 {
-  "originHash" : "5a8528794ce23cb8a751ba8d3cedcac3f8dd178c42a98e07cf2cb0a0a02740d7",
+  "originHash" : "a0af2ba7c013e4b0f4792d40bd1cf7782c7427f89474c25282f1e39cffe5ba9c",
   "pins" : [
+    {
+      "identity" : "swift-asn1",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-asn1.git",
+      "state" : {
+        "revision" : "eb50cbd14606a9161cbc5d452f18797c90ef0bab",
+        "version" : "1.7.0"
+      }
+    },
     {
       "identity" : "swift-atomics",
       "kind" : "remoteSourceControl",
@@ -20,12 +29,30 @@
       }
     },
     {
+      "identity" : "swift-crypto",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-crypto.git",
+      "state" : {
+        "revision" : "1b6b2e274e85105bfa155183145a1dcfd63331f1",
+        "version" : "4.5.0"
+      }
+    },
+    {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
         "revision" : "57c0a08a331aaea9f5d7a932ad94ef43be942a95",
         "version" : "2.100.0"
+      }
+    },
+    {
+      "identity" : "swift-nio-ssh",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-nio-ssh.git",
+      "state" : {
+        "revision" : "1a915a324afefd4031e396e81a0e210178621be8",
+        "version" : "0.13.0"
       }
     },
     {
