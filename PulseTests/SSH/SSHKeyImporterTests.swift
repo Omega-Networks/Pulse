@@ -72,6 +72,74 @@ final class SSHKeyImporterTests: XCTestCase {
         let result = try SSHKeyImporter.validate(fixturePKCS8RSA)
         XCTAssertEqual(result.pemKind, .pkcs8)
         XCTAssertFalse(result.isEncrypted)
+        // Slice 3: PKCS#8 PrivateKeyInfo with rsaEncryption OID is now classified
+        // as RSA; previously it surfaced as .unknown. The 2048-bit fixture passes
+        // the NZISM 17.1.40 hard floor silently.
+        XCTAssertEqual(result.algorithm, .rsa)
+    }
+
+    // MARK: - RSA modulus enforcement (NZISM 17.1.40)
+
+    /// 1024-bit RSA in traditional PKCS#1 form must be rejected with a precise
+    /// observed bit length so the UI can show "found 1024 bits, need 2048+".
+    func testRSAPKCS1At1024IsRejected() {
+        XCTAssertThrowsError(try SSHKeyImporter.validate(fixtureRSA1024PKCS1)) { error in
+            guard case SSHKeyImporter.ImporterError.rsaModulusTooSmall(let observed) = error else {
+                return XCTFail("expected rsaModulusTooSmall, got \(error)")
+            }
+            XCTAssertEqual(observed, 1024)
+        }
+    }
+
+    /// 3072-bit RSA traditional PKCS#1 must pass silently (no warning band) and
+    /// classify as `.rsa`.
+    func testRSAPKCS1At3072IsAcceptedSilently() throws {
+        let result = try SSHKeyImporter.validate(fixtureRSA3072PKCS1)
+        XCTAssertEqual(result.pemKind, .rsaPrivate)
+        XCTAssertEqual(result.algorithm, .rsa)
+        XCTAssertFalse(result.isEncrypted)
+    }
+
+    /// OpenSSH new-format with an `ssh-rsa` public key blob at 1024 bits must
+    /// reject. The public-key blob is unencrypted even when the private half is
+    /// password-protected, so this check fires regardless of cipher.
+    func testRSAOpenSSHAt1024IsRejected() {
+        XCTAssertThrowsError(try SSHKeyImporter.validate(fixtureRSAOpenSSH1024)) { error in
+            guard case SSHKeyImporter.ImporterError.rsaModulusTooSmall(let observed) = error else {
+                return XCTFail("expected rsaModulusTooSmall, got \(error)")
+            }
+            XCTAssertEqual(observed, 1024)
+        }
+    }
+
+    func testRSAOpenSSHAt3072IsAcceptedSilently() throws {
+        let result = try SSHKeyImporter.validate(fixtureRSAOpenSSH3072)
+        XCTAssertEqual(result.pemKind, .opensshPrivate)
+        XCTAssertEqual(result.algorithm, .rsa)
+        XCTAssertFalse(result.isEncrypted)
+    }
+
+    /// PKCS#8 PrivateKeyInfo wrapping a 1024-bit RSA key must reject after
+    /// descending into the rsaEncryption-OID OCTET STRING.
+    func testRSAPKCS8At1024IsRejected() {
+        XCTAssertThrowsError(try SSHKeyImporter.validate(fixtureRSAPKCS8At1024)) { error in
+            guard case SSHKeyImporter.ImporterError.rsaModulusTooSmall(let observed) = error else {
+                return XCTFail("expected rsaModulusTooSmall, got \(error)")
+            }
+            XCTAssertEqual(observed, 1024)
+        }
+    }
+
+    /// Encrypted traditional PEM keys can't have their modulus checked at import
+    /// time without the passphrase. The signer rechecks after decryption. The
+    /// existing fixture is the encrypted form; it must not raise
+    /// `rsaModulusTooSmall` from the importer.
+    func testEncryptedTraditionalRSADefersModulusCheck() throws {
+        // testTraditionalRSAEncryptedDetectsProcType already asserts this works;
+        // the explicit framing here is the contract: encryption defers the check.
+        let result = try SSHKeyImporter.validate(fixtureTraditionalRSAEncrypted)
+        XCTAssertTrue(result.isEncrypted)
+        XCTAssertEqual(result.algorithm, .rsa)
     }
 
     // MARK: - Error paths
@@ -227,4 +295,151 @@ private let fixtureDSA = """
 MIIBuwIBAAKBgQD9f1OBHXUSKVLfSpwu7OTn9hG3UjzvRADDHj+AtlEmaUVdQCJR
 +1k9jVj6v8X1ujD2y5tVbNeBO4AdNG/yZmC3a5lQpaSfn+gEexAiwk+7qdf+ZZZZ
 -----END DSA PRIVATE KEY-----
+"""
+
+// MARK: - RSA modulus enforcement fixtures
+//
+// Generated with `ssh-keygen -t rsa -b <bits>` (OpenSSH new-format and traditional
+// PKCS#1) and `openssl pkey -in ... -outform PEM` (PKCS#8), then tail-mangled per
+// the convention above. The modulus lives at the start of each payload, well
+// before the corrupted tail, so the importer's modulus-length check still works
+// against the structurally-valid prefix.
+
+private let fixtureRSA1024PKCS1 = """
+-----BEGIN RSA PRIVATE KEY-----
+MIICXQIBAAKBgQDX5Yrc4hok8i8ue/J5ME1S7tgsaVlKcJkZW0NAD8iLReGazEiB
+C4tcJWYj1ajpDvZBX7N7JyXfK8G5zT9/u6tM+YISW43bb+UgK4JzOS99uOlcNQgs
+zIricPLUF80ID2SBYUBM1j/BThzsp7tOVrIJnOIqQFyH8kBF43ARXm+ESwIDAQAB
+AoGBANP+MTxzR/i/VlTuoEkfhM3KeboiN+tAZRTg6EgfN2yKUd0OeqM8EruIfaLy
+ScmPR38p2bMz3Zwl+zPWtmNWg/xinamhiZEEr+vrDUAMDhPJ310nmzLQXbranDw7
+kZrm9ZgT91Nq6kxrGARlbaBSr4P6IeENGqRdeafLWzeOx8wBAkEA/LICVSTfs3iY
+7dD/8/6RUPYWx6u5hbNgyO9tGZJVJ6YXiOSF+9VR5sjI3TOff+v3Djnx1SHIgXfD
+YkHm3AyOWwJBANq4VgsLN4KgRfTHDA6F9du3iiQxsyKfcyyx94LSGKW8opU1z+Hv
+f3xQxLVTmC2oER5a9/IOofA34E3+asGHpNECQATvdRw0nCnlMRdz/YvGbRAnvkoo
+EHeMCVfjVT4qnX8ov0ztKbDBedgIE+Q+Hd9hvHGKsC55enEM5cQFhXzGwgECQBA8
+eN6vAXrn7OmD0ShO13ZtBIs1SUf7sDAUMfx7HitHeoY7DWiHP955nHCdeQGCpWqs
+dBV68piDfVos1b3yFNECQQCwnziALuj91McbWch4EJn29FQb7dAKxlherbrzGsbi
+ayEJh1t8F/nD49kGMZBlEG1Vk/p7Xlzx4jy22ZovZZZZ
+-----END RSA PRIVATE KEY-----
+"""
+
+private let fixtureRSA3072PKCS1 = """
+-----BEGIN RSA PRIVATE KEY-----
+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
+-----END RSA PRIVATE KEY-----
+"""
+
+private let fixtureRSAOpenSSH1024 = """
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAlwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAIEAqUJ9R8/N0sHzcsBF8aHPbLK0cBiL7Aye7wXVc0V7yrlStKWSktpV
+LeTIlNHrV3n3IouR8vpGblmeJaXV3QI7AkcUE54KiGyxa84HaXu1NhzoT3NQzvfbU2Vjpz
+T+wN+oKJcmvsDXzY9RdZhBcrRJEL7KfOewbjiezo9p24UgfuMAAAIYsV+WvbFflr0AAAAH
+c3NoLXJzYQAAAIEAqUJ9R8/N0sHzcsBF8aHPbLK0cBiL7Aye7wXVc0V7yrlStKWSktpVLe
+TIlNHrV3n3IouR8vpGblmeJaXV3QI7AkcUE54KiGyxa84HaXu1NhzoT3NQzvfbU2VjpzT+
+wN+oKJcmvsDXzY9RdZhBcrRJEL7KfOewbjiezo9p24UgfuMAAAADAQABAAAAgB3m6y8WnS
+wQq6uoIDMx/O0dHRd4nq+TAzkC9NSqf9Yuq1fSsHRVMhsrgewYsdUAbRKjSaN9Z5fzKSdJ
+huDGlhnlWgn27KBdhgzLUJYBj2PCTEa33rT643Cqe02j1eqxizHGZxIWcRpGvUZtOQD9ER
+ICsEWexjzsAITP3FBYVs5xAAAAQGSBcuRKajotxJVU20FKxTkMpySCCZi7H/WharvtKBcP
+dSmNl15gCpFMkY6jRU3KNj7HURx3vi2+0pGxl2a/Q08AAABBANM2kt5VF8iYbIKLWef8jf
+BAhKBObM4G6n3myUGxZhNW0ymYa8VXV9PWFP4Fm7ER/AKqVFKncoEd3obpO57c44cAAABB
+AM0mhzppQvThtoUTOdmPlwX16ORQD/bJ2cKQMHFuuv4R2KSX6NERF/EAD6pjJf26+IbVBN
+Pr767kjSUWzBtZWMUAAAAhYnV0dGVyeWFscGFjYUBNYWNCb29rLVByby00LmxvY2FZZZZ=
+-----END OPENSSH PRIVATE KEY-----
+"""
+
+private let fixtureRSAOpenSSH3072 = """
+-----BEGIN OPENSSH PRIVATE KEY-----
+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
+-----END OPENSSH PRIVATE KEY-----
+"""
+
+private let fixtureRSAPKCS8At1024 = """
+-----BEGIN PRIVATE KEY-----
+MIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBANflitziGiTyLy57
+8nkwTVLu2CxpWUpwmRlbQ0APyItF4ZrMSIELi1wlZiPVqOkO9kFfs3snJd8rwbnN
+P3+7q0z5ghJbjdtv5SArgnM5L3246Vw1CCzMiuJw8tQXzQgPZIFhQEzWP8FOHOyn
+u05Wsgmc4ipAXIfyQEXjcBFeb4RLAgMBAAECgYEA0/4xPHNH+L9WVO6gSR+Ezcp5
+uiI360BlFODoSB83bIpR3Q56ozwSu4h9ovJJyY9HfynZszPdnCX7M9a2Y1aD/GKd
+qaGJkQSv6+sNQAwOE8nfXSebMtBdutqcPDuRmub1mBP3U2rqTGsYBGVtoFKvg/oh
+4Q0apF15p8tbN47HzAECQQD8sgJVJN+zeJjt0P/z/pFQ9hbHq7mFs2DI720ZklUn
+pheI5IX71VHmyMjdM59/6/cOOfHVIciBd8NiQebcDI5bAkEA2rhWCws3gqBF9McM
+DoX127eKJDGzIp9zLLH3gtIYpbyilTXP4e9/fFDEtVOYLagRHlr38g6h8DfgTf5q
+wYek0QJABO91HDScKeUxF3P9i8ZtECe+SigQd4wJV+NVPiqdfyi/TO0psMF52AgT
+5D4d32G8cYqwLnl6cQzlxAWFfMbCAQJAEDx43q8Beufs6YPRKE7Xdm0EizVJR/uw
+MBQx/HseK0d6hjsNaIc/3nmccJ15AYKlaqx0FXrymIN9WizVvfIU0QJBALCfOIAu
+6P3UxxtZyHgQmfb0VBvt0ArGWF6tuvMaxuJrIQmHW3wX+cPj2QYxkGUQbVWT+nte
+XPHiPLbZmi/ZZZZ=
+-----END PRIVATE KEY-----
 """

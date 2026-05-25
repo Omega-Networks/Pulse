@@ -24,6 +24,7 @@
 //
 
 import Foundation
+import OSLog
 
 /// Validates and classifies portable (legacy-tier) SSH private keys imported from PEM
 /// or OpenSSH armor. Stores the normalised PEM via `Configuration.setSSHPrivateKeyPEM`.
@@ -89,13 +90,20 @@ enum SSHKeyImporter {
 
     // MARK: - Errors
 
-    enum ImporterError: Error, CustomStringConvertible {
+    enum ImporterError: Error, CustomStringConvertible, Equatable {
         case empty
         case noPEMArmorFound
         case mismatchedArmor
         case unsupportedKeyKind(PEMKind)
         case payloadNotBase64
         case truncatedOpenSSHKey
+        /// RSA modulus is below the NZISM 17.1.40 hard floor of 2048 bits.
+        /// The associated value is the observed bit length so the UI can
+        /// surface a precise message ("found 1024 bits, need 2048+").
+        case rsaModulusTooSmall(observed: Int)
+        /// PKCS#1 / PKCS#8 ASN.1 payload doesn't parse far enough for us to
+        /// reach the modulus. Treated like a truncation: the user re-imports.
+        case truncatedASN1
 
         var description: String {
             switch self {
@@ -111,7 +119,45 @@ enum SSHKeyImporter {
                 return "The PEM body isn't valid base64."
             case .truncatedOpenSSHKey:
                 return "OpenSSH-format key is truncated: the ‘openssh-key-v1’ payload is incomplete."
+            case .rsaModulusTooSmall(let observed):
+                return "RSA key has a \(observed)-bit modulus; Pulse requires at least 2048 bits per NZISM 17.1.40."
+            case .truncatedASN1:
+                return "ASN.1 payload is truncated or malformed; the modulus length could not be read."
             }
+        }
+    }
+
+    // MARK: - Logging
+
+    /// Lifecycle and policy emissions during import. Per ADR 0001 §7, every
+    /// SSH-adjacent audit signal lives under a `ssh.*` category. The modulus
+    /// warning band (2048..<3072) fires through this logger as `credential.weakRSA`.
+    private static let logger = Logger(subsystem: "pulse", category: "ssh.credentials")
+
+    // MARK: - RSA policy
+
+    /// NZISM 17.1.40 hard floor. Keys below this are rejected; the policy is not
+    /// per-tenant configurable in v1. A per-site override (`Site.allowsLegacyRSA`)
+    /// is a future schema addition if a deployment ever needs to weaken it.
+    private static let rsaModulusHardFloor = 2048
+
+    /// Hardened-deployment recommendation. Keys in `2048..<3072` are accepted
+    /// but emit a warning so the operator can rotate them ahead of any future
+    /// hardening policy change.
+    private static let rsaModulusHardenedFloor = 3072
+
+    /// Applies the RSA modulus policy: reject below 2048, warn 2048..<3072,
+    /// silently accept >= 3072. The `context` argument is interpolated into
+    /// the warning emission so an operator scanning `log show` can tell which
+    /// key path the warning came from.
+    private static func enforceRSAModulusPolicy(bits: Int, context: String) throws {
+        if bits < rsaModulusHardFloor {
+            throw ImporterError.rsaModulusTooSmall(observed: bits)
+        }
+        if bits < rsaModulusHardenedFloor {
+            logger.warning(
+                "Imported RSA key has a \(bits)-bit modulus (\(context)); accepted but below the 3072-bit hardened-deployment recommendation."
+            )
         }
     }
 
@@ -157,13 +203,16 @@ enum SSHKeyImporter {
         case .opensshPrivate:
             (algorithm, isEncrypted) = try classifyOpenSSH(payload: payload)
         case .rsaPrivate:
-            // TODO: NZISM 17.1.40 — enforce RSA modulus ≥ 2048 bits (3072 for
-            // hardened deployments) when the signer parses the actual key
-            // material. The importer today only classifies the armor; the
-            // modulus length lives in the PKCS#1 / PKCS#8 ASN.1 payload, which
-            // Slice 3's signer will decode for signing anyway.
             algorithm = .rsa
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
+            // NZISM 17.1.40. Encrypted traditional PEMs can't be modulus-checked
+            // at import time without the passphrase; the signer rechecks after
+            // decryption. Unencrypted PEMs are checked now so the operator sees
+            // the rejection in the import sheet rather than at first sign.
+            if !isEncrypted {
+                let bits = try rsaModulusBitsFromPKCS1(payload)
+                try enforceRSAModulusPolicy(bits: bits, context: "PKCS#1 traditional PEM")
+            }
         case .ecPrivate:
             // The curve OID lives inside the SEC1 ASN.1 payload, which this importer
             // doesn't decode. Surface as the family-level case so the UI doesn't
@@ -172,9 +221,18 @@ enum SSHKeyImporter {
             algorithm = .ecdsaUnknownCurve
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
         case .pkcs8:
-            // OID classification would require ASN.1 parsing. Defer to Slice 3.
-            algorithm = .unknown
+            // PKCS#8 PrivateKeyInfo wraps an algorithm-specific key. We classify
+            // the inner OID and, for RSA, descend into the OCTET STRING for a
+            // PKCS#1-shaped modulus check. Non-RSA PKCS#8 falls through as
+            // .unknown for now; the signer narrows the algorithm at sign time.
             isEncrypted = false
+            if let rsaPayload = try pkcs8RSAInnerPKCS1(payload) {
+                algorithm = .rsa
+                let bits = try rsaModulusBitsFromPKCS1(rsaPayload)
+                try enforceRSAModulusPolicy(bits: bits, context: "PKCS#8 PEM")
+            } else {
+                algorithm = .unknown
+            }
         case .encryptedPkcs8:
             algorithm = .unknown
             isEncrypted = true
@@ -292,14 +350,154 @@ enum SSHKeyImporter {
         case "ecdsa-sha2-nistp384":    mapped = .ecdsaP384
         case "ecdsa-sha2-nistp521":    mapped = .ecdsaP521
         case "ssh-rsa", "rsa-sha2-256", "rsa-sha2-512":
-            // TODO: NZISM 17.1.40 — see the matching note in the body-classifier
-            // RSA arm. The modulus length sits inside the OpenSSH key blob's
-            // public-key payload, which the signer decodes anyway.
             mapped = .rsa
+            // NZISM 17.1.40. The public-key blob layout after the algorithm
+            // name for ssh-rsa is `mpint e, mpint n`. Encrypted new-format keys
+            // still carry an unencrypted public-key blob — the encryption only
+            // covers the private half — so the modulus is checkable regardless
+            // of `isEncrypted`.
+            let modulusBits = try rsaModulusBitsFromOpenSSHPublicBlob(publicBlob)
+            try enforceRSAModulusPolicy(bits: modulusBits, context: "OpenSSH new-format")
         default:
             mapped = .unknown
         }
         return (mapped, isEncrypted)
+    }
+
+    // MARK: - RSA modulus extraction
+
+    /// Reads the modulus `n` from a PKCS#1 RSAPrivateKey DER payload and returns
+    /// its bit length. The structure is:
+    ///
+    ///     RSAPrivateKey ::= SEQUENCE {
+    ///         version           INTEGER,
+    ///         modulus           INTEGER, -- n
+    ///         publicExponent    INTEGER, -- e
+    ///         ...
+    ///     }
+    ///
+    /// We only need the first two integers; the rest of the structure is
+    /// untouched. Used by both the traditional `BEGIN RSA PRIVATE KEY` arm and
+    /// the inner payload of PKCS#8 PrivateKeyInfo for RSA keys.
+    private static func rsaModulusBitsFromPKCS1(_ payload: Data) throws -> Int {
+        let bytes = [UInt8](payload)
+        var cursor = 0
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x30) // SEQUENCE
+        _ = try readASN1Length(bytes, cursor: &cursor)
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02) // INTEGER (version)
+        let versionLength = try readASN1Length(bytes, cursor: &cursor)
+        cursor += versionLength
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02) // INTEGER (modulus n)
+        let modulusLength = try readASN1Length(bytes, cursor: &cursor)
+        guard cursor + modulusLength <= bytes.count else {
+            throw ImporterError.truncatedASN1
+        }
+        let modulus = Array(bytes[cursor..<(cursor + modulusLength)])
+        return asn1IntegerBitLength(modulus)
+    }
+
+    /// If `payload` is a PKCS#8 PrivateKeyInfo wrapping an RSA key, returns the
+    /// inner PKCS#1 RSAPrivateKey payload (the OCTET STRING contents) for the
+    /// modulus check. Returns nil for non-RSA PKCS#8 keys so the caller can
+    /// fall through to `.unknown` without raising.
+    ///
+    /// PKCS#8 PrivateKeyInfo:
+    ///     SEQUENCE {
+    ///         version           INTEGER (0)
+    ///         algorithm         AlgorithmIdentifier { OID, params }
+    ///         privateKey        OCTET STRING
+    ///         ...
+    ///     }
+    /// rsaEncryption OID is 1.2.840.113549.1.1.1, DER-encoded
+    /// `06 09 2A 86 48 86 F7 0D 01 01 01`.
+    private static func pkcs8RSAInnerPKCS1(_ payload: Data) throws -> Data? {
+        let bytes = [UInt8](payload)
+        var cursor = 0
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x30) // outer SEQUENCE
+        _ = try readASN1Length(bytes, cursor: &cursor)
+        // version INTEGER
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02)
+        let versionLen = try readASN1Length(bytes, cursor: &cursor)
+        cursor += versionLen
+        // AlgorithmIdentifier SEQUENCE
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x30)
+        let algIDLen = try readASN1Length(bytes, cursor: &cursor)
+        let algIDEnd = cursor + algIDLen
+        guard algIDEnd <= bytes.count else { throw ImporterError.truncatedASN1 }
+        // OID
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x06)
+        let oidLen = try readASN1Length(bytes, cursor: &cursor)
+        guard cursor + oidLen <= bytes.count else { throw ImporterError.truncatedASN1 }
+        let oid = Array(bytes[cursor..<(cursor + oidLen)])
+        cursor = algIDEnd // skip past parameters
+        let rsaEncryptionOID: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
+        guard oid == rsaEncryptionOID else { return nil }
+        // OCTET STRING containing the PKCS#1 RSAPrivateKey
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x04)
+        let octetLen = try readASN1Length(bytes, cursor: &cursor)
+        guard cursor + octetLen <= bytes.count else { throw ImporterError.truncatedASN1 }
+        return Data(bytes[cursor..<(cursor + octetLen)])
+    }
+
+    /// Reads `mpint e, mpint n` from an OpenSSH new-format public-key blob whose
+    /// algorithm prefix has already been consumed (the caller passes the full
+    /// blob; this function skips the `ssh-rsa` string itself). Returns the bit
+    /// length of `n`.
+    private static func rsaModulusBitsFromOpenSSHPublicBlob(_ publicBlob: Data) throws -> Int {
+        var cursor = 0
+        // Skip the algorithm-name SSH string ("ssh-rsa", "rsa-sha2-256", or
+        // "rsa-sha2-512"). The caller already inspected it.
+        _ = try readSSHString(from: publicBlob, cursor: &cursor)
+        // mpint e — discard
+        _ = try readSSHString(from: publicBlob, cursor: &cursor)
+        // mpint n — the modulus
+        let n = try readSSHString(from: publicBlob, cursor: &cursor)
+        return asn1IntegerBitLength([UInt8](n))
+    }
+
+    // MARK: - ASN.1 primitives
+
+    private static func expectASN1Tag(_ data: [UInt8], cursor: inout Int, tag: UInt8) throws {
+        guard cursor < data.count, data[cursor] == tag else {
+            throw ImporterError.truncatedASN1
+        }
+        cursor += 1
+    }
+
+    private static func readASN1Length(_ data: [UInt8], cursor: inout Int) throws -> Int {
+        guard cursor < data.count else { throw ImporterError.truncatedASN1 }
+        let first = data[cursor]
+        cursor += 1
+        if first < 0x80 {
+            return Int(first)
+        }
+        let countBytes = Int(first & 0x7F)
+        // 0x80 is an indefinite-length form, illegal in DER for the constructions
+        // we parse. 9+ length bytes would imply >= 2^64 bytes of payload, which
+        // we'll never see and refuse to allocate for.
+        guard countBytes >= 1, countBytes <= 8, cursor + countBytes <= data.count else {
+            throw ImporterError.truncatedASN1
+        }
+        var length = 0
+        for i in 0..<countBytes {
+            length = (length << 8) | Int(data[cursor + i])
+        }
+        cursor += countBytes
+        return length
+    }
+
+    /// Returns the bit length of a big-endian unsigned integer represented as a
+    /// byte sequence. Handles the leading sign byte that both DER INTEGER and
+    /// SSH mpint use to keep large unsigned values positive.
+    private static func asn1IntegerBitLength(_ raw: [UInt8]) -> Int {
+        var i = 0
+        // Strip leading zero bytes (the DER/mpint sign byte, plus any incidental
+        // leading zeros — shouldn't appear in well-formed payloads but be safe).
+        while i < raw.count && raw[i] == 0 { i += 1 }
+        guard i < raw.count else { return 0 }
+        let firstNonzero = raw[i]
+        let remaining = raw.count - i - 1
+        return remaining * 8 + (8 - Int(firstNonzero.leadingZeroBitCount))
     }
 
     // MARK: - SSH wire format helpers
