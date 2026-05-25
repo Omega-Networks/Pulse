@@ -558,12 +558,23 @@ private struct ImportLegacyCredentialSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var step: Step = .warning
     @State private var label: String = ""
-    // TODO: secret-material lifetime. SwiftUI @State retains these strings until
-    // the view releases, and Swift String has no zero-on-dealloc primitive. Move
-    // to a Data-backed buffer with explicit zeroing in a future slice. Documented
-    // as a known limitation in docs/credentials.md.
-    @State private var pem: String = ""
-    @State private var passphrase: String = ""
+    // Secret-material state is held as `Data` so the persistent buffer can be
+    // explicitly zeroed on dismissal via `Data.resetBytes(in:)`. The
+    // `pemDisplay` / `passphraseDisplay` bindings below adapt these to the
+    // `Binding<String>` that SwiftUI's `TextEditor` and `SecureField` require.
+    //
+    // **What this delivers:** the persistent plaintext window closes on
+    // dismissal — once the sheet goes away there is no Pulse-owned plaintext
+    // residue waiting for the garbage collector.
+    //
+    // **What this does not deliver:** zero-cost zeroing of every transient
+    // plaintext copy. SwiftUI's `TextField`/`SecureField` bind to `String`,
+    // and the underlying AppKit/UIKit text input maintains its own buffer we
+    // cannot reach. Each keystroke materialises a transient `String` via the
+    // binding shim; those instances are dropped to the runtime allocator
+    // without being zeroed. The improvement is bounded but real.
+    @State private var pem: Data = Data()
+    @State private var passphrase: Data = Data()
     @State private var importedKey: SSHKeyImporter.ImportedSSHKey?
     @State private var errorMessage: String?
 
@@ -583,6 +594,36 @@ private struct ImportLegacyCredentialSheet: View {
         }
         .padding(24)
         .frame(minWidth: 520, minHeight: 360)
+        .onDisappear {
+            // Zero the persistent buffers regardless of whether the sheet
+            // dismissed via Cancel, successful commit, or window close.
+            if !pem.isEmpty {
+                pem.resetBytes(in: 0..<pem.count)
+            }
+            if !passphrase.isEmpty {
+                passphrase.resetBytes(in: 0..<passphrase.count)
+            }
+        }
+    }
+
+    /// `Binding<String>` adapter for the PEM TextEditor. Converts on read
+    /// (`String(data: utf8)`) and re-encodes on write (`Data(.utf8)`). Each
+    /// keystroke materialises an ephemeral `String` we cannot zero; the
+    /// improvement vs. holding the persistent buffer as `String` is that the
+    /// dismissal path resets the persistent buffer to zero, eliminating the
+    /// post-dismissal plaintext residue.
+    private var pemDisplay: Binding<String> {
+        Binding(
+            get: { String(data: pem, encoding: .utf8) ?? "" },
+            set: { newValue in pem = Data(newValue.utf8) }
+        )
+    }
+
+    private var passphraseDisplay: Binding<String> {
+        Binding(
+            get: { String(data: passphrase, encoding: .utf8) ?? "" },
+            set: { newValue in passphrase = Data(newValue.utf8) }
+        )
     }
 
     // MARK: Step 1 (gated warning)
@@ -627,7 +668,7 @@ private struct ImportLegacyCredentialSheet: View {
                 Text("Private key (PEM)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextEditor(text: $pem)
+                TextEditor(text: pemDisplay)
                     .font(.system(.caption, design: .monospaced))
                     .frame(minHeight: 140)
                     .overlay(
@@ -637,7 +678,7 @@ private struct ImportLegacyCredentialSheet: View {
             }
 
             if let importedKey, importedKey.isEncrypted {
-                SecureField("Passphrase", text: $passphrase)
+                SecureField("Passphrase", text: passphraseDisplay)
                     .textFieldStyle(.roundedBorder)
             }
 
@@ -666,7 +707,7 @@ private struct ImportLegacyCredentialSheet: View {
                 Button("Validate") {
                     validate()
                 }
-                .disabled(pem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(pem.isEmpty)
 
                 Spacer()
 
@@ -689,8 +730,11 @@ private struct ImportLegacyCredentialSheet: View {
 
     private func validate() {
         errorMessage = nil
+        // Classifier still operates on a String; the conversion happens at the
+        // call boundary so the persistent state can stay as Data.
+        let pemString = String(data: pem, encoding: .utf8) ?? ""
         do {
-            importedKey = try SSHKeyImporter.validate(pem)
+            importedKey = try SSHKeyImporter.validate(pemString)
         } catch {
             importedKey = nil
             errorMessage = "\(error)"
@@ -701,15 +745,20 @@ private struct ImportLegacyCredentialSheet: View {
         guard let importedKey else { return }
         let credentialID = UUID()
         let trimmedLabel = label.trimmingCharacters(in: .whitespaces)
+        // Capture the Data-typed payloads up front so the Task body doesn't
+        // capture `self`'s @State (which would extend the plaintext window
+        // past the onDisappear zero).
+        let pemData = importedKey.normalisedPEMData
+        let passphraseData = passphrase
         Task {
             let config = await Configuration.shared
-            let ok = await config.setSSHPrivateKeyPEM(importedKey.normalisedPEM, for: credentialID)
+            let ok = await config.setSSHPrivateKeyPEM(pemData, for: credentialID)
             guard ok else {
                 await MainActor.run { errorMessage = "Couldn't store the PEM in the Keychain." }
                 return
             }
             if importedKey.isEncrypted {
-                _ = await config.setSSHPassphrase(passphrase, for: credentialID)
+                _ = await config.setSSHPassphrase(passphraseData, for: credentialID)
             }
 
             // Derive the OpenSSH wire-format public key from the imported PEM

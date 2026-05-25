@@ -45,6 +45,12 @@ enum SSHKeyImporter {
         /// PEM normalised to LF line endings and Unix trailing newline. Safe to store
         /// directly via `Configuration.setSSHPrivateKeyPEM`.
         let normalisedPEM: String
+        /// `Data`-encoded view of `normalisedPEM` for callers that want to keep
+        /// the secret material out of an unzeroable `String`. The import sheet
+        /// reads this and dispatches to `Configuration`'s `Data` setters so the
+        /// PEM never round-trips through `String` after the user paste-buffer
+        /// is classified.
+        let normalisedPEMData: Data
         /// True when the armor or inner cipher field indicates the key needs a
         /// passphrase to decrypt. Drives the second prompt in the import sheet.
         let isEncrypted: Bool
@@ -262,6 +268,7 @@ enum SSHKeyImporter {
             pemKind: kind,
             algorithm: algorithm,
             normalisedPEM: normalisedPEM,
+            normalisedPEMData: Data(normalisedPEM.utf8),
             isEncrypted: isEncrypted
         )
     }

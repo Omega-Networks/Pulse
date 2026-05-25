@@ -438,12 +438,27 @@ final class Configuration: @unchecked Sendable {
     }
 
     /// Stores a PEM-encoded private key against the credential. Returns true on success.
+    ///
+    /// Prefer the `Data`-typed overload for secret-material writes from the
+    /// import sheet: Swift `String` is copy-on-write and has no zero-on-dealloc
+    /// primitive, so anything that reaches this entry point through `String`
+    /// leaks a plaintext residue into the Swift runtime heap until the next GC.
+    /// Non-secret callers (tests, fixture setup) may use this directly.
     @discardableResult
     func setSSHPrivateKeyPEM(_ pem: String, for credentialID: UUID) -> Bool {
-        guard !pem.isEmpty else { return false }
+        setSSHPrivateKeyPEM(Data(pem.utf8), for: credentialID)
+    }
+
+    /// `Data`-typed overload for the secret-material write. The import sheet
+    /// carries the PEM as `Data` end-to-end (see `normalisedPEMData` on
+    /// `SSHKeyImporter.ImportedSSHKey`) and dispatches to this method so the
+    /// plaintext is never round-tripped through an unzeroable `String`.
+    @discardableResult
+    func setSSHPrivateKeyPEM(_ pemData: Data, for credentialID: UUID) -> Bool {
+        guard !pemData.isEmpty else { return false }
         let status = saveToKeychain(
             key: Keys.sshPrivateKeyKey(for: credentialID),
-            data: Data(pem.utf8)
+            data: pemData
         )
         if status != errSecSuccess {
             logger.error("Failed to save SSH private key PEM for \(credentialID): \(status)")
@@ -461,12 +476,23 @@ final class Configuration: @unchecked Sendable {
     }
 
     /// Stores the passphrase for a portable-tier private key. Returns true on success.
+    ///
+    /// Convenience overload that routes to the `Data` form. See the
+    /// counterpart on `setSSHPrivateKeyPEM` for the zeroing rationale.
     @discardableResult
     func setSSHPassphrase(_ passphrase: String, for credentialID: UUID) -> Bool {
-        guard !passphrase.isEmpty else { return false }
+        setSSHPassphrase(Data(passphrase.utf8), for: credentialID)
+    }
+
+    /// `Data`-typed overload. The import sheet carries the passphrase as
+    /// `Data` end-to-end and writes through this method so the plaintext is
+    /// never round-tripped through an unzeroable `String`.
+    @discardableResult
+    func setSSHPassphrase(_ passphraseData: Data, for credentialID: UUID) -> Bool {
+        guard !passphraseData.isEmpty else { return false }
         let status = saveToKeychain(
             key: Keys.sshPassphraseKey(for: credentialID),
-            data: Data(passphrase.utf8)
+            data: passphraseData
         )
         if status != errSecSuccess {
             logger.error("Failed to save SSH passphrase for \(credentialID): \(status)")
