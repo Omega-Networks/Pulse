@@ -49,7 +49,6 @@ final class Device {
     
     // --- NEW PROPERTY ---
     //Property for storing camera stream URL (only applies to cameras)
-    @Attribute(.allowsCloudEncryption)
     var cameraStreamURL: String?
     
     //Property to determine rack position
