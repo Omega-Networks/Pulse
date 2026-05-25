@@ -176,6 +176,70 @@ final class SSHHostKeyDelegateTests: XCTestCase {
         XCTAssertTrue(reason.contains("plain public key"))
     }
 
+    // MARK: - trustedCA happy path
+
+    /// Cert fixture matching the validity window 2026-01-01..2027-01-01 UTC
+    /// (same as SSHCertificateManagerTests). The CA fingerprint matches the
+    /// signing key whose textual form is the bare ed25519 line used as the
+    /// host key elsewhere in this file.
+    private static let trustedCACertLine =
+        "ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIO2NpWp2GzVdTRyvDC2W+E5COaW7uwEG3SMWA8wlwqLLAAAAICS+cdNe6n0ehPqpDUEjTO5Tvk3rK0r8ynWfI35yyoKFAAAAAAAAACoAAAABAAAACmFsaWNlLTIwMjYAAAAQAAAABWFsaWNlAAAAA2JvYgAAAABpVRBAAAAAAGs2Q8AAAAAAAAAAggAAABVwZXJtaXQtWDExLWZvcndhcmRpbmcAAAAAAAAAF3Blcm1pdC1hZ2VudC1mb3J3YXJkaW5nAAAAAAAAABZwZXJtaXQtcG9ydC1mb3J3YXJkaW5nAAAAAAAAAApwZXJtaXQtcHR5AAAAAAAAAA5wZXJtaXQtdXNlci1yYwAAAAAAAAAAAAAAMwAAAAtzc2gtZWQyNTUxOQAAACDyxkC30wMgcY2DN9c0HAabuat9MJWMI+P115Ot0AtHxgAAAFMAAAALc3NoLWVkMjU1MTkAAABA8TtmctNwenUM8cxigRWSosgbHfa7ggZZ7fgIhj1Idu4NdrkmWnmLTbAivvea5biv+Px5g/W2Y4h8fLx94J8RCQ== test user"
+
+    /// Trusted-CA happy path: presented cert is signed by the stored CA
+    /// fingerprint, current time is inside the validity window, and the
+    /// requested host matches one of the cert's validPrincipals. The
+    /// evaluator returns `.acceptCA`. Closes the gap flagged in Slice 3
+    /// commit 6 review (cert validates, fingerprint matches, principals
+    /// cover host).
+    func testEvaluateTrustedCAAcceptsValidCertWithMatchingPrincipal() throws {
+        let certKey = try NIOSSHPublicKey(openSSHPublicKey: Self.trustedCACertLine)
+        let stored = HostTrust.trustedCA(
+            caFingerprintSHA256: Self.ed25519HostKeyFingerprint,
+            principalPattern: "alice"
+        )
+        // 2026-05-25 UTC falls within the 2026-01-01..2027-01-01 window.
+        let inside = Date(timeIntervalSince1970: 1782_000_000)
+
+        let decision = SSHHostKeyDelegate.evaluate(
+            recordedTrust: stored,
+            hostKey: certKey,
+            presentedFingerprint: "SHA256:irrelevant-for-CA-path",
+            presentedAlgorithm: "ssh-ed25519-cert-v01@openssh.com",
+            host: "alice",
+            at: inside
+        )
+
+        guard case .acceptCA(let ca, let pattern) = decision else {
+            return XCTFail("expected acceptCA, got \(decision)")
+        }
+        XCTAssertEqual(ca, Self.ed25519HostKeyFingerprint)
+        XCTAssertEqual(pattern, "alice")
+    }
+
+    /// Same cert, after expiry: rejected with a clear reason.
+    func testEvaluateTrustedCARejectsExpiredCert() throws {
+        let certKey = try NIOSSHPublicKey(openSSHPublicKey: Self.trustedCACertLine)
+        let stored = HostTrust.trustedCA(
+            caFingerprintSHA256: Self.ed25519HostKeyFingerprint,
+            principalPattern: "alice"
+        )
+        let after = Date(timeIntervalSince1970: 1893_456_000) // ~2030
+
+        let decision = SSHHostKeyDelegate.evaluate(
+            recordedTrust: stored,
+            hostKey: certKey,
+            presentedFingerprint: "SHA256:irrelevant",
+            presentedAlgorithm: "ssh-ed25519-cert-v01@openssh.com",
+            host: "alice",
+            at: after
+        )
+
+        guard case .rejectCA(let reason) = decision else {
+            return XCTFail("expected rejectCA, got \(decision)")
+        }
+        XCTAssertTrue(reason.contains("validity"))
+    }
+
     // MARK: - Delegate integration via EmbeddedEventLoop
 
     /// TOFU happy path: no row stored, delegate succeeds the promise and

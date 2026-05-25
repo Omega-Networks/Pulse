@@ -67,8 +67,12 @@ enum SSHCertificateManager {
         }
     }
 
-    /// Parses the textual OpenSSH cert form stored in `SSHCredential.certificate`.
-    static func metadata(for serialised: Data) throws -> CertificateMetadata {
+    /// Parses the textual OpenSSH cert form stored in `SSHCredential.certificate`
+    /// and returns the underlying `NIOSSHCertifiedPublicKey`. The auth delegate
+    /// (Slice 3 commit 7b₃) uses this to present the cert to NIOSSH; the
+    /// `metadata(for:)` accessor below wraps `parse(_:)` for callers that
+    /// only need the human-readable summary.
+    static func parse(_ serialised: Data) throws -> NIOSSHCertifiedPublicKey {
         guard let text = String(data: serialised, encoding: .utf8) else {
             throw CertificateError.malformedCertificate(reason: "blob is not valid UTF-8")
         }
@@ -81,6 +85,14 @@ enum SSHCertificateManager {
         guard let cert = NIOSSHCertifiedPublicKey(publicKey) else {
             throw CertificateError.notACertifiedKey
         }
+        return cert
+    }
+
+    /// Parses the textual OpenSSH cert form stored in `SSHCredential.certificate`
+    /// and projects to the algorithm-agnostic `CertificateMetadata` summary
+    /// the credential editor renders.
+    static func metadata(for serialised: Data) throws -> CertificateMetadata {
+        let cert = try parse(serialised)
         return CertificateMetadata(
             keyID: cert.keyID,
             principals: cert.validPrincipals,
