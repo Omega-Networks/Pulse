@@ -122,6 +122,8 @@ protocol PulseTransport {
 - v1 default: `DirectTransport` using `NIOTSConnectionBootstrap`.
 - Future tunnel: `TunnelTransport` returning a `Channel` whose I/O is forwarded through the in-app tunnel.
 - SSH and Web both consume `PulseTransport`. The Web side does so via `WebPage.Configuration.urlSchemeHandlers["pulse-tunnel"]` registered to a handler that resolves requests through `PulseTransport`.
+- Every `PulseTransport` implementation sets a finite connect timeout. The v1 default in `DirectTransport` is 10 seconds. Future implementations may surface a config knob but must never default to an unbounded wait; hanging operator UI is a failure mode the seam exists to prevent. `NIOTSConnectionBootstrap`'s default behaviour is an infinite wait, so the timeout is set explicitly via `.connectTimeout(...)`.
+- Transports must support dual-stack addresses (IPv4 and IPv6). `NIOTSConnectionBootstrap` satisfies this via Happy Eyeballs through Network.framework. Loopback verification covers both stacks (`127.0.0.1` and `::1`) so an IPv6 regression trips a test rather than surfacing in the field.
 - The protocol stays small. If it grows beyond `connect`, the abstraction has failed and should be reviewed.
 
 ### 9. UI surface — two windows, one Settings pane
