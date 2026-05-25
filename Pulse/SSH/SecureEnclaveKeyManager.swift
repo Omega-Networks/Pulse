@@ -184,17 +184,13 @@ enum SecureEnclaveKeyManager {
             kSecUseDataProtectionKeychain as String: true,
             kSecReturnRef as String: true
         ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let ref = result else {
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let item else {
             throw KeyManagerError.keyNotFound(credentialID)
         }
-        // Force cast here is the documented Keychain contract: when the query has
-        // `kSecClass = kSecClassKey` and `kSecReturnRef = true` and Keychain returns
-        // `errSecSuccess`, the result is always a `SecKey`. The compiler rejects an
-        // `as?` guarded form because `SecKey` is a CoreFoundation toll-free-bridged
-        // type and the cast can't fail at runtime.
-        return ref as! SecKey
+        // kSecClass = kSecClassKey + kSecReturnRef = true guarantees a SecKey on success.
+        return item as! SecKey
     }
 
     /// Removes the SE-backed key for a credential. Idempotent: `errSecItemNotFound`
