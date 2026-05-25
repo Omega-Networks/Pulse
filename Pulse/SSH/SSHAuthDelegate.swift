@@ -269,6 +269,17 @@ final class SSHAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked 
                 throw SSHAuthDelegateError.secureEnclaveCredentialNotFound(credentialID)
             }
         case .portable:
+            // PEM materialises as a transient `String` for CryptoKit's
+            // `pemRepresentation` initialisers
+            // (`P{256,384,521}.Signing.PrivateKey(pemRepresentation:)`).
+            // The String is unzeroable but the window is bounded by the
+            // duration of the SSH handshake — milliseconds — not by view
+            // lifetime. We cannot avoid the conversion: CryptoKit's PEM
+            // init API takes `String`. The improvement over holding it
+            // longer is real but not absolute; same framing as
+            // `SSHCredentialsSettings.ImportLegacyCredentialSheet`'s
+            // `@State Data` zeroing block (commit baf9ce9). Do not "fix"
+            // by wrapping CryptoKit — the API boundary is the constraint.
             guard let pemData = await pemProvider(),
                   let pem = String(data: pemData, encoding: .utf8) else {
                 throw SSHAuthDelegateError.portablePEMUnavailable(credentialID)
