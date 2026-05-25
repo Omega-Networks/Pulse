@@ -107,12 +107,12 @@ enum SSHCertificateManager {
     /// SHA-256 over the OpenSSH wire-format public key, rendered as
     /// `SHA256:<base64-no-padding>`. Matches `ssh-keygen -l -E sha256` output and the
     /// fingerprint format `HostTrust.trustedCA` and `HostTrust.pinned` rows store.
-    private static func opensshSHA256Fingerprint(of key: NIOSSHPublicKey) -> String {
-        // `String.init(openSSHPublicKey:)` emits "algo BASE64" with no comment today,
-        // but routing through the textual-line helper means the host-key delegate
-        // (Slice 3 commit 6) and any future caller that fingerprints a textual form
-        // with a comment (`algo BASE64 user@host`) both go through the same defensive
-        // split. A bug here would mean cert-attested connections never match.
+    ///
+    /// Routed through the textual-line helper so the cert path (this file) and the
+    /// host-key delegate (Slice 3 commit 6) share a single fingerprint algorithm.
+    /// Visibility is `static` rather than `private` so the delegate can call it
+    /// without re-implementing the same split-and-hash logic.
+    static func opensshSHA256Fingerprint(of key: NIOSSHPublicKey) -> String {
         fingerprint(forOpenSSHTextLine: String(openSSHPublicKey: key))
     }
 

@@ -76,6 +76,7 @@
 		A11CAFE000000000000000B3 /* SecureEnclaveKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */; };
 		A11CAFE000000000000000B4 /* SSHKeyImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F4 /* SSHKeyImporter.swift */; };
 		A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F5 /* SSHCertificateManager.swift */; };
+		A11CAFE000000000000000BA /* SSHHostKeyDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */; };
 		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
 		A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F8 /* PulseTransport.swift */; };
@@ -84,7 +85,9 @@
 		A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */; };
 		A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A003 /* DirectTransportTests.swift */; };
 		A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */; };
+		A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */; };
 		C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = C923355E2FC3EAF9003BAF42 /* NIOSSH */; };
+		A11CAFE000000000000000C0 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000C1 /* NIOSSH */; };
 		C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = C93291702FC30A3900624995 /* NIOTransportServices */; };
 		C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */; };
 		C96191622ACA552F000198DB /* PulseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191612ACA552F000198DB /* PulseApp.swift */; };
@@ -233,6 +236,7 @@
 		A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnclaveKeyManager.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F4 /* SSHKeyImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporter.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F5 /* SSHCertificateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCertificateManager.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyDelegate.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F8 /* PulseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTransport.swift; sourceTree = "<group>"; };
@@ -241,6 +245,7 @@
 		A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSSHWireFormatTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A003 /* DirectTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTransportTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCertificateManagerTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyDelegateTests.swift; sourceTree = "<group>"; };
 		C926516F2E71AFA2004564DD /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
 		C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceOverviewView.swift; sourceTree = "<group>"; };
 		C961915E2ACA552F000198DB /* Pulse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pulse.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -319,6 +324,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11CAFE000000000000000C0 /* NIOSSH in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -485,6 +491,7 @@
 				A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */,
 				A11CAFE000000000000000F4 /* SSHKeyImporter.swift */,
 				A11CAFE000000000000000F5 /* SSHCertificateManager.swift */,
+				A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */,
 			);
 			path = SSH;
 			sourceTree = "<group>";
@@ -503,6 +510,7 @@
 				A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */,
 				A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */,
 				A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */,
+				A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */,
 			);
 			path = SSH;
 			sourceTree = "<group>";
@@ -774,6 +782,10 @@
 			dependencies = (
 			);
 			name = Pulse;
+			packageProductDependencies = (
+				C923355E2FC3EAF9003BAF42 /* NIOSSH */,
+				C93291702FC30A3900624995 /* NIOTransportServices */,
+			);
 			productName = Pulse;
 			productReference = C961915E2ACA552F000198DB /* Pulse.app */;
 			productType = "com.apple.product-type.application";
@@ -792,6 +804,9 @@
 				C96191732ACA5530000198DB /* PBXTargetDependency */,
 			);
 			name = PulseTests;
+			packageProductDependencies = (
+				A11CAFE000000000000000C1 /* NIOSSH */,
+			);
 			productName = PulseTests;
 			productReference = C96191712ACA5530000198DB /* PulseTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -899,6 +914,7 @@
 				A11CAFE000000000000000B3 /* SecureEnclaveKeyManager.swift in Sources */,
 				A11CAFE000000000000000B4 /* SSHKeyImporter.swift in Sources */,
 				A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */,
+				A11CAFE000000000000000BA /* SSHHostKeyDelegate.swift in Sources */,
 				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
 				A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */,
 				A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */,
@@ -1029,6 +1045,7 @@
 				A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */,
 				A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */,
 				A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */,
+				A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1460,6 +1477,11 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		C923355E2FC3EAF9003BAF42 /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
+			productName = NIOSSH;
+		};
+		A11CAFE000000000000000C1 /* NIOSSH */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
 			productName = NIOSSH;

@@ -1,0 +1,367 @@
+//
+//  SSHHostKeyDelegate.swift
+//  Pulse
+//
+//  Copyright © 2025–present Omega Networks Limited.
+//
+//  Pulse
+//  The Platform for Unified Leadership in Smart Environments.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience, all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
+
+import Foundation
+import NIOCore
+import NIOSSH
+import OSLog
+import SwiftData
+
+// MARK: - Host trust store
+
+/// Persistence-layer seam for `HostTrust` rows so the delegate can be tested
+/// without spinning up a SwiftData container. Production conformances wrap a
+/// `ModelContainer`; tests inject an in-memory mock.
+///
+/// All methods are `async throws` so the delegate can stay on the event loop
+/// for fingerprint computation and hop to whatever isolation the store needs
+/// for the SwiftData fetch.
+protocol KnownHostStore: Sendable {
+
+    /// Returns the stored trust policy for `(host, port)`, or `nil` if no row
+    /// exists. Production conformances must perform an O(log n) fetch (a
+    /// `FetchDescriptor` with a `#Predicate` on `(host, port)` and
+    /// `fetchLimit = 1`); the load-all-and-filter form would not scale to a
+    /// million-device fleet.
+    func trust(forHost host: String, port: Int) async throws -> HostTrust?
+
+    /// Writes a fresh `HostTrust.pinned` row on TOFU. Idempotent: implementations
+    /// should treat a pre-existing matching row as a no-op rather than fail.
+    func recordPinned(
+        host: String,
+        port: Int,
+        fingerprintSHA256: String,
+        algorithm: String
+    ) async throws
+
+    /// Updates `lastVerifiedAt` on the matching row after a successful
+    /// fingerprint match. Missing rows are not an error.
+    func touchLastVerified(forHost host: String, port: Int) async throws
+}
+
+// MARK: - SwiftData-backed store
+
+/// Production `KnownHostStore` over a SwiftData `ModelContainer`. The `@ModelActor`
+/// macro generates the `init(modelContainer:)` and the `modelContext` accessor.
+@ModelActor
+actor SwiftDataKnownHostStore: KnownHostStore {
+
+    func trust(forHost host: String, port: Int) async throws -> HostTrust? {
+        var descriptor = FetchDescriptor<KnownHost>(
+            predicate: #Predicate { $0.host == host && $0.port == port }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first?.trust
+    }
+
+    func recordPinned(
+        host: String,
+        port: Int,
+        fingerprintSHA256: String,
+        algorithm: String
+    ) async throws {
+        var descriptor = FetchDescriptor<KnownHost>(
+            predicate: #Predicate { $0.host == host && $0.port == port }
+        )
+        descriptor.fetchLimit = 1
+        if try modelContext.fetch(descriptor).first != nil {
+            // Caller raced with a previous TOFU. Treat as success; the existing
+            // row's policy stands.
+            return
+        }
+        let row = KnownHost(
+            host: host,
+            port: port,
+            trust: .pinned(fingerprintSHA256: fingerprintSHA256, algorithm: algorithm)
+        )
+        modelContext.insert(row)
+        try modelContext.save()
+    }
+
+    func touchLastVerified(forHost host: String, port: Int) async throws {
+        var descriptor = FetchDescriptor<KnownHost>(
+            predicate: #Predicate { $0.host == host && $0.port == port }
+        )
+        descriptor.fetchLimit = 1
+        guard let row = try modelContext.fetch(descriptor).first else { return }
+        row.lastVerifiedAt = .now
+        try modelContext.save()
+    }
+}
+
+// MARK: - Errors
+
+enum SSHHostKeyError: Error, CustomStringConvertible, Equatable {
+    case fingerprintMismatch(recorded: String, presented: String)
+    case caValidationFailed(reason: String)
+    case explicitlyDistrusted(reason: String)
+    case storeError(String)
+
+    var description: String {
+        switch self {
+        case .fingerprintMismatch(let recorded, let presented):
+            return "Host key mismatch: stored \(recorded), server presented \(presented)."
+        case .caValidationFailed(let reason):
+            return "CA validation failed: \(reason)."
+        case .explicitlyDistrusted(let reason):
+            return "Host is explicitly distrusted: \(reason)."
+        case .storeError(let reason):
+            return "Host trust store error: \(reason)."
+        }
+    }
+}
+
+// MARK: - Decision (pure, for tests)
+
+/// Outcome of evaluating a presented server host key against a stored policy.
+enum HostKeyDecision: Equatable {
+    /// No stored row: TOFU-pin the presented key and accept.
+    case pinAndAccept
+    /// Stored `.pinned` matches the presented key: accept and touch.
+    case acceptKnownPinned
+    /// Stored `.pinned` differs from the presented key: reject unconditionally
+    /// (no UI acceptance sheet until Slice 5).
+    case rejectMismatch(recorded: String)
+    /// Stored `.trustedCA` matches the presented cert chain: accept.
+    case acceptCA(caFingerprint: String, principalPattern: String)
+    /// Stored `.trustedCA` rejects the presented key for the reason given.
+    case rejectCA(reason: String)
+    /// Stored `.explicitlyDistrusted`: reject with recorded reason.
+    case rejectDistrusted(reason: String)
+}
+
+// MARK: - Delegate
+
+/// `NIOSSHClientServerAuthenticationDelegate` that consults a `KnownHostStore`
+/// to decide whether to accept the server's presented host key.
+///
+/// Behaviour matches ADR 0001 §5. TOFU pins the first key observed; subsequent
+/// mismatches are rejected unconditionally for the duration of Slice 3 (no
+/// UI sheet until Slice 5). Trusted-CA rows are honoured when the presented
+/// host key is a `NIOSSHCertifiedPublicKey` whose signing key fingerprint
+/// matches the stored CA fingerprint and whose validPrincipals (or empty,
+/// per spec) cover the host being connected to.
+final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+
+    private let host: String
+    private let port: Int
+    private let store: any KnownHostStore
+    private let now: @Sendable () -> Date
+    private let logger = Logger(subsystem: "pulse", category: "ssh.session")
+
+    init(
+        host: String,
+        port: Int,
+        store: any KnownHostStore,
+        now: @escaping @Sendable () -> Date = { .now }
+    ) {
+        self.host = host
+        self.port = port
+        self.store = store
+        self.now = now
+    }
+
+    func validateHostKey(
+        hostKey: NIOSSHPublicKey,
+        validationCompletePromise: EventLoopPromise<Void>
+    ) {
+        let presentedFingerprint = SSHCertificateManager.opensshSHA256Fingerprint(of: hostKey)
+        let presentedAlgorithm = Self.algorithmName(of: hostKey)
+        let host = self.host
+        let port = self.port
+        let store = self.store
+        let logger = self.logger
+        let now = self.now
+
+        Task {
+            let decision: HostKeyDecision
+            do {
+                let recorded = try await store.trust(forHost: host, port: port)
+                decision = Self.evaluate(
+                    recordedTrust: recorded,
+                    hostKey: hostKey,
+                    presentedFingerprint: presentedFingerprint,
+                    presentedAlgorithm: presentedAlgorithm,
+                    host: host,
+                    at: now()
+                )
+            } catch {
+                logger.error(
+                    "host trust store failed for \(host, privacy: .public):\(port): \(String(describing: error))"
+                )
+                validationCompletePromise.fail(SSHHostKeyError.storeError(String(describing: error)))
+                return
+            }
+
+            switch decision {
+            case .pinAndAccept:
+                do {
+                    try await store.recordPinned(
+                        host: host,
+                        port: port,
+                        fingerprintSHA256: presentedFingerprint,
+                        algorithm: presentedAlgorithm
+                    )
+                } catch {
+                    logger.error(
+                        "host.pinned write failed for \(host, privacy: .public):\(port): \(String(describing: error))"
+                    )
+                    validationCompletePromise.fail(SSHHostKeyError.storeError(String(describing: error)))
+                    return
+                }
+                logger.info(
+                    "host.pinned host=\(host, privacy: .public) port=\(port) fp=\(presentedFingerprint, privacy: .public) alg=\(presentedAlgorithm, privacy: .public)"
+                )
+                validationCompletePromise.succeed(())
+
+            case .acceptKnownPinned:
+                try? await store.touchLastVerified(forHost: host, port: port)
+                validationCompletePromise.succeed(())
+
+            case .rejectMismatch(let recorded):
+                logger.warning(
+                    "host.mismatch host=\(host, privacy: .public) port=\(port) recorded=\(recorded, privacy: .public) presented=\(presentedFingerprint, privacy: .public)"
+                )
+                validationCompletePromise.fail(
+                    SSHHostKeyError.fingerprintMismatch(recorded: recorded, presented: presentedFingerprint)
+                )
+
+            case .acceptCA(let caFingerprint, let principalPattern):
+                logger.info(
+                    "host.ca-accepted host=\(host, privacy: .public) port=\(port) ca=\(caFingerprint, privacy: .public) pattern=\(principalPattern, privacy: .public)"
+                )
+                validationCompletePromise.succeed(())
+
+            case .rejectCA(let reason):
+                logger.warning(
+                    "host.ca-rejected host=\(host, privacy: .public) port=\(port) reason=\(reason, privacy: .public)"
+                )
+                validationCompletePromise.fail(SSHHostKeyError.caValidationFailed(reason: reason))
+
+            case .rejectDistrusted(let reason):
+                logger.warning(
+                    "host.mismatch host=\(host, privacy: .public) port=\(port) reason=\(reason, privacy: .public)"
+                )
+                validationCompletePromise.fail(SSHHostKeyError.explicitlyDistrusted(reason: reason))
+            }
+        }
+    }
+
+    // MARK: - Pure decision logic
+
+    /// Pure function that decides whether to accept a presented host key given
+    /// the stored trust policy. Factored out of `validateHostKey` so the
+    /// decision table can be unit-tested with mock inputs without needing a
+    /// SwiftData container or an `EventLoopPromise`.
+    static func evaluate(
+        recordedTrust: HostTrust?,
+        hostKey: NIOSSHPublicKey,
+        presentedFingerprint: String,
+        presentedAlgorithm: String,
+        host: String,
+        at now: Date
+    ) -> HostKeyDecision {
+        guard let recorded = recordedTrust else {
+            return .pinAndAccept
+        }
+
+        switch recorded {
+        case .pinned(let storedFingerprint, _):
+            return storedFingerprint == presentedFingerprint
+                ? .acceptKnownPinned
+                : .rejectMismatch(recorded: storedFingerprint)
+
+        case .trustedCA(let caFingerprint, let principalPattern):
+            return evaluateCA(
+                hostKey: hostKey,
+                expectedCAFingerprint: caFingerprint,
+                principalPattern: principalPattern,
+                host: host,
+                at: now
+            )
+
+        case .explicitlyDistrusted(let reason, _):
+            return .rejectDistrusted(reason: reason)
+        }
+    }
+
+    private static func evaluateCA(
+        hostKey: NIOSSHPublicKey,
+        expectedCAFingerprint: String,
+        principalPattern: String,
+        host: String,
+        at now: Date
+    ) -> HostKeyDecision {
+        guard let cert = NIOSSHCertifiedPublicKey(hostKey) else {
+            return .rejectCA(reason: "server presented a plain public key, not a CA-attested cert")
+        }
+        let actualCAFingerprint = SSHCertificateManager.opensshSHA256Fingerprint(of: cert.signatureKey)
+        guard actualCAFingerprint == expectedCAFingerprint else {
+            return .rejectCA(
+                reason: "cert is signed by \(actualCAFingerprint); trusted CA is \(expectedCAFingerprint)"
+            )
+        }
+        let nowSeconds = UInt64(max(0, now.timeIntervalSince1970))
+        guard cert.validAfter <= nowSeconds && nowSeconds <= cert.validBefore else {
+            return .rejectCA(reason: "cert is outside its validity window")
+        }
+        if !cert.validPrincipals.isEmpty
+            && !matches(host: host, anyOf: cert.validPrincipals, pattern: principalPattern) {
+            return .rejectCA(
+                reason: "cert principals \(cert.validPrincipals) don't cover host \(host) under pattern \(principalPattern)"
+            )
+        }
+        return .acceptCA(caFingerprint: expectedCAFingerprint, principalPattern: principalPattern)
+    }
+
+    /// Minimal pattern check for v1. The principalPattern is an OpenSSH-style
+    /// glob (e.g., `*.internal.example`) or a literal hostname. Either the
+    /// pattern itself or one of the cert's `validPrincipals` must match the
+    /// host. v1 supports literal-equality and trailing-`*` wildcard; richer
+    /// patterns can land alongside the CA-import UI in Slice 7.
+    private static func matches(host: String, anyOf principals: [String], pattern: String) -> Bool {
+        if principals.contains(host) { return true }
+        if Self.glob(pattern, matches: host) { return true }
+        return principals.contains(where: { Self.glob($0, matches: host) })
+    }
+
+    private static func glob(_ pattern: String, matches host: String) -> Bool {
+        if pattern == host { return true }
+        if pattern.hasSuffix("*") {
+            let prefix = pattern.dropLast()
+            return host.hasPrefix(prefix)
+        }
+        return false
+    }
+
+    /// Extracts the algorithm identifier from the OpenSSH text form. Used as
+    /// the `algorithm` field stored on TOFU pins so an operator inspecting a
+    /// `KnownHost` row can tell at a glance whether the server is presenting
+    /// ed25519, ecdsa-sha2-nistp256, ssh-rsa, etc.
+    private static func algorithmName(of key: NIOSSHPublicKey) -> String {
+        let text = String(openSSHPublicKey: key)
+        return text.split(separator: " ", maxSplits: 1).first.map(String.init) ?? "unknown"
+    }
+}
