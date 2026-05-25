@@ -16,13 +16,14 @@
 //  prosperity through collaborative stewardship of public infrastructure.
 //
 //  This program is free software: communities can deploy it for sovereignty, academia can
-//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  extend it for research, and industry can integrate it for resilience, all under the terms
 //  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
 //
 //  You should have received a copy of the GNU Affero General Public License
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
+import CryptoKit
 import Foundation
 import OSLog
 import Security
@@ -34,15 +35,27 @@ import Security
 /// (≥6.5, 2014) accept `ecdsa-sha2-nistp256` so the constraint is purely a
 /// compatibility note, not a security one. See ADR 0001 §1.
 ///
-/// Every signature triggers a biometric / device-passcode prompt because the keys are
-/// created with `.privateKeyUsage` combined with `.biometryAny`. No caching of
-/// the authorisation across signatures. The prompt is driven by `SecKeyCreateSignature`
-/// itself; callers must not invoke `LAContext.evaluatePolicy` directly.
+/// **Storage shape (Slice 3+):** keys are managed through CryptoKit's
+/// `SecureEnclave.P256.Signing.PrivateKey` and persisted as the opaque
+/// `dataRepresentation` blob inside a `kSecClassGenericPassword` Keychain item
+/// keyed by `(service, account)` = `("nz.omega.pulse.ssh", credentialUUID)`.
+/// The dataRepresentation is encrypted to this device's Secure Enclave and is
+/// useless on any other device or to any other application; reading the blob
+/// does not trigger biometric and is not a private-key extraction.
 ///
-/// This file stays at the Security-framework level. The bridge that lets swift-nio-ssh
-/// drive these keys lives in a separate signer type, which consumes `privateKey(for:)`
-/// for signature operations and `openSSHPublicKeyWireFormat(for:)` for the SSH-layer
-/// authentication challenge.
+/// **Why CryptoKit, not Security.framework SecKey:** swift-nio-ssh ships a
+/// first-class SE backing (`NIOSSHPrivateKey(secureEnclaveP256Key:)`) that
+/// accepts CryptoKit's `SecureEnclave.P256.Signing.PrivateKey` directly. The
+/// alternative — forking NIOSSH to expose its internal `BackingKey` enum —
+/// carries a merge-debt tax we refuse to take on for a security-critical
+/// dependency. See the Slice 3 7a refactor commit for the full rationale.
+///
+/// Every signature triggers a biometric / device-passcode prompt because the keys are
+/// created with `[.privateKeyUsage, .biometryAny, .or, .devicePasscode]` baked into
+/// the `SecAccessControl` that CryptoKit consumes at generation time. No caching
+/// of the authorisation across signatures. The prompt is driven by CryptoKit's
+/// `.signature(for:)` (which goes through `LAContext` internally); callers must
+/// not invoke `LAContext.evaluatePolicy` directly.
 enum SecureEnclaveKeyManager {
 
     // MARK: - Errors
@@ -50,12 +63,14 @@ enum SecureEnclaveKeyManager {
     enum KeyManagerError: Error, CustomStringConvertible {
         case secureEnclaveUnavailable
         case accessControlCreationFailed(CFError?)
-        case keyGenerationFailed(CFError?)
+        case keyGenerationFailed(Error)
         case keyNotFound(UUID)
         case publicKeyDerivationFailed
-        case publicKeyExportFailed(CFError?)
         case unexpectedPublicKeyFormat
-        case signatureFailed(CFError?)
+        case signatureFailed(Error)
+        case keychainStoreFailed(OSStatus)
+        case keychainReadFailed(OSStatus)
+        case dataRepresentationInvalid(Error)
         case deletionFailed(OSStatus)
 
         var description: String {
@@ -70,12 +85,16 @@ enum SecureEnclaveKeyManager {
                 return "No Secure Enclave key found for credential \(id)."
             case .publicKeyDerivationFailed:
                 return "Could not derive a public key from the Secure Enclave private key."
-            case .publicKeyExportFailed(let err):
-                return "Failed to export Secure Enclave public key: \(String(describing: err))"
             case .unexpectedPublicKeyFormat:
                 return "Secure Enclave public key was not in the expected uncompressed-point format."
             case .signatureFailed(let err):
                 return "Secure Enclave signature failed: \(String(describing: err))"
+            case .keychainStoreFailed(let status):
+                return "Failed to store Secure Enclave key blob in Keychain (OSStatus \(status))."
+            case .keychainReadFailed(let status):
+                return "Failed to read Secure Enclave key blob from Keychain (OSStatus \(status))."
+            case .dataRepresentationInvalid(let err):
+                return "Stored Secure Enclave blob isn't a valid dataRepresentation: \(String(describing: err))"
             case .deletionFailed(let status):
                 return "Secure Enclave key deletion failed (OSStatus \(status))."
             }
@@ -84,9 +103,10 @@ enum SecureEnclaveKeyManager {
 
     // MARK: - Identity
 
-    /// Prefix applied to every `kSecAttrApplicationTag` so the Pulse keys are filterable
-    /// from any other ECDSA P-256 keys living on this device.
-    private static let tagPrefix = "nz.omega.pulse.ssh."
+    /// Keychain service name shared by every Pulse SE credential. The
+    /// `(service, account)` pair is the Keychain's idiomatic identification
+    /// for generic-password items; `account` carries the credential UUID.
+    private static let keychainService = "nz.omega.pulse.ssh"
 
     /// OpenSSH algorithm identifier for SE-backed keys. Centralised so the wire-format
     /// encoder and the `authorized_keys` rendering can't drift.
@@ -96,12 +116,6 @@ enum SecureEnclaveKeyManager {
     /// servers compare against the algorithm-name prefix, not the SEC1 OID.
     private static let opensshCurveName = "nistp256"
 
-    /// Stable application tag for a given credential id. The tag is what we look the
-    /// key up by; `id` does not appear elsewhere in the Keychain query.
-    private static func applicationTag(for credentialID: UUID) -> Data {
-        Data("\(tagPrefix)\(credentialID.uuidString)".utf8)
-    }
-
     private static let logger = Logger(subsystem: "pulse", category: "ssh.secureenclave")
 
     // MARK: - Lifecycle
@@ -109,9 +123,13 @@ enum SecureEnclaveKeyManager {
     /// Generates a new SE-backed ECDSA P-256 keypair tagged with `credentialID` and
     /// returns the OpenSSH wire-format public key for storage on `SSHCredential`.
     ///
-    /// The private half never leaves the Enclave; `SecKeyCopyExternalRepresentation`
-    /// on the private reference is documented to return `nil`, which the verification
-    /// table checks explicitly.
+    /// The private half never leaves the Enclave. CryptoKit's
+    /// `SecureEnclave.P256.Signing.PrivateKey` type has no API to extract the
+    /// raw private scalar; the `dataRepresentation` blob is an SE-encrypted
+    /// reference that only this device's SE can unwrap for use. This is a
+    /// stronger, compile-time guarantee than the runtime
+    /// `SecKeyCopyExternalRepresentation`-returns-nil contract the Slice 1
+    /// implementation relied on.
     @discardableResult
     static func generateKey(
         for credentialID: UUID,
@@ -124,6 +142,10 @@ enum SecureEnclaveKeyManager {
         // user presence." The background-polling justification that motivates the
         // looser class on API tokens doesn't apply to interactive SSH signing, so the
         // stricter class stays.
+        //
+        // `.biometryAny` rather than `.biometryCurrentSet` so adding or removing a
+        // fingerprint / changing the passcode does not invalidate existing credentials.
+        // See ADR 0001 §1 for the threat-model justification.
         guard let access = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
@@ -133,64 +155,79 @@ enum SecureEnclaveKeyManager {
             throw KeyManagerError.accessControlCreationFailed(accessError?.takeRetainedValue())
         }
 
+        let key: SecureEnclave.P256.Signing.PrivateKey
+        do {
+            key = try SecureEnclave.P256.Signing.PrivateKey(accessControl: access)
+        } catch {
+            logger.error("SE key generation failed: \(String(describing: error))")
+            throw KeyManagerError.keyGenerationFailed(error)
+        }
+
         // `kSecAttrSynchronizable: false` is the default for the data-protection
         // keychain on macOS, but setting it explicitly turns a default-behaviour
         // assumption into a structural guarantee: a reviewer can grep
         // `kSecAttrSynchronizable` and confirm SSH keys never opt into iCloud sync.
-        let privateAttrs: [String: Any] = [
-            kSecAttrIsPermanent as String: true,
-            kSecAttrApplicationTag as String: applicationTag(for: credentialID),
-            kSecAttrLabel as String: label,
-            kSecAttrAccessControl as String: access,
-            kSecAttrSynchronizable as String: false
-        ]
-
-        // `kSecUseDataProtectionKeychain` pins this call to the modern data-protection
-        // keychain. On macOS the default is still the legacy file-based keychain, which
-        // is what `SecKeyCreateRandomKey` would otherwise try to deposit into when
-        // `kSecAttrIsPermanent` is true. SE-token-backed keys live in the data-protection
-        // keychain regardless, so any mismatch between create and subsequent lookups
-        // surfaces as `errSecItemNotFound` even though the key is resident.
+        //
+        // `kSecAttrAccessible` gates the Keychain *read* of the dataRepresentation
+        // blob — no biometric, just unlock state. The biometric / passcode gate on
+        // signing is baked into the `SecAccessControl` already inside the blob via
+        // CryptoKit's `init(accessControl:)`. Two-layered.
+        //
+        // `kSecUseDataProtectionKeychain` pins this call to the modern data-
+        // protection keychain (rather than macOS's legacy file-based keychain),
+        // matching where SE-attested material lives regardless.
         let attributes: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-            kSecAttrKeySizeInBits as String: 256,
-            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-            kSecUseDataProtectionKeychain as String: true,
-            kSecPrivateKeyAttrs as String: privateAttrs
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: credentialID.uuidString,
+            kSecAttrLabel as String: label,
+            kSecValueData as String: key.dataRepresentation,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecAttrSynchronizable as String: false,
+            kSecUseDataProtectionKeychain as String: true
         ]
-
-        var genError: Unmanaged<CFError>?
-        guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &genError) else {
-            let err = genError?.takeRetainedValue()
-            // Most common failure modes: not running on real hardware (simulator without SE),
-            // device without an Enclave, or an existing tag collision.
-            logger.error("SE key generation failed: \(String(describing: err))")
-            throw KeyManagerError.keyGenerationFailed(err)
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            logger.error("SE key Keychain store failed: \(status)")
+            throw KeyManagerError.keychainStoreFailed(status)
         }
 
-        return try openSSHPublicKeyWireFormat(from: privateKey)
+        return try openSSHPublicKeyWireFormat(from: key)
     }
 
-    /// Looks up the SE-backed `SecKey` reference for a credential.
+    /// Loads the SE-backed CryptoKit private key for a credential. The returned
+    /// value can be handed directly to `NIOSSHPrivateKey(secureEnclaveP256Key:)`
+    /// or signed against via `.signature(for:)`.
     ///
-    /// The returned reference can be passed to `SecKeyCreateSignature` to produce
-    /// signatures (which will prompt for biometric / passcode). It cannot be used to
-    /// extract the private key bytes; those never leave the Enclave.
-    static func privateKey(for credentialID: UUID) throws -> SecKey {
+    /// This call reads the SE-encrypted `dataRepresentation` blob from the
+    /// Keychain (no biometric) and unwraps it into a usable handle. Signing
+    /// against the returned key prompts for biometric / passcode per ADR §1.
+    static func cryptoKitPrivateKey(
+        for credentialID: UUID
+    ) throws -> SecureEnclave.P256.Signing.PrivateKey {
         let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-            kSecAttrApplicationTag as String: applicationTag(for: credentialID),
-            kSecUseDataProtectionKeychain as String: true,
-            kSecReturnRef as String: true
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: credentialID.uuidString,
+            kSecReturnData as String: true,
+            kSecUseDataProtectionKeychain as String: true
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let item else {
-            throw KeyManagerError.keyNotFound(credentialID)
+        guard status == errSecSuccess else {
+            if status == errSecItemNotFound {
+                throw KeyManagerError.keyNotFound(credentialID)
+            }
+            throw KeyManagerError.keychainReadFailed(status)
         }
-        // kSecClass = kSecClassKey + kSecReturnRef = true guarantees a SecKey on success.
-        return item as! SecKey
+        guard let blob = item as? Data else {
+            throw KeyManagerError.keychainReadFailed(errSecParam)
+        }
+        do {
+            return try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob)
+        } catch {
+            throw KeyManagerError.dataRepresentationInvalid(error)
+        }
     }
 
     /// Removes the SE-backed key for a credential. Idempotent: `errSecItemNotFound`
@@ -202,8 +239,9 @@ enum SecureEnclaveKeyManager {
     /// worse end state than a credential the user can delete again.
     static func deleteKey(for credentialID: UUID) throws {
         let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: applicationTag(for: credentialID),
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: credentialID.uuidString,
             kSecUseDataProtectionKeychain as String: true
         ]
         let status = SecItemDelete(query as CFDictionary)
@@ -220,11 +258,11 @@ enum SecureEnclaveKeyManager {
     /// edits or sysadmin-side deletions.
     static func resident() -> [UUID] {
         let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
             kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecUseDataProtectionKeychain as String: true,
-            kSecReturnAttributes as String: true
+            kSecReturnAttributes as String: true,
+            kSecUseDataProtectionKeychain as String: true
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -232,35 +270,38 @@ enum SecureEnclaveKeyManager {
             return []
         }
         return items.compactMap { item in
-            guard let tag = item[kSecAttrApplicationTag as String] as? Data,
-                  let tagString = String(data: tag, encoding: .utf8),
-                  tagString.hasPrefix(tagPrefix) else {
+            guard let account = item[kSecAttrAccount as String] as? String else {
                 return nil
             }
-            return UUID(uuidString: String(tagString.dropFirst(tagPrefix.count)))
+            return UUID(uuidString: account)
         }
     }
 
     // MARK: - Signing
 
-    /// Signs `message` with the SE-backed credential. Uses
-    /// `ecdsaSignatureMessageX962SHA256`: the Enclave hashes the message itself and
-    /// returns a DER-encoded ASN.1 ECDSA signature.
+    /// Signs `message` with the SE-backed credential and returns the
+    /// DER-encoded ECDSA signature (X9.62 / RFC 3279 form). This is what
+    /// the existing OpenSSH wire-format consumer expects and is byte-identical
+    /// to what the Slice 1 `SecKeyCreateSignature` path produced.
     ///
-    /// Every invocation prompts for biometric or device passcode. This is the
-    /// human-attested signing operation that ADR 0001 §1 requires for every session.
+    /// Every invocation prompts for biometric or device passcode via
+    /// CryptoKit's `.signature(for:)`. The prompt is the
+    /// human-attested signing operation that ADR 0001 §1 requires.
+    ///
+    /// The auth delegate (Slice 3 commit 7b) does not call this directly:
+    /// it hands the `SecureEnclave.P256.Signing.PrivateKey` straight to
+    /// `NIOSSHPrivateKey(secureEnclaveP256Key:)` which routes signing
+    /// through NIOSSH's built-in path. `sign(_:for:)` remains public as
+    /// the test seam for "the biometric prompt fires for this credential"
+    /// verification scenarios.
     static func sign(_ message: Data, for credentialID: UUID) throws -> Data {
-        let privateKey = try privateKey(for: credentialID)
-        var signError: Unmanaged<CFError>?
-        guard let signature = SecKeyCreateSignature(
-            privateKey,
-            .ecdsaSignatureMessageX962SHA256,
-            message as CFData,
-            &signError
-        ) else {
-            throw KeyManagerError.signatureFailed(signError?.takeRetainedValue())
+        let key = try cryptoKitPrivateKey(for: credentialID)
+        do {
+            let signature = try key.signature(for: message)
+            return signature.derRepresentation
+        } catch {
+            throw KeyManagerError.signatureFailed(error)
         }
-        return signature as Data
     }
 
     // MARK: - Public-key export
@@ -269,8 +310,8 @@ enum SecureEnclaveKeyManager {
     /// (i.e. the raw bytes that get base64-encoded to form the second field of an
     /// `authorized_keys` line for `ecdsa-sha2-nistp256`).
     static func openSSHPublicKeyWireFormat(for credentialID: UUID) throws -> Data {
-        let privateKey = try privateKey(for: credentialID)
-        return try openSSHPublicKeyWireFormat(from: privateKey)
+        let key = try cryptoKitPrivateKey(for: credentialID)
+        return try openSSHPublicKeyWireFormat(from: key)
     }
 
     /// Renders an `authorized_keys`-style line for the given credential.
@@ -288,26 +329,17 @@ enum SecureEnclaveKeyManager {
 
     // MARK: - Internals
 
-    /// Derives the OpenSSH wire encoding for an SE-resident ECDSA P-256 keypair.
+    /// Derives the OpenSSH wire encoding from a CryptoKit SE private key.
     ///
-    /// `SecKeyCopyExternalRepresentation` on the public half returns 65 bytes:
-    /// `0x04 || X(32 bytes) || Y(32 bytes)` (the SEC1 uncompressed point). OpenSSH
-    /// frames the same value with two length-prefixed strings ahead of it:
-    ///
-    ///     string  "ecdsa-sha2-nistp256"
-    ///     string  "nistp256"
-    ///     string  Q       (the 65-byte uncompressed point)
-    ///
-    /// where each `string` is a big-endian uint32 length followed by the payload.
-    private static func openSSHPublicKeyWireFormat(from privateKey: SecKey) throws -> Data {
-        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
-            throw KeyManagerError.publicKeyDerivationFailed
-        }
-        var exportError: Unmanaged<CFError>?
-        guard let cfData = SecKeyCopyExternalRepresentation(publicKey, &exportError) else {
-            throw KeyManagerError.publicKeyExportFailed(exportError?.takeRetainedValue())
-        }
-        return try openSSHWireFormat(secp256r1Point: cfData as Data)
+    /// `SecureEnclave.P256.Signing.PrivateKey.publicKey.x963Representation`
+    /// returns the 65-byte SEC1 uncompressed point: `0x04 || X(32) || Y(32)`.
+    /// Byte-identical to what `SecKeyCopyExternalRepresentation` produced
+    /// under the Slice 1 SecKey path, so the wire-format encoder below
+    /// works unchanged.
+    private static func openSSHPublicKeyWireFormat(
+        from privateKey: SecureEnclave.P256.Signing.PrivateKey
+    ) throws -> Data {
+        try openSSHWireFormat(secp256r1Point: privateKey.publicKey.x963Representation)
     }
 
     /// Encodes a SEC1 uncompressed P-256 public point as `ecdsa-sha2-nistp256`
@@ -318,7 +350,7 @@ enum SecureEnclaveKeyManager {
     ///     string  Q                       (65-byte SEC1 point: 0x04 || X || Y)
     ///
     /// Each `string` is a big-endian `uint32` length followed by the payload, giving
-    /// a fixed total of `4 + 19 + 4 + 8 + 4 + 65 = 108` bytes.
+    /// a fixed total of `4 + 19 + 4 + 8 + 4 + 65 = 104` bytes.
     ///
     /// Internal so the wire-format unit tests can exercise it with a CryptoKit-
     /// generated point and assert byte-for-byte against the RFC; production callers
@@ -349,35 +381,39 @@ extension SecureEnclaveKeyManager {
     /// pinned to the data-protection keychain, aren't synchronisable, and use the
     /// expected access-control policy.
     ///
-    /// For Secure Enclave-token credentials the policy is sourced from the
-    /// `SecAccessControl` flags we set at creation, not from `kSecAttrAccessible`.
-    /// The OS sets that attribute for SE entries independently of the real policy,
-    /// and there is no public API to introspect a stored `SecAccessControl`. The
-    /// values we report are the constants the generator uses; if those constants
-    /// ever change, the report changes with them.
+    /// **Slice 3 storage shape.** Pulse SE credentials are now stored as
+    /// `kSecClassGenericPassword` items whose `kSecValueData` is the
+    /// `dataRepresentation` blob from CryptoKit's
+    /// `SecureEnclave.P256.Signing.PrivateKey`. `kSecAttrTokenID` is not set on
+    /// this storage class (that attribute is for `kSecClassKey` token-backed
+    /// items, which we no longer use); the field is preserved on `KeyInspection`
+    /// so the debug surface stays comparable across the migration, with a
+    /// descriptive placeholder that calls out the new storage model.
+    ///
+    /// For the access policy: there is no public API to introspect a stored
+    /// `SecAccessControl`, so the reported string is the constants the generator
+    /// uses. If those constants change, the report changes with them.
     ///
     /// Compiled out of Release builds.
     struct KeyInspection {
         let accessGroup: String
         let tokenID: String
         let synchronizable: Bool
-        /// Human-readable description of the access policy gating use of this key.
-        /// For SE credentials: sourced from the SecAccessControl flags configured
-        /// in `generateKey`. For portable credentials: decoded from the meaningful
-        /// `kSecAttrAccessible` attribute.
+        /// Human-readable description of the access policy gating signing.
         let accessControl: String
     }
 
     /// Reads the Keychain attribute record for `credentialID` without touching the
     /// private material. Attribute lookup does not require user presence, so this
     /// does not trigger a biometric prompt. Throws `keyNotFound` if no key is
-    /// resident under the credential's application tag.
+    /// resident under the credential's service/account pair.
     static func inspect(_ credentialID: UUID) throws -> KeyInspection {
         let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: applicationTag(for: credentialID),
-            kSecUseDataProtectionKeychain as String: true,
-            kSecReturnAttributes as String: true
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: credentialID.uuidString,
+            kSecReturnAttributes as String: true,
+            kSecUseDataProtectionKeychain as String: true
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -385,22 +421,18 @@ extension SecureEnclaveKeyManager {
             throw KeyManagerError.keyNotFound(credentialID)
         }
 
-        let tokenID = (attrs[kSecAttrTokenID as String] as? String) ?? "(none)"
-        let isSecureEnclave = tokenID == "com.apple.setoken"
+        // kSecAttrTokenID isn't set on generic-password items. Report the new
+        // storage model so the inspection alert isn't ambiguous.
+        let tokenID = "(CryptoKit SE.P256 — generic-password storage)"
 
-        // SE-token entries: the kSecAttrAccessible value reported by the OS is
-        // vestigial. Source the policy from the SecAccessControl flags we set in
-        // generateKey. Portable entries: kSecAttrAccessible is meaningful.
-        let accessControl: String
-        if isSecureEnclave {
-            accessControl =
-                "biometryAny OR devicePasscode, " +
-                "privateKeyUsage, " +
-                "WhenUnlockedThisDeviceOnly"
-        } else {
-            let raw = (attrs[kSecAttrAccessible as String] as? String) ?? "(none)"
-            accessControl = decodePortableAccessibility(raw)
-        }
+        // The access policy is baked into the dataRepresentation blob by
+        // CryptoKit's SecureEnclave.P256.Signing.PrivateKey(accessControl:).
+        // There's no public API to read it back, so we report the constants
+        // the generator uses.
+        let accessControl =
+            "biometryAny OR devicePasscode, " +
+            "privateKeyUsage, " +
+            "WhenUnlockedThisDeviceOnly"
 
         return KeyInspection(
             accessGroup: attrs[kSecAttrAccessGroup as String] as? String ?? "(none)",
@@ -409,27 +441,6 @@ extension SecureEnclaveKeyManager {
             accessControl: accessControl
         )
     }
-
-    /// Decodes the short-form `kSecAttrAccessible` tag into the matching Apple
-    /// constant name. Used only for portable-tier credentials where the attribute
-    /// reflects the real policy. SE-token credentials route around this entirely
-    /// (see `inspect(_:)`).
-    ///
-    /// The deprecated `kSecAttrAccessibleAlways` variants (`dk`, `dku`) are
-    /// deliberately absent from the decoder. Pulse never sets those on portable
-    /// items, so seeing them here would be a regression to surface — not a value
-    /// to politely decode.
-    private static func decodePortableAccessibility(_ raw: String) -> String {
-        switch raw {
-        case "ak":   return "kSecAttrAccessibleWhenUnlocked"
-        case "ck":   return "kSecAttrAccessibleAfterFirstUnlock"
-        case "aku":  return "kSecAttrAccessibleWhenUnlockedThisDeviceOnly"
-        case "cku":  return "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"
-        case "akpu": return "kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly"
-        default:     return "\(raw) (unrecognised)"
-        }
-    }
 }
 
 #endif
-

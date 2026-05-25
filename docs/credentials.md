@@ -127,10 +127,13 @@ For fork maintainers specifically: **use a stable bundle ID from the start**. If
 By far the most common cause is a bundle ID or signing team change between the install that created the credential and the install trying to use it. Verify in Debug builds via Inspect; if the access group doesn't match the current build's identity, the credential is from a previous incarnation. Delete and recreate.
 
 **No biometric prompt fires when signing.**
-Check that Token ID is `com.apple.setoken`. If it isn't, the key isn't actually in the Secure Enclave — something fell back to software at creation time and there's nothing to enforce biometric on. Delete and regenerate.
+Inspect the credential. Under the Slice 3+ storage model (CryptoKit's `SecureEnclave.P256.Signing.PrivateKey`) the Inspect alert reports `CryptoKit SE.P256 — generic-password storage` in the Token ID field; that's the expected value. If the credential predates the Slice 3 7a refactor it will not be findable at all (see the orphan note below) — delete the SwiftData row and regenerate. If the credential is current and signing still doesn't prompt, the most likely cause is the device having a configured biometric that's now in a "needs re-enrolment" state at the OS level; resolve at System Settings → Touch ID & Password before retrying.
 
-**Public key shows "no public key" on a Legacy credential.**
-Expected behaviour until the SSH signer module is wired up. The portable PEM tier doesn't derive the OpenSSH wire-format public key at import time; that happens when the signer parses the PEM for actual use. The Legacy credential is still functional internally; it just can't be enrolled on a server via the Copy public key button yet.
+**Orphan `kSecClassKey` entries from before Slice 3 7a.**
+The Slice 1 implementation stored SE keys as `kSecClassKey` items with `kSecAttrTokenIDSecureEnclave`. Slice 3 7a migrated to `kSecClassGenericPassword` items carrying CryptoKit's `dataRepresentation`. Any pre-Slice-3 dev-test credentials become unreachable to the current build and stop appearing in Pulse's credential list; the underlying `kSecClassKey` entries remain in the data-protection keychain as harmless orphans taking trivial space. They cannot be used (the SecAccessControl is bound to the previous build's process) and Pulse no longer enumerates them. Clear with Keychain Access (search for `nz.omega.pulse.ssh.`) if tidy housekeeping matters; otherwise ignore.
+
+**Public key shows "PEM stored, public key derived on first use" on a Legacy credential.**
+Expected when the imported PEM is in an encrypted traditional form (`Proc-Type: 4,ENCRYPTED`) or a traditional EC PEM. Slice 3 derives the OpenSSH wire-format public key at import time for OpenSSH new-format (any algorithm, encrypted or not), unencrypted PKCS#1 RSA, and unencrypted PKCS#8 RSA — those credentials show the Copy public key button immediately. For the deferred cases, the auth delegate backfills the public key from the decrypted private material at first use.
 
 **"Couldn't update credentials" alert during delete.**
 The secret-material cleanup failed. The credential row stays in place so you can retry. Common causes: device locked partway through (deletion needs the unlocked-class state), or some other process is holding a reference to the Keychain entry. Wait a moment and try again.
