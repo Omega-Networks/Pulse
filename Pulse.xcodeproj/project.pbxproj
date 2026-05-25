@@ -78,6 +78,9 @@
 		A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F5 /* SSHCertificateManager.swift */; };
 		A11CAFE000000000000000BA /* SSHHostKeyDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */; };
 		A11CAFE000000000000000BB /* SSHAuthDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FB /* SSHAuthDelegate.swift */; };
+		A11CAFE000000000000000BC /* ExitCause.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FC /* ExitCause.swift */; };
+		A11CAFE000000000000000BD /* SSHSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FD /* SSHSession.swift */; };
+		A11CAFE000000000000000BE /* SSHClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FE /* SSHClient.swift */; };
 		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
 		A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F8 /* PulseTransport.swift */; };
@@ -89,6 +92,7 @@
 		A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */; };
 		A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A006 /* SecureEnclaveKeyManagerTests.swift */; };
 		A11CAFE0000000000000B007 /* SSHAuthDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A007 /* SSHAuthDelegateTests.swift */; };
+		A11CAFE0000000000000B008 /* SSHClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A008 /* SSHClientTests.swift */; };
 		C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = C923355E2FC3EAF9003BAF42 /* NIOSSH */; };
 		A11CAFE000000000000000C0 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000C1 /* NIOSSH */; };
 		C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = C93291702FC30A3900624995 /* NIOTransportServices */; };
@@ -241,6 +245,9 @@
 		A11CAFE000000000000000F5 /* SSHCertificateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCertificateManager.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyDelegate.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000FB /* SSHAuthDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthDelegate.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FC /* ExitCause.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitCause.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FD /* SSHSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSession.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FE /* SSHClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHClient.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F8 /* PulseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTransport.swift; sourceTree = "<group>"; };
@@ -252,6 +259,7 @@
 		A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyDelegateTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A006 /* SecureEnclaveKeyManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnclaveKeyManagerTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A007 /* SSHAuthDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthDelegateTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A008 /* SSHClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHClientTests.swift; sourceTree = "<group>"; };
 		C926516F2E71AFA2004564DD /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
 		C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceOverviewView.swift; sourceTree = "<group>"; };
 		C961915E2ACA552F000198DB /* Pulse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pulse.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -499,6 +507,9 @@
 				A11CAFE000000000000000F5 /* SSHCertificateManager.swift */,
 				A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */,
 				A11CAFE000000000000000FB /* SSHAuthDelegate.swift */,
+				A11CAFE000000000000000FC /* ExitCause.swift */,
+				A11CAFE000000000000000FD /* SSHSession.swift */,
+				A11CAFE000000000000000FE /* SSHClient.swift */,
 			);
 			path = SSH;
 			sourceTree = "<group>";
@@ -520,6 +531,7 @@
 				A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */,
 				A11CAFE0000000000000A006 /* SecureEnclaveKeyManagerTests.swift */,
 				A11CAFE0000000000000A007 /* SSHAuthDelegateTests.swift */,
+				A11CAFE0000000000000A008 /* SSHClientTests.swift */,
 			);
 			path = SSH;
 			sourceTree = "<group>";
@@ -925,6 +937,9 @@
 				A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */,
 				A11CAFE000000000000000BA /* SSHHostKeyDelegate.swift in Sources */,
 				A11CAFE000000000000000BB /* SSHAuthDelegate.swift in Sources */,
+				A11CAFE000000000000000BC /* ExitCause.swift in Sources */,
+				A11CAFE000000000000000BD /* SSHSession.swift in Sources */,
+				A11CAFE000000000000000BE /* SSHClient.swift in Sources */,
 				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
 				A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */,
 				A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */,
@@ -1058,6 +1073,7 @@
 				A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */,
 				A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */,
 				A11CAFE0000000000000B007 /* SSHAuthDelegateTests.swift in Sources */,
+				A11CAFE0000000000000B008 /* SSHClientTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
