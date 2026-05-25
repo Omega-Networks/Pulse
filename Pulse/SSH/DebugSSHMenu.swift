@@ -84,6 +84,8 @@ struct DebugSSHWindow: View {
     @State private var output: String = ""
     @State private var status: String = "Ready"
     @State private var isConnecting: Bool = false
+    @State private var replayStatus: String = ""
+    @State private var isReplaying: Bool = false
 
     private static let defaultLoopbackV4 = "127.0.0.1"
     private static let defaultLoopbackV6 = "::1"
@@ -98,6 +100,7 @@ struct DebugSSHWindow: View {
             connectionFields
             actionRow
             outputArea
+            replaySection
         }
         .padding(20)
         .frame(minWidth: 640, minHeight: 460)
@@ -193,6 +196,32 @@ struct DebugSSHWindow: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.secondary.opacity(0.08))
         )
+    }
+
+    /// Replay surface. Loads the most-recent session log, fires
+    /// biometric to unwrap the per-session AES key, validates the
+    /// chain, and renders the recovered plaintext back into the
+    /// output panel above. Confirms the recording→encryption→replay
+    /// loop is intact for ADR §6 verification step 7.
+    ///
+    /// Tamper detection: if the chain validator reports a break, the
+    /// replay surface renders only the verified prefix and flags the
+    /// break in the status line. No plaintext from the tampered
+    /// record (or anything after it) reaches the operator —
+    /// `SessionLogReplay.load` enforces the cutoff.
+    private var replaySection: some View {
+        HStack(spacing: 8) {
+            Button("Replay last recorded session") {
+                Task { await replayLatest() }
+            }
+            .disabled(isReplaying)
+            Spacer()
+            if !replayStatus.isEmpty {
+                Text(replayStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     // MARK: Helpers
@@ -303,6 +332,79 @@ struct DebugSSHWindow: View {
         output = collected.snapshotString()
         status = "Closed (\(cause))"
         logger.debug("debug ssh closed cause=\(String(describing: cause), privacy: .public)")
+    }
+
+    /// Find the most-recent recorded session, fire biometric to
+    /// unwrap its session key, validate the chain, and render the
+    /// recovered plaintext into the output panel. Used to verify
+    /// ADR §6 verification step 7 end to end: recorded session is
+    /// non-zero, opens to AES-GCM ciphertext, decrypts only via
+    /// biometric, hash chain validates, tampering fails cleanly.
+    @MainActor
+    private func replayLatest() async {
+        isReplaying = true
+        replayStatus = "Locating most-recent recording…"
+        defer { isReplaying = false }
+
+        let entries: [SessionLogRetentionEntry]
+        do {
+            entries = try FileSystemSessionLogRetentionStore().enumerateSessions()
+        } catch {
+            replayStatus = "Could not enumerate recordings: \(error)"
+            return
+        }
+        guard let latest = entries.max(by: { $0.openedAt < $1.openedAt }) else {
+            replayStatus = "No recordings on disk yet. Connect with a credential whose recordSessions flag is on, then try again."
+            return
+        }
+
+        // Pull session UUID out of the filename so the audit events
+        // get the right identifier. The writer's basename format is
+        // `<timestamp>_<sessionUUID>.pulselog`.
+        let basename = latest.pulselogURL.deletingPathExtension().lastPathComponent
+        let sessionID = basename.split(separator: "_").last.flatMap { UUID(uuidString: String($0)) } ?? UUID()
+
+        replayStatus = "Unwrapping session key (biometric)…"
+
+        let loaded: SessionLogReplay.LoadedSession
+        do {
+            loaded = try await SessionLogReplay.load(
+                pulselogURL: latest.pulselogURL,
+                sessionID: sessionID
+            )
+        } catch {
+            replayStatus = "Replay failed: \(error)"
+            logger.error("debug replay failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+
+        // Render recovered plaintext. Direction markers (`>` operator
+        // → server, `<` server → operator) so the operator can
+        // distinguish what they typed from what came back even when
+        // both directions are dense.
+        var rendered = ""
+        for record in loaded.plaintextRecords {
+            guard let payload = Data(base64Encoded: record.bytes),
+                  let text = String(data: payload, encoding: .utf8) else {
+                continue
+            }
+            let marker: String
+            switch record.dir {
+            case .out: marker = "> "
+            case .in:  marker = "< "
+            }
+            rendered.append(marker)
+            rendered.append(text)
+            if !text.hasSuffix("\n") { rendered.append("\n") }
+        }
+        output = rendered.isEmpty ? "(empty recording)" : rendered
+
+        switch loaded.validation {
+        case .valid(let count, let head):
+            replayStatus = "Replayed \(count) record(s); chain head \(head.prefix(12))…"
+        case .brokenAt(let seq, let reason):
+            replayStatus = "Chain broken at seq \(seq) (\(reason)). Plaintext for records before the break was rendered; everything from the break onward is withheld."
+        }
     }
 }
 
