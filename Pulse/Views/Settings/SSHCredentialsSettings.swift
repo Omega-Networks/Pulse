@@ -183,16 +183,16 @@ struct SSHCredentialsSettings: View {
     }
 
     /// Copy-to-clipboard button for the credential's OpenSSH-format public key
-    /// (the `authorized_keys` line). Rendered only when a public key is actually
-    /// available to copy: Secure Enclave credentials always have one; portable
-    /// credentials don't have a public key derived until the signer parses the
-    /// imported PEM. The disabled-button state would be ambiguous (the operator
-    /// can't tell whether to wait or do something), so the button is hidden
-    /// entirely when there's nothing to copy. The row's caption alongside the
-    /// fingerprint explains the state.
+    /// (the `authorized_keys` line). Rendered whenever a public key is
+    /// available, regardless of tier. Secure Enclave credentials always have
+    /// one; portable credentials get one derived at import time when the PEM
+    /// format permits, and otherwise wait for the auth delegate's first-use
+    /// backfill. The disabled-button state would be ambiguous, so the button
+    /// is hidden until there's something to copy. The row's caption alongside
+    /// the fingerprint explains the state in the meantime.
     @ViewBuilder
     private func copyPublicKeyButton(for cred: SSHCredential) -> some View {
-        if cred.tier == .secureEnclave {
+        if !cred.publicKey.isEmpty {
             let isCopied = recentlyCopied == cred.id
             Button {
                 copyPublicKey(for: cred)
@@ -258,38 +258,80 @@ struct SSHCredentialsSettings: View {
 
     // MARK: - Copy public key
 
-    /// Copies the OpenSSH `authorized_keys` line for a Secure Enclave credential
-    /// to the system clipboard, then flips the row's button icon to a checkmark
-    /// for 1.5 s so the operator sees the action took effect.
+    /// Copies the OpenSSH `authorized_keys` line for the credential to the
+    /// system clipboard, then flips the row's button icon to a checkmark for
+    /// 1.5 s so the operator sees the action took effect.
     ///
-    /// Public-key derivation does not require the SE's private material to be
-    /// authenticated, so this does not trigger a biometric prompt.
+    /// For Secure Enclave credentials the line is rendered by
+    /// `SecureEnclaveKeyManager.authorizedKeysLine` (which reads only public
+    /// material and does not prompt for biometric). For portable credentials
+    /// the line is rendered directly from `cred.publicKey` — the OpenSSH
+    /// wire-format bytes derived at import time. Falls through quietly when
+    /// `publicKey` is empty so the button-gate caller is the single source of
+    /// truth on visibility.
     private func copyPublicKey(for cred: SSHCredential) {
-        guard cred.tier == .secureEnclave else { return }
+        let line: String
         do {
-            let line = try SecureEnclaveKeyManager.authorizedKeysLine(
-                for: cred.id,
-                comment: cred.label
-            )
-            #if canImport(AppKit)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(line, forType: .string)
-            #elseif canImport(UIKit)
-            UIPasteboard.general.string = line
-            #endif
-            recentlyCopied = cred.id
-            let id = cred.id
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(1500))
-                if recentlyCopied == id {
-                    recentlyCopied = nil
+            switch cred.tier {
+            case .secureEnclave:
+                line = try SecureEnclaveKeyManager.authorizedKeysLine(
+                    for: cred.id,
+                    comment: cred.label
+                )
+            case .portable:
+                guard let portableLine = authorizedKeysLine(
+                    fromOpenSSHWire: cred.publicKey,
+                    comment: cred.label
+                ) else {
+                    return
                 }
+                line = portableLine
             }
-            logger.info("Copied public key for credential \(cred.id)")
         } catch {
             errorMessage = "Couldn't copy public key for \(cred.label): \(error)"
             logger.error("Public key copy failed for \(cred.id): \(error)")
+            return
         }
+
+        #if canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(line, forType: .string)
+        #elseif canImport(UIKit)
+        UIPasteboard.general.string = line
+        #endif
+        recentlyCopied = cred.id
+        let id = cred.id
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1500))
+            if recentlyCopied == id {
+                recentlyCopied = nil
+            }
+        }
+        logger.info("Copied public key for credential \(cred.id)")
+    }
+
+    /// Renders an `authorized_keys` line from an OpenSSH wire-format public
+    /// key. The first length-prefixed SSH string in the wire bytes is the
+    /// algorithm identifier; the full wire bytes are the base64 payload.
+    /// Returns nil if the buffer is shorter than the four-byte length prefix
+    /// or the algorithm string runs past the buffer.
+    private func authorizedKeysLine(fromOpenSSHWire wire: Data, comment: String) -> String? {
+        let bytes = [UInt8](wire)
+        guard bytes.count >= 4 else { return nil }
+        let length =
+            (Int(bytes[0]) << 24)
+            | (Int(bytes[1]) << 16)
+            | (Int(bytes[2]) << 8)
+            | Int(bytes[3])
+        guard 4 + length <= bytes.count else { return nil }
+        let algoBytes = Data(bytes[4..<(4 + length)])
+        guard let algo = String(data: algoBytes, encoding: .ascii) else { return nil }
+        let base64 = wire.base64EncodedString()
+        let trimmedComment = comment.trimmingCharacters(in: .whitespaces)
+        if trimmedComment.isEmpty {
+            return "\(algo) \(base64)"
+        }
+        return "\(algo) \(base64) \(trimmedComment)"
     }
 
     // MARK: - Delete
@@ -670,15 +712,28 @@ private struct ImportLegacyCredentialSheet: View {
                 _ = await config.setSSHPassphrase(passphrase, for: credentialID)
             }
 
-            // Portable-tier credentials store an empty Data placeholder in `publicKey`
-            // until the signer parses the PEM to derive the OpenSSH wire-format
-            // public key. Empty bytes are intentional so the fingerprint display
-            // falls back to "no public key" rather than showing misleading content.
+            // Derive the OpenSSH wire-format public key from the imported PEM
+            // when the format supports it (OpenSSH new-format covers Ed25519,
+            // ECDSA, and RSA regardless of cipher; PKCS#1 / PKCS#8 cover
+            // unencrypted RSA). For encrypted PKCS#1/PKCS#8 and traditional
+            // EC PEMs, derivation defers to the auth delegate's first-use
+            // backfill: the credential stores `Data()` and the fingerprint
+            // display shows the "derived on first use" caption until then.
+            let derivedPublicKey: Data
+            do {
+                derivedPublicKey = try SSHKeyImporter.derivePublicKey(from: importedKey)
+            } catch {
+                Logger(subsystem: "pulse", category: "ssh.credentials").info(
+                    "Deferred public-key derivation for credential \(credentialID): \(String(describing: error))"
+                )
+                derivedPublicKey = Data()
+            }
+
             let credential = SSHCredential(
                 id: credentialID,
                 label: trimmedLabel,
                 tier: .portable,
-                publicKey: Data()
+                publicKey: derivedPublicKey
             )
             await MainActor.run {
                 onCreate(credential)

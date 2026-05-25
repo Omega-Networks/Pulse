@@ -175,6 +175,93 @@ final class SSHKeyImporterTests: XCTestCase {
         XCTAssertTrue(result.normalisedPEM.contains("\n"))
         XCTAssertFalse(result.normalisedPEM.contains("\r\n"))
     }
+
+    // MARK: - Public-key derivation
+
+    /// OpenSSH new-format Ed25519: the public-key blob is already SSH
+    /// wire-format inside the payload. Derivation extracts it byte-for-byte.
+    /// Expected: 4-byte length prefix + "ssh-ed25519" (11) + 4-byte length +
+    /// 32-byte point = 51 bytes.
+    func testDerivePublicKeyFromOpenSSHEd25519() throws {
+        let imported = try SSHKeyImporter.validate(fixtureOpenSSHEd25519Unenc)
+        let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
+        let prefix: [UInt8] = [
+            0x00, 0x00, 0x00, 0x0B,
+            0x73, 0x73, 0x68, 0x2D,
+            0x65, 0x64, 0x32, 0x35, 0x35, 0x31, 0x39
+        ]
+        XCTAssertEqual(publicKey.prefix(prefix.count), Data(prefix))
+        XCTAssertEqual(publicKey.count, 51)
+    }
+
+    /// Encrypted OpenSSH new-format: the public blob is unencrypted even when
+    /// the private half is password-protected, so derivation still works.
+    func testDerivePublicKeyFromEncryptedOpenSSHEd25519() throws {
+        let imported = try SSHKeyImporter.validate(fixtureOpenSSHEd25519Enc)
+        let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
+        XCTAssertEqual(publicKey.count, 51)
+    }
+
+    func testDerivePublicKeyFromOpenSSHRSA3072() throws {
+        let imported = try SSHKeyImporter.validate(fixtureRSAOpenSSH3072)
+        let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
+        let prefix: [UInt8] = [
+            0x00, 0x00, 0x00, 0x07,
+            0x73, 0x73, 0x68, 0x2D, 0x72, 0x73, 0x61
+        ]
+        XCTAssertEqual(publicKey.prefix(prefix.count), Data(prefix))
+        // 3072-bit modulus mpint is ~385 bytes; ssh-rsa header ~11 bytes;
+        // typical e is 3-5 bytes. Total lands in a generous range.
+        XCTAssertGreaterThan(publicKey.count, 380)
+        XCTAssertLessThan(publicKey.count, 420)
+    }
+
+    func testDerivePublicKeyFromPKCS1RSA3072() throws {
+        let imported = try SSHKeyImporter.validate(fixtureRSA3072PKCS1)
+        let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
+        let prefix: [UInt8] = [
+            0x00, 0x00, 0x00, 0x07,
+            0x73, 0x73, 0x68, 0x2D, 0x72, 0x73, 0x61
+        ]
+        XCTAssertEqual(publicKey.prefix(prefix.count), Data(prefix))
+    }
+
+    func testDerivePublicKeyFromPKCS8RSA() throws {
+        let imported = try SSHKeyImporter.validate(fixturePKCS8RSA)
+        let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
+        let prefix: [UInt8] = [
+            0x00, 0x00, 0x00, 0x07,
+            0x73, 0x73, 0x68, 0x2D, 0x72, 0x73, 0x61
+        ]
+        XCTAssertEqual(publicKey.prefix(prefix.count), Data(prefix))
+    }
+
+    /// Encrypted traditional PEM RSA: n and e are inside the AES-encrypted
+    /// private payload, so derivation defers.
+    func testDerivePublicKeyEncryptedPKCS1Defers() {
+        guard let imported = try? SSHKeyImporter.validate(fixtureTraditionalRSAEncrypted) else {
+            return XCTFail("fixture failed to validate")
+        }
+        XCTAssertThrowsError(try SSHKeyImporter.derivePublicKey(from: imported)) { error in
+            guard case SSHKeyImporter.ImporterError.publicKeyDerivationDeferred = error else {
+                return XCTFail("expected publicKeyDerivationDeferred, got \(error)")
+            }
+        }
+    }
+
+    /// Traditional EC PEMs need SEC1 decoding; not implemented in v1.
+    /// Derivation raises notSupported so the credential creates with an empty
+    /// public-key placeholder and the auth delegate backfills.
+    func testDerivePublicKeyTraditionalECNotSupported() {
+        guard let imported = try? SSHKeyImporter.validate(fixtureTraditionalECDSAP256) else {
+            return XCTFail("fixture failed to validate")
+        }
+        XCTAssertThrowsError(try SSHKeyImporter.derivePublicKey(from: imported)) { error in
+            guard case SSHKeyImporter.ImporterError.publicKeyDerivationNotSupported = error else {
+                return XCTFail("expected publicKeyDerivationNotSupported, got \(error)")
+            }
+        }
+    }
 }
 
 // MARK: - Fixtures

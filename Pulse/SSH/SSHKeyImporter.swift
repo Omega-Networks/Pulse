@@ -104,6 +104,17 @@ enum SSHKeyImporter {
         /// PKCS#1 / PKCS#8 ASN.1 payload doesn't parse far enough for us to
         /// reach the modulus. Treated like a truncation: the user re-imports.
         case truncatedASN1
+        /// `derivePublicKey(from:)` can't recover the public key from the
+        /// imported PEM without information that isn't present at import time
+        /// (e.g., the passphrase for an encrypted private half, or a public
+        /// point not embedded in the SEC1 payload). Not an error condition for
+        /// the operator: the credential is stored with an empty `publicKey`
+        /// placeholder and the auth delegate backfills at first use.
+        case publicKeyDerivationDeferred
+        /// The PEM kind is recognised but Pulse v1 doesn't implement public-key
+        /// derivation for it (traditional `BEGIN EC PRIVATE KEY` is the
+        /// realistic case). Signer integration may derive lazily.
+        case publicKeyDerivationNotSupported(reason: String)
 
         var description: String {
             switch self {
@@ -123,6 +134,10 @@ enum SSHKeyImporter {
                 return "RSA key has a \(observed)-bit modulus; Pulse requires at least 2048 bits per NZISM 17.1.40."
             case .truncatedASN1:
                 return "ASN.1 payload is truncated or malformed; the modulus length could not be read."
+            case .publicKeyDerivationDeferred:
+                return "Public key can't be derived from this PEM at import time; it will be filled in on first use."
+            case .publicKeyDerivationNotSupported(let reason):
+                return "Public key derivation isn't supported for this key format: \(reason)."
             }
         }
     }
@@ -453,6 +468,144 @@ enum SSHKeyImporter {
         // mpint n — the modulus
         let n = try readSSHString(from: publicBlob, cursor: &cursor)
         return asn1IntegerBitLength([UInt8](n))
+    }
+
+    // MARK: - Public-key derivation
+
+    /// Derives the OpenSSH wire-format public key (the bytes that get base64-
+    /// encoded as the second field of an `authorized_keys` line) from a
+    /// successfully-validated `ImportedSSHKey`.
+    ///
+    /// Supported paths:
+    ///
+    /// - OpenSSH new-format (any algorithm, encrypted or not): the public-key
+    ///   blob lives unencrypted in the payload regardless of cipher, so this
+    ///   works for password-protected keys too.
+    /// - Traditional `BEGIN RSA PRIVATE KEY` (unencrypted): n and e read from
+    ///   the PKCS#1 ASN.1, repacked as `ssh-rsa` wire format.
+    /// - PKCS#8 `BEGIN PRIVATE KEY` carrying rsaEncryption (unencrypted): same
+    ///   as PKCS#1 after descending into the OCTET STRING.
+    ///
+    /// Encrypted traditional / PKCS#8 keys and traditional EC PEMs raise
+    /// `publicKeyDerivationDeferred` or `publicKeyDerivationNotSupported`. The
+    /// credential is still stored with an empty `publicKey` placeholder; the
+    /// auth delegate's first-use path backfills once the signer can read the
+    /// private half (after passphrase or for EC PEMs after SEC1 decoding).
+    static func derivePublicKey(from key: ImportedSSHKey) throws -> Data {
+        guard let (_, base64Body) = extractPEM(from: key.normalisedPEM) else {
+            throw ImporterError.noPEMArmorFound
+        }
+        let stripped = stripPEMHeaders(from: base64Body)
+            .split(whereSeparator: \.isWhitespace)
+            .joined()
+        guard let payload = Data(base64Encoded: stripped) else {
+            throw ImporterError.payloadNotBase64
+        }
+
+        switch key.pemKind {
+        case .opensshPrivate:
+            return try opensshPublicBlobFromNewFormat(payload: payload)
+        case .rsaPrivate:
+            if key.isEncrypted {
+                throw ImporterError.publicKeyDerivationDeferred
+            }
+            let (n, e) = try rsaModulusAndExponentFromPKCS1(payload)
+            return opensshWireForRSA(n: n, e: e)
+        case .pkcs8:
+            guard let inner = try pkcs8RSAInnerPKCS1(payload) else {
+                throw ImporterError.publicKeyDerivationNotSupported(reason: "PKCS#8 non-RSA")
+            }
+            let (n, e) = try rsaModulusAndExponentFromPKCS1(inner)
+            return opensshWireForRSA(n: n, e: e)
+        case .encryptedPkcs8:
+            throw ImporterError.publicKeyDerivationDeferred
+        case .ecPrivate:
+            throw ImporterError.publicKeyDerivationNotSupported(reason: "traditional EC PEM")
+        case .dsaPrivate:
+            throw ImporterError.unsupportedKeyKind(.dsaPrivate)
+        }
+    }
+
+    /// Reads the public-key blob (already SSH wire-format) out of an
+    /// OpenSSH new-format private-key payload. Walks past the cipher / kdf /
+    /// numkeys header to the `publickey1` SSH string.
+    private static func opensshPublicBlobFromNewFormat(payload: Data) throws -> Data {
+        var cursor = 0
+        let magicBytes = Data("openssh-key-v1\u{0}".utf8)
+        guard payload.count >= magicBytes.count,
+              payload.prefix(magicBytes.count) == magicBytes else {
+            throw ImporterError.truncatedOpenSSHKey
+        }
+        cursor += magicBytes.count
+        _ = try readSSHString(from: payload, cursor: &cursor) // ciphername
+        _ = try readSSHString(from: payload, cursor: &cursor) // kdfname
+        _ = try readSSHString(from: payload, cursor: &cursor) // kdfoptions
+        _ = try readUInt32(from: payload, cursor: &cursor)    // number of keys
+        return try readSSHString(from: payload, cursor: &cursor)
+    }
+
+    /// PKCS#1 INTEGER pair extractor: pulls the modulus and public exponent
+    /// without re-reading version (the modulus check arm already validated
+    /// the SEQUENCE prefix, but `derivePublicKey` may be called on a freshly
+    /// parsed payload, so the structural walk repeats here).
+    private static func rsaModulusAndExponentFromPKCS1(_ payload: Data) throws -> (n: Data, e: Data) {
+        let bytes = [UInt8](payload)
+        var cursor = 0
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x30)
+        _ = try readASN1Length(bytes, cursor: &cursor)
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02)
+        let versionLen = try readASN1Length(bytes, cursor: &cursor)
+        cursor += versionLen
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02)
+        let nLen = try readASN1Length(bytes, cursor: &cursor)
+        guard cursor + nLen <= bytes.count else { throw ImporterError.truncatedASN1 }
+        let n = Data(bytes[cursor..<(cursor + nLen)])
+        cursor += nLen
+        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02)
+        let eLen = try readASN1Length(bytes, cursor: &cursor)
+        guard cursor + eLen <= bytes.count else { throw ImporterError.truncatedASN1 }
+        let e = Data(bytes[cursor..<(cursor + eLen)])
+        return (n, e)
+    }
+
+    /// Builds the OpenSSH wire format for an RSA public key:
+    ///     string  "ssh-rsa"
+    ///     mpint   e
+    ///     mpint   n
+    private static func opensshWireForRSA(n: Data, e: Data) -> Data {
+        var wire = Data()
+        wire.append(sshWireString(Data("ssh-rsa".utf8)))
+        wire.append(sshWireMpint(e))
+        wire.append(sshWireMpint(n))
+        return wire
+    }
+
+    /// uint32 length-prefixed SSH string.
+    private static func sshWireString(_ payload: Data) -> Data {
+        var out = Data(capacity: 4 + payload.count)
+        var len = UInt32(payload.count).bigEndian
+        withUnsafeBytes(of: &len) { out.append(contentsOf: $0) }
+        out.append(payload)
+        return out
+    }
+
+    /// SSH `mpint` wire format: length-prefixed two's-complement big-endian.
+    /// Unsigned values whose high bit is set get a 0x00 prefix to keep the
+    /// integer positive when re-decoded as two's complement.
+    private static func sshWireMpint(_ raw: Data) -> Data {
+        var bytes = [UInt8](raw)
+        // Strip incidental leading zeros (ASN.1 INTEGERs may carry a sign
+        // byte; mpints are also free of them).
+        while bytes.count > 1 && bytes.first == 0x00 {
+            bytes.removeFirst()
+        }
+        if bytes.isEmpty {
+            return sshWireString(Data([0x00]))
+        }
+        if bytes[0] >= 0x80 {
+            bytes.insert(0x00, at: 0)
+        }
+        return sshWireString(Data(bytes))
     }
 
     // MARK: - ASN.1 primitives
