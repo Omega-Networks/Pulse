@@ -184,7 +184,9 @@ final class SSHClientTests: XCTestCase {
             tier: .portable,
             certificateBlob: nil,
             pemProvider: { nil },
-            knownHostStore: StubKnownHostStore()
+            knownHostStore: StubKnownHostStore(),
+            deviceID: nil,
+            recordSessions: false
         )
     }
 

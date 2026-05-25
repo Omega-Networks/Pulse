@@ -175,11 +175,41 @@ struct SSHCredentialsSettings: View {
             .accessibilityLabel("Delete \(cred.label)")
         }
         .padding(.vertical, 4)
-        #if DEBUG
         .contextMenu {
+            // Session-recording toggle. Operators can flip this from
+            // either Settings → SSH or any future credential editor;
+            // the audit-event surface (credential.recording.enabled /
+            // .disabled) fires here so SIEM rules see the toggle
+            // regardless of which UI path produced it. ADR §6 says
+            // recording is opt-in per credential, with production-
+            // change credentials suggested-on at creation time —
+            // surfacing the toggle as a context-menu action keeps the
+            // gesture visible without crowding the primary row.
+            Button(cred.recordSessions ? "Stop recording sessions" : "Record sessions") {
+                toggleRecording(for: cred)
+            }
+            #if DEBUG
             Button("Inspect key attributes") { inspect(cred) }
+            #endif
         }
-        #endif
+    }
+
+    private func toggleRecording(for cred: SSHCredential) {
+        cred.recordSessions.toggle()
+        do {
+            try modelContext.save()
+        } catch {
+            // Persistence failure: revert the flag so the in-memory
+            // state matches what's on disk. The audit event below
+            // would otherwise lie about the new state.
+            cred.recordSessions.toggle()
+            return
+        }
+        if cred.recordSessions {
+            SessionRecordingAudit.credentialRecordingEnabled(credentialID: cred.id)
+        } else {
+            SessionRecordingAudit.credentialRecordingDisabled(credentialID: cred.id)
+        }
     }
 
     /// Copy-to-clipboard button for the credential's OpenSSH-format public key

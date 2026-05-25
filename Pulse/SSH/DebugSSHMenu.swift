@@ -263,7 +263,15 @@ struct DebugSSHWindow: View {
             tier: credential.tier,
             certificateBlob: credential.certificate,
             pemProvider: pemProvider,
-            knownHostStore: knownHostStore
+            knownHostStore: knownHostStore,
+            // Ad-hoc debug-menu connections aren't tied to a NetBox
+            // Device row, so recorded sessions (if recording is
+            // enabled on the credential) land under
+            // Pulse/Sessions/unassigned/ per ADR §6 amendment. When
+            // Slice 5 wires up device-row → SSH terminal navigation,
+            // those call sites will pass the live `Device.id`.
+            deviceID: nil,
+            recordSessions: credential.recordSessions
         )
 
         let collected = OutputCollector()

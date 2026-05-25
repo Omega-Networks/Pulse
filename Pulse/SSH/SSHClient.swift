@@ -90,6 +90,21 @@ actor SSHClient {
     private let pemProvider: PortablePEMProvider
     private let knownHostStore: any KnownHostStore
 
+    /// `Device.id` of the NetBox device this connection is attached
+    /// to, or `nil` for ad-hoc connections (debug menu, devices not
+    /// imported from NetBox). Required — no default — so call sites
+    /// have to pass `nil` deliberately and visibly rather than
+    /// silently landing recorded logs under `unassigned/`. See ADR §6
+    /// amendment.
+    private let deviceID: Int64?
+
+    /// Whether to record this session to a `.pulselog` + `.meta` pair
+    /// per ADR §6. Driven by the credential's `recordSessions` flag at
+    /// the call site (a snapshot rather than a SwiftData lookup
+    /// because `SSHClient` is the byte-pump layer, not the model
+    /// layer).
+    private let recordSessions: Bool
+
     // MARK: State
 
     private var channel: Channel?
@@ -97,6 +112,14 @@ actor SSHClient {
     private var session: SSHSession?
     private var authDelegate: SSHAuthDelegate?
     private var connectStartedAt: Date?
+
+    /// Session-log writer for this connection, populated when
+    /// `recordSessions == true` and the writer opened successfully.
+    /// `close()` finalises it; the recording tap installed in the
+    /// child-channel pipeline also calls `close()` on
+    /// `channelInactive` (idempotent) so the .meta sidecar always
+    /// gets finalised whichever path the disconnect runs through.
+    private var sessionLogWriter: SessionLogWriter?
 
     private let sessionLogger = Logger(subsystem: "pulse", category: "ssh.session")
     private let authLogger = Logger(subsystem: "pulse", category: "ssh.auth")
@@ -113,7 +136,9 @@ actor SSHClient {
         tier: SSHCredentialTier,
         certificateBlob: Data? = nil,
         pemProvider: @escaping PortablePEMProvider,
-        knownHostStore: any KnownHostStore
+        knownHostStore: any KnownHostStore,
+        deviceID: Int64?,
+        recordSessions: Bool
     ) {
         self.transport = transport
         self.host = host
@@ -124,6 +149,8 @@ actor SSHClient {
         self.certificateBlob = certificateBlob
         self.pemProvider = pemProvider
         self.knownHostStore = knownHostStore
+        self.deviceID = deviceID
+        self.recordSessions = recordSessions
     }
 
     // MARK: Connect
@@ -214,6 +241,31 @@ actor SSHClient {
         }
         channel = openedChannel
 
+        // 4.5. Open the session-log writer if recording is enabled for
+        // this credential. Open before the session so the writer's
+        // own audit-trail (session.recording.opened) lands inside the
+        // surrounding session.open context, and so a wrap-side
+        // failure can be surfaced without bringing down the byte
+        // pump. Per ADR §6 ("recording failure never propagates into
+        // the byte pump") a failure here logs and continues with no
+        // recording attached — the session itself proceeds normally.
+        if recordSessions {
+            do {
+                self.sessionLogWriter = try await SessionLogWriter.open(
+                    deviceID: deviceID,
+                    credentialID: credentialID,
+                    username: username,
+                    host: host,
+                    port: port
+                )
+            } catch {
+                sessionLogger.error(
+                    "session.recording.open failed; session continues without recording: \(String(describing: error), privacy: .public)"
+                )
+                self.sessionLogWriter = nil
+            }
+        }
+
         // 5. Open the session child channel. NIOSSH performs the handshake
         // (key exchange, host-key validation via the host-key delegate, user
         // auth via the auth delegate) before this future resolves.
@@ -277,9 +329,15 @@ actor SSHClient {
             )
         }
 
-        // Build the child channel + bridge. The init closure runs on the
-        // child's EventLoop and configures the pipeline before NIOSSH
-        // returns the new channel to us.
+        // Capture the writer (if any) for the child-channel-side
+        // closure. The closure runs on the child's EventLoop off the
+        // actor; an actor reference is Sendable so the capture is
+        // safe under Swift 6 strict-concurrency.
+        let writer = self.sessionLogWriter
+
+        // Build the child channel + (optional tap) + bridge. The init
+        // closure runs on the child's EventLoop and configures the
+        // pipeline before NIOSSH returns the new channel to us.
         sshHandler.createChannel(nil) { childChannel, channelType in
             guard channelType == .session else {
                 return childChannel.eventLoop.makeFailedFuture(
@@ -288,6 +346,21 @@ actor SSHClient {
             }
             return childChannel.eventLoop.makeCompletedFuture {
                 let session = SSHSession(childChannel: childChannel)
+
+                // Install the recording tap BEFORE the bridge if
+                // recording is enabled. Pipeline order from head to
+                // tail: [head, tap, bridge, tail]. Inbound flows
+                // head→tail, so the tap sees server bytes first and
+                // forwards via fireChannelRead to the bridge. Outbound
+                // flows tail→head, so the tap sees outgoing bytes
+                // last on their way to the wire. The tap is a pure
+                // observer — it forwards every read and write
+                // unchanged, only mirroring into the writer.
+                if let writer {
+                    let tap = SSHSessionRecordingTap(writer: writer)
+                    try childChannel.pipeline.syncOperations.addHandler(tap)
+                }
+
                 let bridge = SSHSessionDataBridge(session: session)
                 try childChannel.pipeline.syncOperations.addHandler(bridge)
                 promise.succeed(session)
@@ -316,8 +389,18 @@ actor SSHClient {
 
     /// Closes the SSH session and tears down the underlying channel +
     /// EventLoopGroup. Idempotent.
+    ///
+    /// If a recording is active, finalises the writer with a generic
+    /// "client_close" exit description. The recording tap's
+    /// `channelInactive` may also fire close (when the channel goes
+    /// down before this method runs) — close is idempotent, so
+    /// whichever path completes first wins and the second is a
+    /// no-op. .meta carries the truth.
     func close() async {
         await session?.close()
+        if let writer = sessionLogWriter {
+            await writer.close(exitCauseDescription: "client_close")
+        }
         if let channel {
             _ = try? await channel.close().get()
         }
@@ -327,5 +410,6 @@ actor SSHClient {
         session = nil
         channel = nil
         eventLoopGroup = nil
+        sessionLogWriter = nil
     }
 }

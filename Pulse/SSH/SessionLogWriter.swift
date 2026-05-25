@@ -422,6 +422,28 @@ actor SessionLogWriter {
         var pendingBytes: Int = 0
         var stopped: Bool = false
         var stopReason: StopReason?
+        /// Queue of records the actor has not yet sealed. Maintains
+        /// FIFO order across the EventLoop-side `tryEnqueue` calls.
+        ///
+        /// Why a queue rather than fire-and-forget Tasks: Swift's
+        /// concurrency runtime does not guarantee that two
+        /// independently-spawned `Task { await actor.method(...) }`
+        /// calls enter the actor in spawn order. Each Task races
+        /// independently for actor entry. With N tasks queued from a
+        /// single EventLoop thread we want strict FIFO so the
+        /// recording's byte order matches the wire order; the queue
+        /// + drain shape gives us that without an `AsyncStream`
+        /// channel-shaped dependency.
+        var queue: [PendingRecord] = []
+        /// Whether a drain task is currently active. The actor kicks
+        /// at most one drain at a time; subsequent `tryEnqueue` calls
+        /// append to the queue and the drain picks them up.
+        var draining: Bool = false
+    }
+
+    struct PendingRecord: Sendable, Equatable {
+        let direction: SessionLogRecord.Direction
+        let bytes: Data
     }
 
     // MARK: Lifecycle
@@ -571,8 +593,18 @@ actor SessionLogWriter {
         bytes: ArraySlice<UInt8>
     ) -> Bool {
         let byteCount = bytes.count
+        // Materialise the byte slice now — the underlying buffer is
+        // owned by the SSH channel and may be recycled before the
+        // actor processes the record.
+        let captured = Data(bytes)
 
-        // Decision is computed under the lock, then acted on outside.
+        enum EnqueueDecision {
+            case accepted(needsDrainKick: Bool)
+            case alreadyStopped
+            case overflowJustStopped
+        }
+
+        // Decision computed under the lock, acted on outside.
         let decision: EnqueueDecision = pendingState.withLockedValue { state in
             if state.stopped {
                 return .alreadyStopped
@@ -583,9 +615,15 @@ actor SessionLogWriter {
                 state.stopReason = .backPressureOverflow
                 return .overflowJustStopped
             }
+            state.queue.append(PendingRecord(direction: direction, bytes: captured))
             state.pendingRecords += 1
             state.pendingBytes += byteCount
-            return .accepted
+            // Kick a drain task only if none is currently running.
+            // Once kicked, the drain loop will pick up subsequent
+            // enqueues until the queue empties.
+            let kick = !state.draining
+            if kick { state.draining = true }
+            return .accepted(needsDrainKick: kick)
         }
 
         switch decision {
@@ -596,56 +634,78 @@ actor SessionLogWriter {
                 sessionID: sessionID,
                 reason: .backPressureOverflow
             )
-            // Finalise .meta off the calling thread.
             Task { await self.finaliseAfterStructuralStop() }
             return false
-        case .accepted:
-            // Materialise the byte slice now — the slice references a
-            // ByteBuffer that may be recycled before the actor gets to it.
-            let captured = Data(bytes)
-            Task { await self.processRecord(direction: direction, bytes: captured) }
+        case .accepted(let needsDrainKick):
+            if needsDrainKick {
+                Task { await self.drainQueue() }
+            }
             return true
         }
     }
 
-    private enum EnqueueDecision {
-        case accepted
-        case alreadyStopped
-        case overflowJustStopped
-    }
-
     // MARK: Actor-isolated processing
 
-    /// Seals one record under the per-session key, writes it as a JSONL
-    /// line, advances the seq counter and chain hash, and decrements
-    /// pending counters. Runs on the actor's executor.
-    private func processRecord(
-        direction: SessionLogRecord.Direction,
-        bytes: Data
-    ) async {
-        // Always decrement, even if we early-out — the nonisolated
-        // tryEnqueue path incremented unconditionally.
+    /// Drains the pending-record queue serially in FIFO order, sealing
+    /// and writing each record. Continues until the queue is empty,
+    /// then releases the `draining` flag so the next `tryEnqueue` can
+    /// kick a fresh drain. Runs on the actor's executor — record
+    /// processing strictly serial within a drain, and the
+    /// single-flighting via `draining` means at most one drain runs
+    /// at a time.
+    ///
+    /// FIFO guarantee: each iteration pops the queue's front element
+    /// under the lock, processes it (sealing + writing), then loops.
+    /// The lock holds for the pop only; sealing happens unlocked but
+    /// strictly serial because we're inside the actor.
+    private func drainQueue() async {
+        while let next = pendingState.withLockedValue({ state -> PendingRecord? in
+            // If the writer has stopped (either via close() or a
+            // structural failure from a previous record), abandon
+            // the queue. The decrement happens below for whatever
+            // records were already past the lock when stop fired.
+            guard !state.stopped else { return nil }
+            return state.queue.isEmpty ? nil : state.queue.removeFirst()
+        }) {
+            await sealAndWriteRecord(next)
+        }
+
+        // Queue drained (or writer stopped). Release the drain flag
+        // so the next enqueue can kick a fresh drain. If the queue is
+        // non-empty at this point it's because a stop fired mid-loop;
+        // the records left behind decrement out of pending via the
+        // best-effort path in `finaliseAfterStructuralStop`.
+        pendingState.withLockedValue { state in
+            state.draining = false
+            if state.stopped {
+                // Best-effort: zero out pending counters for any
+                // records still queued at stop time. They will never
+                // be sealed; leaving them counted would mislead any
+                // test or audit consumer reading pendingRecords.
+                state.pendingRecords -= state.queue.count
+                state.pendingBytes -= state.queue.reduce(0) { $0 + $1.bytes.count }
+                state.queue.removeAll()
+            }
+        }
+    }
+
+    /// Seals one record under the per-session key, writes it as a
+    /// JSONL line, advances the seq counter and chain hash, and
+    /// decrements pending counters. Called from the drain loop.
+    private func sealAndWriteRecord(_ pending: PendingRecord) async {
         defer {
             pendingState.withLockedValue { state in
                 state.pendingRecords = max(0, state.pendingRecords - 1)
-                state.pendingBytes = max(0, state.pendingBytes - bytes.count)
+                state.pendingBytes = max(0, state.pendingBytes - pending.bytes.count)
             }
-        }
-
-        // Re-check the stopped flag. The tap may have triggered an
-        // overflow transition between our enqueue and our processing,
-        // or another in-flight record's seal/write may have failed.
-        let isStopped = pendingState.withLockedValue { $0.stopped }
-        if isStopped {
-            return
         }
 
         let record = SessionLogRecord(
             seq: nextSeq,
             ts: SessionLogTimestamp.iso8601(from: .now),
-            dir: direction,
+            dir: pending.direction,
             prev: previousChainHash,
-            bytes: bytes.base64EncodedString()
+            bytes: pending.bytes.base64EncodedString()
         )
 
         let sealed: EncryptedRecord
@@ -812,16 +872,18 @@ extension SessionLogWriter {
     /// `tryEnqueue` and asserting on the on-disk state so the
     /// fire-and-forget Tasks complete before the assertion runs.
     func __drainForTests() async {
-        // Walking the actor's executor once is enough in practice —
-        // every fire-and-forget Task spawned by tryEnqueue immediately
-        // queues on the actor; reaching this body means all prior Tasks
-        // have completed their actor-isolated work. We add a small spin
-        // (max 100 iterations) as defence-in-depth for pathological
-        // scheduling.
-        for _ in 0..<100 {
+        // Each tryEnqueue spawns a fire-and-forget Task; reaching
+        // zero pendingRecords means every spawned Task has run its
+        // actor-isolated work to completion. `Task.yield()` alone is
+        // insufficient under load (it's a scheduler hint, not a
+        // guarantee), so we mix yields with short sleeps. Up to ~1s
+        // wallclock total — far longer than any sealed record's
+        // processing time, but a hard cap so a stuck actor doesn't
+        // hang the test runner indefinitely.
+        for _ in 0..<200 {
             let pending = pendingState.withLockedValue { $0.pendingRecords }
             if pending == 0 { return }
-            await Task.yield()
+            try? await Task.sleep(nanoseconds: 5_000_000) // 5ms
         }
     }
 
