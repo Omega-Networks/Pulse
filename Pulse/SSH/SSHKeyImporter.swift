@@ -547,6 +547,214 @@ enum SSHKeyImporter {
         return asn1IntegerBitLength([UInt8](n))
     }
 
+    // MARK: - OpenSSH new-format private-key decoder
+
+    /// Algorithm-specific private material extracted from an unencrypted
+    /// OpenSSH new-format (`openssh-key-v1`) private-key payload. The auth
+    /// delegate (Slice 3 commit 7b₃) wraps each case in the corresponding
+    /// CryptoKit primitive and hands the result to `NIOSSHPrivateKey`.
+    ///
+    /// The scalar / seed byte lengths are pinned to the algorithm's curve:
+    /// 32 bytes for Ed25519 seed and P-256 scalar, 48 bytes for P-384, 66
+    /// bytes for P-521.
+    enum DecodedOpenSSHPrivateKey: Equatable, Sendable {
+        case ed25519(seed: Data)
+        case ecdsaP256(scalar: Data)
+        case ecdsaP384(scalar: Data)
+        case ecdsaP521(scalar: Data)
+    }
+
+    /// Errors raised while walking the private-key section of an OpenSSH
+    /// new-format payload. Surfaced separately from `ImporterError` so the
+    /// auth delegate can distinguish "this PEM didn't decode" from "the PEM
+    /// classified but the front door rejected it."
+    enum OpenSSHDecodeError: Error, CustomStringConvertible, Equatable {
+        case notOpenSSHNewFormat
+        case encrypted
+        case checkintMismatch
+        case truncatedPrivateSection
+        case unsupportedInnerAlgorithm(String)
+        case unexpectedFieldLength(field: String, expected: Int, observed: Int)
+
+        var description: String {
+            switch self {
+            case .notOpenSSHNewFormat:
+                return "Key is not in OpenSSH new-format (BEGIN OPENSSH PRIVATE KEY)."
+            case .encrypted:
+                return "OpenSSH new-format key is encrypted; Pulse v1 doesn't support encrypted portable keys."
+            case .checkintMismatch:
+                return "Decryption check-integer mismatch; the private section is malformed or tampered."
+            case .truncatedPrivateSection:
+                return "Private-key section ended before the expected fields were read."
+            case .unsupportedInnerAlgorithm(let name):
+                return "OpenSSH inner algorithm \(name) isn't supported by Pulse v1."
+            case .unexpectedFieldLength(let field, let expected, let observed):
+                return "OpenSSH \(field) field length: expected \(expected), got \(observed)."
+            }
+        }
+    }
+
+    /// Decodes an unencrypted OpenSSH new-format private-key PEM and returns
+    /// the algorithm-specific private material.
+    ///
+    /// The decoder operates only on the binary wire format — no cryptographic
+    /// algorithms run here. Encrypted payloads (`ciphername != "none"`) are
+    /// rejected via `OpenSSHDecodeError.encrypted` rather than attempted;
+    /// implementing bcrypt-pbkdf in-house is the §10 line we don't cross.
+    ///
+    /// Wire structure (`PROTOCOL.key`):
+    ///
+    ///     "openssh-key-v1\0"
+    ///     string  ciphername     "none"
+    ///     string  kdfname        "none"
+    ///     string  kdfoptions     ""
+    ///     uint32  numkeys        1
+    ///     string  publickey1     (SSH wire-format public key, already covered by
+    ///                             `opensshPublicBlobFromNewFormat`)
+    ///     string  privateKeySection
+    ///       uint32  checkint1
+    ///       uint32  checkint2    (must equal checkint1)
+    ///       for each key (1 in practice):
+    ///         string  algoname
+    ///         [algorithm-specific public fields]
+    ///         [algorithm-specific private fields]
+    ///         string  comment
+    ///       padding 1, 2, ..., n (to align to cipher block size; 1..7 bytes for
+    ///       cipher "none" using an 8-byte alignment in ssh-keygen practice)
+    static func decodeOpenSSHPrivateKey(from pem: String) throws -> DecodedOpenSSHPrivateKey {
+        guard let (kind, base64Body) = extractPEM(from: pem), kind == .opensshPrivate else {
+            throw OpenSSHDecodeError.notOpenSSHNewFormat
+        }
+        let stripped = stripPEMHeaders(from: base64Body)
+            .split(whereSeparator: \.isWhitespace)
+            .joined()
+        guard let payload = Data(base64Encoded: stripped) else {
+            throw ImporterError.payloadNotBase64
+        }
+
+        var cursor = 0
+        let magic = Data("openssh-key-v1\u{0}".utf8)
+        guard payload.count >= magic.count, payload.prefix(magic.count) == magic else {
+            throw OpenSSHDecodeError.notOpenSSHNewFormat
+        }
+        cursor += magic.count
+
+        let cipherName = try readSSHString(from: payload, cursor: &cursor)
+        guard String(data: cipherName, encoding: .ascii) == "none" else {
+            throw OpenSSHDecodeError.encrypted
+        }
+        _ = try readSSHString(from: payload, cursor: &cursor) // kdfname (also "none")
+        _ = try readSSHString(from: payload, cursor: &cursor) // kdfoptions ("")
+        _ = try readUInt32(from: payload, cursor: &cursor)    // numKeys (== 1)
+        _ = try readSSHString(from: payload, cursor: &cursor) // publickey1
+
+        let privateSection = try readSSHString(from: payload, cursor: &cursor)
+        var sub = 0
+        let checkint1 = try readUInt32(from: privateSection, cursor: &sub)
+        let checkint2 = try readUInt32(from: privateSection, cursor: &sub)
+        guard checkint1 == checkint2 else {
+            throw OpenSSHDecodeError.checkintMismatch
+        }
+
+        let algoData = try readSSHString(from: privateSection, cursor: &sub)
+        let algoName = String(data: algoData, encoding: .ascii) ?? ""
+
+        switch algoName {
+        case "ssh-ed25519":
+            // Ed25519 inner layout: string pub (32 bytes), string priv (64
+            // bytes: seed[32] || pubkey[32]). We only need the seed; CryptoKit
+            // derives the public half from it.
+            let pub = try readSSHString(from: privateSection, cursor: &sub)
+            guard pub.count == 32 else {
+                throw OpenSSHDecodeError.unexpectedFieldLength(
+                    field: "ed25519 public", expected: 32, observed: pub.count
+                )
+            }
+            let priv = try readSSHString(from: privateSection, cursor: &sub)
+            guard priv.count == 64 else {
+                throw OpenSSHDecodeError.unexpectedFieldLength(
+                    field: "ed25519 private", expected: 64, observed: priv.count
+                )
+            }
+            return .ed25519(seed: priv.prefix(32))
+
+        case "ecdsa-sha2-nistp256":
+            return try decodeECDSAInnerPrivateKey(
+                from: privateSection,
+                cursor: &sub,
+                expectedCurveName: "nistp256",
+                scalarLength: 32
+            )
+        case "ecdsa-sha2-nistp384":
+            return try decodeECDSAInnerPrivateKey(
+                from: privateSection,
+                cursor: &sub,
+                expectedCurveName: "nistp384",
+                scalarLength: 48
+            )
+        case "ecdsa-sha2-nistp521":
+            return try decodeECDSAInnerPrivateKey(
+                from: privateSection,
+                cursor: &sub,
+                expectedCurveName: "nistp521",
+                scalarLength: 66
+            )
+
+        default:
+            throw OpenSSHDecodeError.unsupportedInnerAlgorithm(algoName)
+        }
+    }
+
+    /// Reads the ECDSA-specific inner-private-key fields for a P-256/384/521
+    /// curve and returns the appropriate `DecodedOpenSSHPrivateKey` case.
+    /// Inner layout after the algoname:
+    ///     string  curveName  ("nistp256", "nistp384", or "nistp521")
+    ///     string  Q          (65/97/133-byte uncompressed point)
+    ///     mpint   d          (private scalar; may carry a leading 0x00 sign byte)
+    private static func decodeECDSAInnerPrivateKey(
+        from data: Data,
+        cursor: inout Int,
+        expectedCurveName: String,
+        scalarLength: Int
+    ) throws -> DecodedOpenSSHPrivateKey {
+        let curveData = try readSSHString(from: data, cursor: &cursor)
+        guard String(data: curveData, encoding: .ascii) == expectedCurveName else {
+            throw OpenSSHDecodeError.unsupportedInnerAlgorithm(
+                "curve mismatch: expected \(expectedCurveName)"
+            )
+        }
+        _ = try readSSHString(from: data, cursor: &cursor) // Q, the uncompressed point
+        // d is an mpint: SSH-string-framed two's-complement integer that may
+        // carry a leading 0x00 byte to keep the value positive when the high
+        // bit of the magnitude is set. Normalise to the curve's fixed scalar
+        // length by stripping a single leading zero if present, then
+        // left-padding with zeros if shorter.
+        let dRaw = try readSSHString(from: data, cursor: &cursor)
+        var bytes = [UInt8](dRaw)
+        if bytes.count == scalarLength + 1 && bytes.first == 0x00 {
+            bytes.removeFirst()
+        }
+        if bytes.count < scalarLength {
+            bytes = Array(repeating: 0x00, count: scalarLength - bytes.count) + bytes
+        }
+        guard bytes.count == scalarLength else {
+            throw OpenSSHDecodeError.unexpectedFieldLength(
+                field: "ecdsa scalar (\(expectedCurveName))",
+                expected: scalarLength,
+                observed: bytes.count
+            )
+        }
+        let scalar = Data(bytes)
+        switch expectedCurveName {
+        case "nistp256": return .ecdsaP256(scalar: scalar)
+        case "nistp384": return .ecdsaP384(scalar: scalar)
+        case "nistp521": return .ecdsaP521(scalar: scalar)
+        default:
+            // Unreachable: the caller passes a known curve name.
+            throw OpenSSHDecodeError.unsupportedInnerAlgorithm(expectedCurveName)
+        }
+    }
+
     // MARK: - Public-key derivation
 
     /// Derives the OpenSSH wire-format public key (the bytes that get base64-
