@@ -16,81 +16,108 @@
 //  prosperity through collaborative stewardship of public infrastructure.
 //
 //  This program is free software: communities can deploy it for sovereignty, academia can
-//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  extend it for research, and industry can integrate it for resilience, all under the terms
 //  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
 //
 //  You should have received a copy of the GNU Affero General Public License
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
+import Crypto
 import Foundation
+import NIOSSH
 
-/// Reads metadata out of an SSH certificate that has been signed by a CA over an
-/// `SSHCredential`'s public key.
+/// Reads metadata out of an SSH certificate signed by a CA over an `SSHCredential`'s
+/// public key.
 ///
-/// Defines the metadata shape (`keyId`, `principals`, validity window, CA fingerprint)
-/// that the rest of Pulse refers to. The actual decode pipeline depends on
-/// `NIOSSHCertifiedPublicKey` from swift-nio-ssh; while that module isn't linked,
-/// `metadata(for:)` throws `.parserNotAvailableYet` and the credential editor falls
-/// back to displaying the raw blob length.
+/// `SSHCredential.certificate` carries the textual OpenSSH cert form as UTF-8 bytes
+/// (the same single-line representation `ssh-keygen` writes to a `*-cert.pub` file:
+/// `algorithm-id BASE64-cert-blob comment`). Storing the textual form keeps round
+/// trips to `ssh-keygen`, FreeIPA, smallstep, and Vault byte-identical, and avoids
+/// having to spec a binary wire layout in our schema.
 ///
 /// Per ADR 0001 §3, certificates are first-class on the data model so enrolment flows
-/// (FreeIPA, smallstep, Vault) can populate `SSHCredential.certificate` without a
-/// schema migration.
+/// can populate `SSHCredential.certificate` without a schema migration.
 enum SSHCertificateManager {
 
-    /// Algorithm-agnostic projection of an SSH certificate's interesting bits.
-    /// Mirrors the fields swift-nio-ssh exposes on `NIOSSHCertifiedPublicKey`.
+    /// Algorithm-agnostic projection of an SSH certificate's interesting fields.
+    /// Sourced from `NIOSSHCertifiedPublicKey`; the `caFingerprintSHA256` is the same
+    /// fingerprint `ssh-keygen -l -E sha256` prints for the signing key, which is also
+    /// what `HostTrust.trustedCA(caFingerprintSHA256:...)` rows compare against.
     struct CertificateMetadata: Equatable, Sendable {
-        /// Free-form identifier the CA stamps onto the cert. Often a username or
-        /// hostname for human-readability in audit logs.
-        let keyId: String
-
-        /// Usernames or hostnames this certificate may impersonate. Empty means
-        /// "no restriction" (rare in production; flag loudly in the UI when seen).
+        let keyID: String
         let principals: [String]
-
-        /// Earliest time the certificate is considered valid.
         let validAfter: Date
-
-        /// Latest time the certificate is considered valid.
         let validBefore: Date
-
-        /// SHA-256 fingerprint of the signing CA's public key. The same fingerprint
-        /// that appears in `HostTrust.trustedCA` records so we can match user
-        /// certificates to the trusted-CA policy.
         let caFingerprintSHA256: String
+        let serial: UInt64
     }
 
-    enum CertificateError: Error, CustomStringConvertible {
-        /// Thrown when `metadata(for:)` is called and the swift-nio-ssh bridge isn't
-        /// linked into the current build.
-        case parserNotAvailableYet
-
-        /// The supplied bytes don't decode as a recognised SSH certificate format.
-        case malformedCertificate
+    enum CertificateError: Error, CustomStringConvertible, Equatable {
+        case malformedCertificate(reason: String)
+        case notACertifiedKey
 
         var description: String {
             switch self {
-            case .parserNotAvailableYet:
-                return "SSH certificate parsing requires the swift-nio-ssh signer module to be linked."
-            case .malformedCertificate:
-                return "The supplied bytes are not a valid SSH certificate blob."
+            case .malformedCertificate(let reason):
+                return "The supplied bytes are not a valid SSH certificate blob: \(reason)"
+            case .notACertifiedKey:
+                return "The supplied OpenSSH key is a plain public key, not a certificate."
             }
         }
     }
 
-    /// Returns parsed metadata for a serialised certificate blob.
-    ///
-    /// Throws `.parserNotAvailableYet` until `NIOSSHCertifiedPublicKey` is available
-    /// to decode the wire format. The signer module supplies that integration.
+    /// Parses the textual OpenSSH cert form stored in `SSHCredential.certificate`.
     static func metadata(for serialised: Data) throws -> CertificateMetadata {
-        _ = serialised
-        throw CertificateError.parserNotAvailableYet
+        guard let text = String(data: serialised, encoding: .utf8) else {
+            throw CertificateError.malformedCertificate(reason: "blob is not valid UTF-8")
+        }
+        let publicKey: NIOSSHPublicKey
+        do {
+            publicKey = try NIOSSHPublicKey(openSSHPublicKey: text)
+        } catch {
+            throw CertificateError.malformedCertificate(reason: String(describing: error))
+        }
+        guard let cert = NIOSSHCertifiedPublicKey(publicKey) else {
+            throw CertificateError.notACertifiedKey
+        }
+        return CertificateMetadata(
+            keyID: cert.keyID,
+            principals: cert.validPrincipals,
+            validAfter: Date(timeIntervalSince1970: TimeInterval(cert.validAfter)),
+            validBefore: Date(timeIntervalSince1970: TimeInterval(cert.validBefore)),
+            caFingerprintSHA256: opensshSHA256Fingerprint(of: cert.signatureKey),
+            serial: cert.serial
+        )
     }
 
-    /// Returns true when the certificate's validity window covers `date`.
+    /// Encodes a `NIOSSHCertifiedPublicKey` back into the textual OpenSSH cert form
+    /// that `SSHCredential.certificate` carries. Round-trips with `metadata(for:)`.
+    static func serialise(_ cert: NIOSSHCertifiedPublicKey) -> Data {
+        Data(String(openSSHPublicKey: NIOSSHPublicKey(cert)).utf8)
+    }
+
+    /// True when `date` falls inside the certificate's validity window.
+    /// `SSHAuthDelegate` calls this immediately before presenting a cert and falls
+    /// back to the bare public key on `false`, per ADR §7 (cert.expired emission).
     static func isValid(_ metadata: CertificateMetadata, at date: Date = .now) -> Bool {
         date >= metadata.validAfter && date <= metadata.validBefore
+    }
+
+    /// SHA-256 over the OpenSSH wire-format public key, rendered as
+    /// `SHA256:<base64-no-padding>`. Matches `ssh-keygen -l -E sha256` output and the
+    /// fingerprint format `HostTrust.trustedCA` and `HostTrust.pinned` rows store.
+    private static func opensshSHA256Fingerprint(of key: NIOSSHPublicKey) -> String {
+        // `String.init(openSSHPublicKey:)` emits "algo BASE64". The base64 payload is
+        // the same wire bytes a host-key handler hashes for the pinned-fingerprint
+        // comparison, so we recover them by splitting on the first space and decoding.
+        let text = String(openSSHPublicKey: key)
+        let parts = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.count >= 2, let wire = Data(base64Encoded: String(parts[1])) else {
+            return "SHA256:(unavailable)"
+        }
+        let digest = SHA256.hash(data: wire)
+        let base64 = Data(digest).base64EncodedString().trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        return "SHA256:\(base64)"
     }
 }

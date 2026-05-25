@@ -83,6 +83,7 @@
 		A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */; };
 		A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */; };
 		A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A003 /* DirectTransportTests.swift */; };
+		A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */; };
 		C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = C923355E2FC3EAF9003BAF42 /* NIOSSH */; };
 		C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = C93291702FC30A3900624995 /* NIOTransportServices */; };
 		C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */; };
@@ -239,6 +240,7 @@
 		A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporterTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSSHWireFormatTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A003 /* DirectTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTransportTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCertificateManagerTests.swift; sourceTree = "<group>"; };
 		C926516F2E71AFA2004564DD /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
 		C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceOverviewView.swift; sourceTree = "<group>"; };
 		C961915E2ACA552F000198DB /* Pulse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pulse.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -500,6 +502,7 @@
 			children = (
 				A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */,
 				A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */,
+				A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */,
 			);
 			path = SSH;
 			sourceTree = "<group>";
@@ -1025,6 +1028,7 @@
 				A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */,
 				A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */,
 				A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */,
+				A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

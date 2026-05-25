@@ -157,6 +157,7 @@ struct SSHCredentialsSettings: View {
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                certificateInfo(for: cred)
                 if cred.recordSessions {
                     Label("Sessions recorded", systemImage: "record.circle")
                         .font(.caption2)
@@ -202,6 +203,35 @@ struct SSHCredentialsSettings: View {
             .buttonStyle(.borderless)
             .help("Copy the OpenSSH public key (authorized_keys line) to the clipboard")
             .accessibilityLabel("Copy public key for \(cred.label)")
+        }
+    }
+
+    /// Renders the certificate principals and expiry below the fingerprint when the
+    /// credential carries a CA-signed certificate. Parsing happens inline on each
+    /// render: the cert blob is small (single OpenSSH line) and the credentials list
+    /// is short, so caching would be premature. On parse failure the row shows a
+    /// generic warning rather than crashing the view; the operator action is to
+    /// re-import the cert.
+    @ViewBuilder
+    private func certificateInfo(for cred: SSHCredential) -> some View {
+        if let blob = cred.certificate {
+            if let meta = try? SSHCertificateManager.metadata(for: blob) {
+                let principals = meta.principals.isEmpty
+                    ? "any principal"
+                    : meta.principals.joined(separator: ", ")
+                let expired = !SSHCertificateManager.isValid(meta)
+                HStack(spacing: 6) {
+                    Image(systemName: expired ? "exclamationmark.seal" : "seal")
+                        .foregroundStyle(expired ? .red : .green)
+                    Text("Cert: \(principals) · expires \(meta.validBefore.formatted(date: .abbreviated, time: .omitted))")
+                        .foregroundStyle(expired ? .red : .secondary)
+                }
+                .font(.caption2)
+            } else {
+                Label("Cert: parse failed", systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
