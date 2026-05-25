@@ -168,12 +168,23 @@ struct PulseApp: App {
                 }
             }
         }
-        
+        #if DEBUG
+        // Slice 3 verification surface. The Debug menu lives on the Site
+        // View scene because Site View is the macOS-only main window
+        // (matches the host scope of the WindowGroup we attach to here);
+        // the command itself is `#if DEBUG` so Release builds carry
+        // neither the menu entry nor the DebugSSHMenu symbol. The
+        // operator-facing terminal lives in Slice 5, not here.
+        .commands {
+            DebugSSHCommands()
+        }
+        #endif
+
         Settings {
             SettingsView()
                 .modelContainer(modelContainer)
         }
-        
+
         WindowGroup("New Site", id: "new-site") {
             if showContentView {
                 AddSiteWindow()
@@ -181,6 +192,13 @@ struct PulseApp: App {
                     .modelContainer(modelContainer)
             }
         }
+
+        #if DEBUG
+        WindowGroup("Debug SSH", id: DebugSSHWindow.windowID) {
+            DebugSSHWindow()
+                .modelContainer(modelContainer)
+        }
+        #endif
 
         // PowerSense window - disabled for spatial clustering testing
         // WindowGroup("PowerSense", id: "PowerSense") {

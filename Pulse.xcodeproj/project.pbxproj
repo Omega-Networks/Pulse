@@ -81,6 +81,7 @@
 		A11CAFE000000000000000BC /* ExitCause.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FC /* ExitCause.swift */; };
 		A11CAFE000000000000000BD /* SSHSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FD /* SSHSession.swift */; };
 		A11CAFE000000000000000BE /* SSHClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FE /* SSHClient.swift */; };
+		A11CAFE000000000000000BF /* DebugSSHMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FF /* DebugSSHMenu.swift */; };
 		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
 		A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F8 /* PulseTransport.swift */; };
@@ -248,6 +249,7 @@
 		A11CAFE000000000000000FC /* ExitCause.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitCause.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000FD /* SSHSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSession.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000FE /* SSHClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHClient.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FF /* DebugSSHMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugSSHMenu.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F8 /* PulseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTransport.swift; sourceTree = "<group>"; };
@@ -510,6 +512,7 @@
 				A11CAFE000000000000000FC /* ExitCause.swift */,
 				A11CAFE000000000000000FD /* SSHSession.swift */,
 				A11CAFE000000000000000FE /* SSHClient.swift */,
+				A11CAFE000000000000000FF /* DebugSSHMenu.swift */,
 			);
 			path = SSH;
 			sourceTree = "<group>";
@@ -940,6 +943,7 @@
 				A11CAFE000000000000000BC /* ExitCause.swift in Sources */,
 				A11CAFE000000000000000BD /* SSHSession.swift in Sources */,
 				A11CAFE000000000000000BE /* SSHClient.swift in Sources */,
+				A11CAFE000000000000000BF /* DebugSSHMenu.swift in Sources */,
 				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
 				A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */,
 				A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */,
