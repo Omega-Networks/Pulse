@@ -34,11 +34,16 @@ final class SSHKeyImporterTests: XCTestCase {
         XCTAssertFalse(result.isEncrypted)
     }
 
-    func testOpenSSHEd25519Encrypted() throws {
-        let result = try SSHKeyImporter.validate(fixtureOpenSSHEd25519Enc)
-        XCTAssertEqual(result.pemKind, .opensshPrivate)
-        XCTAssertEqual(result.algorithm, .ed25519)
-        XCTAssertTrue(result.isEncrypted)
+    /// Encrypted OpenSSH new-format keys are rejected at the front door per
+    /// the Slice 3 7b₁ v1 scope (bcrypt-pbkdf is the KDF we'd have to roll
+    /// in-house against §10). The classifier reads cipher name first, so the
+    /// algorithm-identification path is bypassed entirely.
+    func testOpenSSHEd25519EncryptedIsRejected() {
+        XCTAssertThrowsError(try SSHKeyImporter.validate(fixtureOpenSSHEd25519Enc)) { error in
+            guard case SSHKeyImporter.ImporterError.encryptedPortableKeyNotSupportedInV1 = error else {
+                return XCTFail("expected encryptedPortableKeyNotSupportedInV1, got \(error)")
+            }
+        }
     }
 
     func testOpenSSHEcdsaP256() throws {
@@ -61,85 +66,44 @@ final class SSHKeyImporterTests: XCTestCase {
         XCTAssertFalse(result.isEncrypted)
     }
 
-    func testTraditionalRSAEncryptedDetectsProcType() throws {
-        let result = try SSHKeyImporter.validate(fixtureTraditionalRSAEncrypted)
-        XCTAssertEqual(result.pemKind, .rsaPrivate)
-        XCTAssertEqual(result.algorithm, .rsa)
-        XCTAssertTrue(result.isEncrypted)
-    }
+    // MARK: - v1 portable scope (ADR §1 amendment)
 
-    func testPKCS8RSAUnencrypted() throws {
-        let result = try SSHKeyImporter.validate(fixturePKCS8RSA)
-        XCTAssertEqual(result.pemKind, .pkcs8)
-        XCTAssertFalse(result.isEncrypted)
-        // Slice 3: PKCS#8 PrivateKeyInfo with rsaEncryption OID is now classified
-        // as RSA; previously it surfaced as .unknown. The 2048-bit fixture passes
-        // the NZISM 17.1.40 hard floor silently.
-        XCTAssertEqual(result.algorithm, .rsa)
-    }
-
-    // MARK: - RSA modulus enforcement (NZISM 17.1.40)
-
-    /// 1024-bit RSA in traditional PKCS#1 form must be rejected with a precise
-    /// observed bit length so the UI can show "found 1024 bits, need 2048+".
-    func testRSAPKCS1At1024IsRejected() {
+    /// RSA is rejected at the front door per the Slice 3 7b₁ v1 scope.
+    /// `swift-nio-ssh` 0.13.0 (+ main) has no RSA private-key signing path;
+    /// accepting RSA at import would create credentials that fail at first
+    /// use. The error carries operator-facing remediation pointing at
+    /// Ed25519 / ECDSA / Secure Enclave.
+    func testRSATraditionalIsRejectedWithRemediation() {
         XCTAssertThrowsError(try SSHKeyImporter.validate(fixtureRSA1024PKCS1)) { error in
-            guard case SSHKeyImporter.ImporterError.rsaModulusTooSmall(let observed) = error else {
-                return XCTFail("expected rsaModulusTooSmall, got \(error)")
+            guard case SSHKeyImporter.ImporterError.unsupportedAlgorithmInV1(let name, let remediation) = error else {
+                return XCTFail("expected unsupportedAlgorithmInV1, got \(error)")
             }
-            XCTAssertEqual(observed, 1024)
+            XCTAssertEqual(name, "RSA")
+            XCTAssertTrue(remediation.contains("ssh-keygen"))
         }
     }
 
-    /// 3072-bit RSA traditional PKCS#1 must pass silently (no warning band) and
-    /// classify as `.rsa`.
-    func testRSAPKCS1At3072IsAcceptedSilently() throws {
-        let result = try SSHKeyImporter.validate(fixtureRSA3072PKCS1)
-        XCTAssertEqual(result.pemKind, .rsaPrivate)
-        XCTAssertEqual(result.algorithm, .rsa)
-        XCTAssertFalse(result.isEncrypted)
-    }
-
-    /// OpenSSH new-format with an `ssh-rsa` public key blob at 1024 bits must
-    /// reject. The public-key blob is unencrypted even when the private half is
-    /// password-protected, so this check fires regardless of cipher.
-    func testRSAOpenSSHAt1024IsRejected() {
+    /// OpenSSH new-format with ssh-rsa is rejected via the same front-door
+    /// path; the algorithm identifier is checked before the cipher gate.
+    func testRSAOpenSSHIsRejectedWithRemediation() {
         XCTAssertThrowsError(try SSHKeyImporter.validate(fixtureRSAOpenSSH1024)) { error in
-            guard case SSHKeyImporter.ImporterError.rsaModulusTooSmall(let observed) = error else {
-                return XCTFail("expected rsaModulusTooSmall, got \(error)")
+            guard case SSHKeyImporter.ImporterError.unsupportedAlgorithmInV1(let name, _) = error else {
+                return XCTFail("expected unsupportedAlgorithmInV1, got \(error)")
             }
-            XCTAssertEqual(observed, 1024)
+            XCTAssertEqual(name, "RSA")
         }
     }
 
-    func testRSAOpenSSHAt3072IsAcceptedSilently() throws {
-        let result = try SSHKeyImporter.validate(fixtureRSAOpenSSH3072)
-        XCTAssertEqual(result.pemKind, .opensshPrivate)
-        XCTAssertEqual(result.algorithm, .rsa)
-        XCTAssertFalse(result.isEncrypted)
-    }
-
-    /// PKCS#8 PrivateKeyInfo wrapping a 1024-bit RSA key must reject after
-    /// descending into the rsaEncryption-OID OCTET STRING.
-    func testRSAPKCS8At1024IsRejected() {
-        XCTAssertThrowsError(try SSHKeyImporter.validate(fixtureRSAPKCS8At1024)) { error in
-            guard case SSHKeyImporter.ImporterError.rsaModulusTooSmall(let observed) = error else {
-                return XCTFail("expected rsaModulusTooSmall, got \(error)")
+    /// PKCS#8 RSA is rejected by descending into the rsaEncryption OID and
+    /// throwing the same unsupportedAlgorithmInV1 error. Third regression
+    /// guard for the three RSA classifier arms.
+    func testRSAPKCS8IsRejectedWithRemediation() {
+        XCTAssertThrowsError(try SSHKeyImporter.validate(fixturePKCS8RSA)) { error in
+            guard case SSHKeyImporter.ImporterError.unsupportedAlgorithmInV1(let name, _) = error else {
+                return XCTFail("expected unsupportedAlgorithmInV1, got \(error)")
             }
-            XCTAssertEqual(observed, 1024)
+            XCTAssertEqual(name, "RSA")
         }
-    }
-
-    /// Encrypted traditional PEM keys can't have their modulus checked at import
-    /// time without the passphrase. The signer rechecks after decryption. The
-    /// existing fixture is the encrypted form; it must not raise
-    /// `rsaModulusTooSmall` from the importer.
-    func testEncryptedTraditionalRSADefersModulusCheck() throws {
-        // testTraditionalRSAEncryptedDetectsProcType already asserts this works;
-        // the explicit framing here is the contract: encryption defers the check.
-        let result = try SSHKeyImporter.validate(fixtureTraditionalRSAEncrypted)
-        XCTAssertTrue(result.isEncrypted)
-        XCTAssertEqual(result.algorithm, .rsa)
     }
 
     // MARK: - Error paths
@@ -194,30 +158,55 @@ final class SSHKeyImporterTests: XCTestCase {
         XCTAssertEqual(publicKey.count, 51)
     }
 
-    /// Encrypted OpenSSH new-format: the public blob is unencrypted even when
-    /// the private half is password-protected, so derivation still works.
-    func testDerivePublicKeyFromEncryptedOpenSSHEd25519() throws {
-        let imported = try SSHKeyImporter.validate(fixtureOpenSSHEd25519Enc)
+    /// Encrypted Ed25519 derivation works in principle (the OpenSSH new-format
+    /// public blob is unencrypted), but the credential never reaches
+    /// `derivePublicKey` under v1 because `validate()` rejects encrypted PEMs
+    /// at the front door. The test constructs `ImportedSSHKey` directly to
+    /// exercise the dormant code path so a future contributor who relaxes the
+    /// front-door reject (when bcrypt-pbkdf becomes available) gets the rest
+    /// of the pipeline already covered.
+    func testDerivePublicKeyFromEncryptedOpenSSHEd25519_DormantPath() throws {
+        let imported = SSHKeyImporter.ImportedSSHKey(
+            pemKind: .opensshPrivate,
+            algorithm: .ed25519,
+            normalisedPEM: fixtureOpenSSHEd25519Enc,
+            normalisedPEMData: Data(fixtureOpenSSHEd25519Enc.utf8),
+            isEncrypted: true
+        )
         let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
         XCTAssertEqual(publicKey.count, 51)
     }
 
-    func testDerivePublicKeyFromOpenSSHRSA3072() throws {
-        let imported = try SSHKeyImporter.validate(fixtureRSAOpenSSH3072)
+    /// RSA derivation paths are dormant under v1 (RSA is rejected at the
+    /// front door). The tests construct `ImportedSSHKey` directly so the
+    /// derivation pipeline stays under regression coverage for the day
+    /// upstream NIOSSH lands RSA signing and the front-door reject relaxes.
+    func testDerivePublicKeyFromOpenSSHRSA3072_DormantPath() throws {
+        let imported = SSHKeyImporter.ImportedSSHKey(
+            pemKind: .opensshPrivate,
+            algorithm: .rsa,
+            normalisedPEM: fixtureRSAOpenSSH3072,
+            normalisedPEMData: Data(fixtureRSAOpenSSH3072.utf8),
+            isEncrypted: false
+        )
         let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
         let prefix: [UInt8] = [
             0x00, 0x00, 0x00, 0x07,
             0x73, 0x73, 0x68, 0x2D, 0x72, 0x73, 0x61
         ]
         XCTAssertEqual(publicKey.prefix(prefix.count), Data(prefix))
-        // 3072-bit modulus mpint is ~385 bytes; ssh-rsa header ~11 bytes;
-        // typical e is 3-5 bytes. Total lands in a generous range.
         XCTAssertGreaterThan(publicKey.count, 380)
         XCTAssertLessThan(publicKey.count, 420)
     }
 
-    func testDerivePublicKeyFromPKCS1RSA3072() throws {
-        let imported = try SSHKeyImporter.validate(fixtureRSA3072PKCS1)
+    func testDerivePublicKeyFromPKCS1RSA3072_DormantPath() throws {
+        let imported = SSHKeyImporter.ImportedSSHKey(
+            pemKind: .rsaPrivate,
+            algorithm: .rsa,
+            normalisedPEM: fixtureRSA3072PKCS1,
+            normalisedPEMData: Data(fixtureRSA3072PKCS1.utf8),
+            isEncrypted: false
+        )
         let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
         let prefix: [UInt8] = [
             0x00, 0x00, 0x00, 0x07,
@@ -226,27 +215,20 @@ final class SSHKeyImporterTests: XCTestCase {
         XCTAssertEqual(publicKey.prefix(prefix.count), Data(prefix))
     }
 
-    func testDerivePublicKeyFromPKCS8RSA() throws {
-        let imported = try SSHKeyImporter.validate(fixturePKCS8RSA)
+    func testDerivePublicKeyFromPKCS8RSA_DormantPath() throws {
+        let imported = SSHKeyImporter.ImportedSSHKey(
+            pemKind: .pkcs8,
+            algorithm: .rsa,
+            normalisedPEM: fixturePKCS8RSA,
+            normalisedPEMData: Data(fixturePKCS8RSA.utf8),
+            isEncrypted: false
+        )
         let publicKey = try SSHKeyImporter.derivePublicKey(from: imported)
         let prefix: [UInt8] = [
             0x00, 0x00, 0x00, 0x07,
             0x73, 0x73, 0x68, 0x2D, 0x72, 0x73, 0x61
         ]
         XCTAssertEqual(publicKey.prefix(prefix.count), Data(prefix))
-    }
-
-    /// Encrypted traditional PEM RSA: n and e are inside the AES-encrypted
-    /// private payload, so derivation defers.
-    func testDerivePublicKeyEncryptedPKCS1Defers() {
-        guard let imported = try? SSHKeyImporter.validate(fixtureTraditionalRSAEncrypted) else {
-            return XCTFail("fixture failed to validate")
-        }
-        XCTAssertThrowsError(try SSHKeyImporter.derivePublicKey(from: imported)) { error in
-            guard case SSHKeyImporter.ImporterError.publicKeyDerivationDeferred = error else {
-                return XCTFail("expected publicKeyDerivationDeferred, got \(error)")
-            }
-        }
     }
 
     /// Traditional EC PEMs need SEC1 decoding; not implemented in v1.

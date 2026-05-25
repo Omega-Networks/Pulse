@@ -640,6 +640,28 @@ private struct ImportLegacyCredentialSheet: View {
             Text("Only continue if you need to import an existing key that a device or vendor already trusts.")
                 .foregroundStyle(.secondary)
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Pulse v1 supports").font(.callout.weight(.semibold))
+                Text("Unencrypted ECDSA (P-256, P-384, P-521) and Ed25519 private keys.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("Encrypted private keys and RSA are not yet supported.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("If your key is encrypted, re-export without a passphrase:")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("ssh-keygen -p -P \"oldpass\" -N \"\" -f keyfile")
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.secondary.opacity(0.08))
+            )
+
             Spacer(minLength: 0)
 
             HStack {

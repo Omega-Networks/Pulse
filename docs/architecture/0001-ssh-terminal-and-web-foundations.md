@@ -27,10 +27,17 @@ This ADR captures the non-negotiables. The implementation plan is layered on top
 
 ### 1. Credentials are device-bound by default
 
-| Tier | Storage | Exportable | Algorithm | UI label |
+| Tier | Storage | Exportable | Algorithm (v1) | UI label |
 |---|---|---|---|---|
 | **Primary** | Secure Enclave, biometric-gated | No | ECDSA P-256 | (none — default) |
-| **Legacy** | Keychain, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | Yes | Ed25519 / ECDSA / RSA | "Legacy (portable key)" |
+| **Legacy** | Keychain, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | Yes | ECDSA P-256/384/521, Ed25519 — unencrypted only | "Legacy (portable key)" |
+
+> **v1 portable scope amendment (Slice 3 commit 7b₁).** The original table read "Ed25519 / ECDSA / RSA" for the Legacy tier. Two findings during Slice 3 implementation narrow this for v1:
+>
+> - **RSA portable signing is deferred.** `swift-nio-ssh` 0.13.0 (the pinned version) and the `main` branch carry no RSA private-key path in `NIOSSHPrivateKey`; the only init methods accept Ed25519, P-256, P-384, P-521, and Secure-Enclave-P-256 keys. Forking the dependency to add an RSA case carries merge-debt for a security-critical library and is explicitly out of scope. RSA imports are rejected at the front door with operator-facing remediation guidance; the modulus-enforcement work from Slice 3 commit 3 and the public-key derivation from commit 4 stay as defensive scaffolding for the day upstream lands RSA signing.
+> - **Encrypted portable keys are deferred.** Decrypting `BEGIN ENCRYPTED PRIVATE KEY` PKCS#8 (PBKDF2 + AES) and OpenSSH new-format encrypted blobs (bcrypt-pbkdf + AES-CTR) requires implementing key-derivation functions in-house — the third-party crypto prohibition in §10 cuts both ways. Encrypted PEMs are rejected at import; operators re-export without a passphrase, then Pulse manages access through SE biometric or the at-rest data-protection-keychain class. Future slice may add encrypted-PEM support if a credible KDF source ships in Apple's SDKs.
+>
+> Both algorithms remain reserved in `SSHKeyImporter.Algorithm` and on the `SSHCredential` model so forward compatibility doesn't require a schema migration.
 
 - New credentials default to Secure Enclave generation. The "Import PEM" path requires an explicit second screen and the resulting credential is tagged `legacy` in the data model.
 - SE keys produce only a public-key export. `SecKeyCopyExternalRepresentation` on the private half must return `nil`; this is enforced by SE itself and verified in tests.
@@ -151,8 +158,8 @@ There are no other in-process terminal emulator options on Apple platforms. The 
 ## What ships when
 
 ### v1 (this feature)
-- Secure Enclave key generation + signing.
-- PEM import for legacy credentials.
+- Secure Enclave key generation + signing (ECDSA P-256).
+- PEM import for legacy credentials, unencrypted only: ECDSA P-256/384/521 (traditional, PKCS#8, OpenSSH new-format) and Ed25519 (OpenSSH new-format).
 - SSH certificate authentication (`NIOSSHCertifiedPublicKey`).
 - Polymorphic `HostTrust` (pinned case implemented; `trustedCA` schema reserved).
 - Audit metadata via `os_log`.
@@ -165,6 +172,10 @@ There are no other in-process terminal emulator options on Apple platforms. The 
 - FreeIPA enrolment UI and trusted-CA import.
 - Off-device log attestation (signed chain heads shipped to FreeIPA / internal log service).
 - iOS SwiftUI surface (the underlying Swift already compiles for iOS).
+
+### Future portable-tier additions (deferred from v1)
+- Encrypted PEM import (PBKDF2 + AES for PKCS#8, bcrypt-pbkdf + AES-CTR for OpenSSH new-format) — requires KDF implementations that don't fit the §10 third-party-crypto prohibition without an Apple-shipped source.
+- RSA portable signing — pending upstream `swift-nio-ssh` RSA private-key support.
 
 ### Out of scope
 - SFTP, agent forwarding, port forwarding, jump hosts.

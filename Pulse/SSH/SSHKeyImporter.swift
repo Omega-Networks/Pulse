@@ -106,7 +106,23 @@ enum SSHKeyImporter {
         /// RSA modulus is below the NZISM 17.1.40 hard floor of 2048 bits.
         /// The associated value is the observed bit length so the UI can
         /// surface a precise message ("found 1024 bits, need 2048+").
+        ///
+        /// Note: under the Slice 3 7b₁ v1 scope, RSA is rejected at the front
+        /// door before the modulus check runs (see `unsupportedAlgorithmInV1`).
+        /// This case remains as defensive scaffolding for the day upstream
+        /// `swift-nio-ssh` lands RSA private-key signing and the front-door
+        /// reject can be relaxed.
         case rsaModulusTooSmall(observed: Int)
+        /// Algorithm classified successfully but the v1 portable tier doesn't
+        /// sign with it. `remediation` is operator-facing next-step copy.
+        /// See ADR 0001 §1 v1 portable scope amendment.
+        case unsupportedAlgorithmInV1(name: String, remediation: String)
+        /// Encrypted portable keys aren't supported in v1: the KDFs needed to
+        /// decrypt them (bcrypt-pbkdf for OpenSSH new-format, PBKDF2 for
+        /// encrypted PKCS#8) fall on the wrong side of §10's third-party-crypto
+        /// prohibition. `remediation` tells the operator how to re-export
+        /// without the passphrase.
+        case encryptedPortableKeyNotSupportedInV1(remediation: String)
         /// PKCS#1 / PKCS#8 ASN.1 payload doesn't parse far enough for us to
         /// reach the modulus. Treated like a truncation: the user re-imports.
         case truncatedASN1
@@ -144,6 +160,10 @@ enum SSHKeyImporter {
                 return "Public key can't be derived from this PEM at import time; it will be filled in on first use."
             case .publicKeyDerivationNotSupported(let reason):
                 return "Public key derivation isn't supported for this key format: \(reason)."
+            case .unsupportedAlgorithmInV1(let name, let remediation):
+                return "\(name) is not supported in Pulse v1. \(remediation)"
+            case .encryptedPortableKeyNotSupportedInV1(let remediation):
+                return "Encrypted private keys are not supported in Pulse v1. \(remediation)"
             }
         }
     }
@@ -154,6 +174,27 @@ enum SSHKeyImporter {
     /// SSH-adjacent audit signal lives under a `ssh.*` category. The modulus
     /// warning band (2048..<3072) fires through this logger as `credential.weakRSA`.
     private static let logger = Logger(subsystem: "pulse", category: "ssh.credentials")
+
+    // MARK: - v1 portable-tier scope (ADR §1 amendment)
+
+    /// Operator remediation surfaced alongside `unsupportedAlgorithmInV1` for
+    /// RSA. The Secure Enclave default is intentionally recommended first;
+    /// ECDSA and Ed25519 are the portable-tier alternatives.
+    fileprivate static let rsaRemediation =
+        "Generate an Ed25519 key with `ssh-keygen -t ed25519` or an ECDSA key with `ssh-keygen -t ecdsa -b 256`, " +
+        "or use the Secure Enclave path (default in Pulse)."
+
+    /// Operator remediation surfaced alongside
+    /// `encryptedPortableKeyNotSupportedInV1`. The Pulse v1 portable tier
+    /// rests on Apple's data-protection keychain (and, for the Primary tier,
+    /// Secure Enclave biometric) for at-rest protection of the imported key;
+    /// the operator removes the passphrase from the exported PEM rather than
+    /// Pulse decrypting it client-side.
+    fileprivate static let encryptedPortableRemediation =
+        "Re-export the key without a passphrase: " +
+        "`ssh-keygen -p -P \"oldpassphrase\" -N \"\" -f /path/to/key`. " +
+        "Pulse v1 protects the imported key at rest via the data-protection keychain; " +
+        "the Secure Enclave path (default) is recommended for new credentials."
 
     // MARK: - RSA policy
 
@@ -226,14 +267,19 @@ enum SSHKeyImporter {
         case .rsaPrivate:
             algorithm = .rsa
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
-            // NZISM 17.1.40. Encrypted traditional PEMs can't be modulus-checked
-            // at import time without the passphrase; the signer rechecks after
-            // decryption. Unencrypted PEMs are checked now so the operator sees
-            // the rejection in the import sheet rather than at first sign.
-            if !isEncrypted {
-                let bits = try rsaModulusBitsFromPKCS1(payload)
-                try enforceRSAModulusPolicy(bits: bits, context: "PKCS#1 traditional PEM")
-            }
+            // Front-door reject. RSA portable signing is deferred (see ADR
+            // §1 v1 portable scope amendment); the modulus check below is
+            // unreachable through normal flow today but stays as defensive
+            // scaffolding for when upstream NIOSSH lands RSA signing.
+            throw ImporterError.unsupportedAlgorithmInV1(
+                name: "RSA",
+                remediation: rsaRemediation
+            )
+            // unreachable; preserved for the day the reject above is relaxed:
+            // if !isEncrypted {
+            //     let bits = try rsaModulusBitsFromPKCS1(payload)
+            //     try enforceRSAModulusPolicy(bits: bits, context: "PKCS#1 traditional PEM")
+            // }
         case .ecPrivate:
             // The curve OID lives inside the SEC1 ASN.1 payload, which this importer
             // doesn't decode. Surface as the family-level case so the UI doesn't
@@ -241,22 +287,29 @@ enum SSHKeyImporter {
             // parses the SEC1 payload.
             algorithm = .ecdsaUnknownCurve
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
-        case .pkcs8:
-            // PKCS#8 PrivateKeyInfo wraps an algorithm-specific key. We classify
-            // the inner OID and, for RSA, descend into the OCTET STRING for a
-            // PKCS#1-shaped modulus check. Non-RSA PKCS#8 falls through as
-            // .unknown for now; the signer narrows the algorithm at sign time.
-            isEncrypted = false
-            if let rsaPayload = try pkcs8RSAInnerPKCS1(payload) {
-                algorithm = .rsa
-                let bits = try rsaModulusBitsFromPKCS1(rsaPayload)
-                try enforceRSAModulusPolicy(bits: bits, context: "PKCS#8 PEM")
-            } else {
-                algorithm = .unknown
+            if isEncrypted {
+                throw ImporterError.encryptedPortableKeyNotSupportedInV1(
+                    remediation: encryptedPortableRemediation
+                )
             }
-        case .encryptedPkcs8:
+        case .pkcs8:
+            // PKCS#8 PrivateKeyInfo wraps an algorithm-specific key. RSA is
+            // rejected at the front door per the v1 scope. Non-RSA PKCS#8
+            // (ECDSA, in practice) falls through as .unknown; CryptoKit's
+            // `pemRepresentation` initializers handle the curve detection at
+            // signing time in the auth delegate.
+            isEncrypted = false
+            if try pkcs8RSAInnerPKCS1(payload) != nil {
+                throw ImporterError.unsupportedAlgorithmInV1(
+                    name: "RSA",
+                    remediation: rsaRemediation
+                )
+            }
             algorithm = .unknown
-            isEncrypted = true
+        case .encryptedPkcs8:
+            throw ImporterError.encryptedPortableKeyNotSupportedInV1(
+                remediation: encryptedPortableRemediation
+            )
         case .dsaPrivate:
             algorithm = .dsa
             isEncrypted = hasEncryptedTraditionalPEMHeader(in: normalised)
@@ -365,28 +418,45 @@ enum SSHKeyImporter {
         let algorithmName = try readSSHString(from: publicBlob, cursor: &pubCursor)
         let alg = String(data: algorithmName, encoding: .ascii) ?? ""
 
+        // Front-door reject for v1-unsupported algorithms. RSA is rejected
+        // regardless of cipher; encrypted Ed25519/ECDSA are rejected via the
+        // encryption gate below.
+        switch alg {
+        case "ssh-rsa", "rsa-sha2-256", "rsa-sha2-512":
+            throw ImporterError.unsupportedAlgorithmInV1(
+                name: "RSA",
+                remediation: rsaRemediation
+            )
+        default:
+            break
+        }
+
+        if isEncrypted {
+            throw ImporterError.encryptedPortableKeyNotSupportedInV1(
+                remediation: encryptedPortableRemediation
+            )
+        }
+
         let mapped: Algorithm
         switch alg {
         case "ssh-ed25519":            mapped = .ed25519
         case "ecdsa-sha2-nistp256":    mapped = .ecdsaP256
         case "ecdsa-sha2-nistp384":    mapped = .ecdsaP384
         case "ecdsa-sha2-nistp521":    mapped = .ecdsaP521
-        case "ssh-rsa", "rsa-sha2-256", "rsa-sha2-512":
-            mapped = .rsa
-            // NZISM 17.1.40. The public-key blob layout after the algorithm
-            // name for ssh-rsa is `mpint e, mpint n`. Encrypted new-format keys
-            // still carry an unencrypted public-key blob — the encryption only
-            // covers the private half — so the modulus is checkable regardless
-            // of `isEncrypted`.
-            let modulusBits = try rsaModulusBitsFromOpenSSHPublicBlob(publicBlob)
-            try enforceRSAModulusPolicy(bits: modulusBits, context: "OpenSSH new-format")
         default:
             mapped = .unknown
         }
         return (mapped, isEncrypted)
     }
 
-    // MARK: - RSA modulus extraction
+    // MARK: - RSA modulus extraction (dormant under v1 scope)
+
+    // The helpers below are unreachable through normal flow under the Slice 3 7b₁
+    // v1 scope (RSA imports are rejected at the front door in `validate`). They
+    // remain in place as defensive scaffolding for the day upstream `swift-nio-ssh`
+    // gains RSA private-key signing support and the front-door reject is relaxed;
+    // a future contributor lifting that reject inherits a working NZISM 17.1.40
+    // modulus check without re-implementing commit 4238b35.
 
     /// Reads the modulus `n` from a PKCS#1 RSAPrivateKey DER payload and returns
     /// its bit length. The structure is:
