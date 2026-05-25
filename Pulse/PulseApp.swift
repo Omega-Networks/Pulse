@@ -113,6 +113,14 @@ struct PulseApp: App {
         } catch {
             fatalError("Failed to initialize modelContainer: \(error)")
         }
+
+        // Session-log retention. Walks <ApplicationSupport>/Pulse/Sessions/
+        // and unlinks .pulselog + .meta pairs older than the default
+        // 365-day window per ADR §6. Detached Task — never on the launch
+        // critical path; a stuck purge cannot delay first paint, and
+        // failures are reported via session.recording.purgeFailed under
+        // the ssh.recording os_log category.
+        SessionLogRetention.purgeAtLaunch()
     }
 
     /**

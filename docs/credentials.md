@@ -141,6 +141,39 @@ The secret-material cleanup failed. The credential row stays in place so you can
 **The credential editor refuses an imported PEM.**
 The classifier didn't recognise it. Two likely reasons: a corrupted paste (line breaks munged by a chat app), or DSA (rejected on purpose; modern OpenSSH dropped DSA support). Try copying the PEM directly from the file rather than through an intermediate app.
 
+## Session recording
+
+Each credential carries a `recordSessions: Bool` toggle, off by default. Operators flip it from Settings → SSH (right-click a credential row → "Record sessions"). When on, every SSH session driven by that credential writes an encrypted log to disk under `<Application Support>/Pulse/Sessions/dev-<Device.id>/<timestamp>_<sessionUUID>.{pulselog,meta}` (or `Pulse/Sessions/unassigned/` for ad-hoc connections that aren't tied to a NetBox device). The toggle is suggested-on at credential creation time for break-glass and production-change credentials; the default-off posture matches ADR §6's opt-in stance.
+
+The `.pulselog` is JSONL with one base64-encoded `AES.GCM.SealedBox.combined` per line. The session's symmetric key (256-bit) is wrapped to a device-resident Secure-Enclave ECDH-P256 key (the "log wrapping key", one per device) via `ECDH + HKDF<SHA256> + AES.GCM`, end-to-end CryptoKit-native. Every record carries a `prev` field with the SHA-256 of the previous record's ciphertext bytes — a hash chain that detects insertion, deletion, reordering, and single-byte tampering at replay time.
+
+The `.meta` sidecar is unencrypted searchable metadata: device ID, credential ID, username, host, port, opened/closed timestamps, exit cause, record count, and the chain-head hash. Readable without biometric; lets a future browser list and search recordings without prompting per row. Decrypting a `.pulselog` requires biometric on this device's wrapping key — the unwrap happens through `SecureEnclave.P256.KeyAgreement.PrivateKey.sharedSecretFromKeyAgreement`, which fires Touch ID / device passcode the same way SSH signing does.
+
+**File-protection posture, honestly.** On iOS, the recording directory carries `FileProtectionType.complete` as defence-in-depth. On macOS there is no per-file protection class equivalent — `FileProtectionType` symbols compile but only `.none` carries real semantics outside the iOS family, so the macOS at-rest answer is FileVault (whole-volume) and we don't manufacture macOS-side ceremony that wouldn't add real protection. The actual confidentiality guarantee on both platforms is the SE-wrapped per-session key: `.pulselog` ciphertext is unreadable without biometric on the device that recorded it, FileVault or no FileVault. This iOS-vs-macOS asymmetry is documented openly rather than papered over.
+
+**Retention** is configurable per tenant; the default is one year. A retention pass runs at every app launch on a detached background task — never on the critical path for first paint. Failures emit `session.recording.purgeFailed` under category `ssh.recording` and the app continues; the next launch retries.
+
+**Recordings do not migrate.** This is the operator-facing implication of "the wrapping key is device-bound":
+
+- The wrapping-key keychain item is `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and `kSecAttrSynchronizable: false`. It cannot leave the Secure Enclave, cannot be exported, cannot follow you to a new Mac.
+- `.pulselog` and `.meta` files do appear in Time Machine and Migration Assistant backups (they're regular files under Application Support). The wrapping key does not. So on a new Mac after a restore, the files are present but unreadable — biometric will fire, the SE will refuse the ECDH, and replay will surface as "session key unwrap failed". This is by design and inherits the same trust-boundary posture as SSH credentials themselves.
+- The "Forget this credential" gesture and "Delete this device's recordings" gesture (future Slice) both make the recordings recoverable only via an off-device archive that was made before deletion. There is no key-recovery path.
+
+Operators who need long-term audit archives outside the device should use the future biometric-gated export flow (deferred from Slice 4) to materialise a decrypted bundle for placement in their existing archive system. The off-device chain-head attestation surface — signed chain heads forwarded to FreeIPA or an internal log service — is scheduled for v2 per ADR §6.
+
+**Mid-session failures are visible.** A `.pulselog` is either complete-and-chain-validated end to end, or it ended early and `.meta.exit_cause` says `recording_failed_midstream`. There are no "valid chain with holes" recordings and no sentinel gap records — the writer transitions to a terminal stop on the first structural failure (encryption error, disk full, internal queue overflow) and emits `session.recording.failed` under category `ssh.recording`. The SSH session itself continues unaffected; the byte pump never blocks on recording.
+
+**Audit events** under the `pulse` subsystem, category `ssh.recording` (plus `ssh.credentials` for the toggle):
+
+- `credential.recording.enabled`, `credential.recording.disabled` — operator gestures.
+- `session.recording.opened`, `session.recording.closed` — recording lifecycle; `closed` carries record count, chain-head hash, and duration.
+- `session.recording.failed` — terminal-stop with `reason` field (`seal_failure`, `write_failure`, `encode_failure`, `back_pressure_overflow`).
+- `session.recording.replayUnwrapped` — biometric succeeded; the operator now has access to the recorded plaintext. Fires regardless of subsequent chain state.
+- `session.recording.replayChainBroken` — chain validation failed during replay. Distinct event so SIEM rules can fire cleanly on tamper-after-access.
+- `session.recording.purged`, `session.recording.purgeFailed` — launch-time retention outcomes.
+
+Filter the full set with `log show --predicate 'subsystem == "pulse" AND category BEGINSWITH "ssh"'`. Session bytes and key material are never carried in audit signal — only identifiers and outcomes.
+
 ## iCloud sync
 
 Nothing in Pulse's SSH credential model is syncable. Both tiers are `ThisDeviceOnly`. The `kSecAttrSynchronizable` flag is explicitly set to `false` on Secure Enclave keys (defence-in-depth — the default for the data-protection keychain is already non-syncing, but Pulse sets it explicitly so a future code change can't quietly opt in). Legacy keys use `AfterFirstUnlockThisDeviceOnly`, which is also non-syncing.
