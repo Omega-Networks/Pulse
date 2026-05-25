@@ -195,6 +195,13 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
         let logger = self.logger
         let now = self.now
 
+        // The store lookup is `async throws`, so it has to run off the
+        // EventLoop. Hop to the Swift cooperative pool with `Task { ... }`,
+        // complete the work, then fill the `validationCompletePromise` —
+        // NIOCore's promise machinery handles the back-hop to the channel's
+        // EventLoop internally. Do not "optimise" by inlining the lookup onto
+        // the calling thread: the SwiftData fetch can block, and blocking the
+        // EventLoop stalls every other channel sharing it.
         Task {
             let decision: HostKeyDecision
             do {
