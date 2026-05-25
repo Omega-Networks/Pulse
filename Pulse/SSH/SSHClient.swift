@@ -325,16 +325,3 @@ actor SSHClient {
         eventLoopGroup = nil
     }
 }
-
-// MARK: - SSHSession exec helper
-
-extension SSHSession {
-    /// Sends an `exec` channel request to the server. Called by `SSHClient`'s
-    /// public `exec(_:)` after the session opens. Errors during the request
-    /// land on the inbound handler path (which signals the session's exit
-    /// handler) so callers don't observe a separate failure.
-    func requestExec(_ command: String) async {
-        let event = SSHChannelRequestEvent.ExecRequest(command: command, wantReply: false)
-        _ = try? await childChannel.triggerUserOutboundEvent(event).get()
-    }
-}

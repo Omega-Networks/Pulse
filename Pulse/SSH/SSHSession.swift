@@ -110,6 +110,18 @@ actor SSHSession {
         handlers.withLockedValue { $0.exit = handler }
     }
 
+    /// Sends an `exec` channel request to the server. Called by `SSHClient`'s
+    /// public `exec(_:)` after the session opens to run a one-shot command
+    /// (Slice 3's debug-menu path uses this; Slice 5's SwiftTerm consumer
+    /// will switch to `pty-req` + `shell` instead). Errors during the
+    /// request land on the inbound handler path (which signals the session's
+    /// exit handler) so callers don't observe a separate failure.
+    func requestExec(_ command: String) async {
+        guard !closed else { return }
+        let event = SSHChannelRequestEvent.ExecRequest(command: command, wantReply: false)
+        _ = try? await childChannel.triggerUserOutboundEvent(event).get()
+    }
+
     /// Sends a `window-change` SSH channel request to update the PTY
     /// dimensions. Slice 3's debug menu doesn't drive resize; the method is
     /// shaped for Slice 5's terminal view, which will call this on every
