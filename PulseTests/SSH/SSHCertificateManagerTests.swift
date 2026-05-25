@@ -117,6 +117,54 @@ final class SSHCertificateManagerTests: XCTestCase {
         XCTAssertFalse(SSHCertificateManager.isValid(meta, at: Date(timeIntervalSince1970: 201)))
     }
 
+    // MARK: - fingerprint(forOpenSSHTextLine:)
+
+    /// Regression guard for the `algo BASE64 comment` parsing path. ssh-keygen
+    /// writes a trailing comment by default; a naive splitter that takes the
+    /// substring after the first space would feed `"BASE64 comment"` into the
+    /// base64 decoder and silently yield "SHA256:(unavailable)" — which would
+    /// then mean cert-attested host connections never match a stored
+    /// `HostTrust.trustedCA` fingerprint. Verified against `ssh-keygen -lf ca.pub`
+    /// from the same fixture-generation session as the cert blob above.
+    func testFingerprintHandlesCommentField() {
+        let lineWithComment =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPLGQLfTAyBxjYM31zQcBpu5q30wlYwj4/XXk63QC0fG test ca"
+        let expected = "SHA256:TQzjwzwkjG9iTo2J5mAAhyGgjz2edyUdloeYoS6SxII"
+        XCTAssertEqual(
+            SSHCertificateManager.fingerprint(forOpenSSHTextLine: lineWithComment),
+            expected
+        )
+    }
+
+    func testFingerprintHandlesLineWithoutComment() {
+        let lineNoComment =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPLGQLfTAyBxjYM31zQcBpu5q30wlYwj4/XXk63QC0fG"
+        let expected = "SHA256:TQzjwzwkjG9iTo2J5mAAhyGgjz2edyUdloeYoS6SxII"
+        XCTAssertEqual(
+            SSHCertificateManager.fingerprint(forOpenSSHTextLine: lineNoComment),
+            expected
+        )
+    }
+
+    func testFingerprintMalformedReturnsUnavailable() {
+        // Single-token (no base64 payload): split yields one part, guard fails.
+        XCTAssertEqual(
+            SSHCertificateManager.fingerprint(forOpenSSHTextLine: "no-base64-here"),
+            "SHA256:(unavailable)"
+        )
+        // Non-base64 garbage as the payload: after `.ignoreUnknownCharacters`
+        // strips the `!` chars the residue isn't a valid base64 length, so
+        // `Data(base64Encoded:)` returns nil and the guard catches it.
+        XCTAssertEqual(
+            SSHCertificateManager.fingerprint(forOpenSSHTextLine: "ssh-ed25519 !!!not-base64!!!"),
+            "SHA256:(unavailable)"
+        )
+        XCTAssertEqual(
+            SSHCertificateManager.fingerprint(forOpenSSHTextLine: ""),
+            "SHA256:(unavailable)"
+        )
+    }
+
     // Note: SSHCertificateManager.serialise(_:) round-trip coverage requires
     // constructing a NIOSSHCertifiedPublicKey directly, which needs `import NIOSSH`
     // in the test target. The test target presently reaches NIOSSH transitively

@@ -108,12 +108,31 @@ enum SSHCertificateManager {
     /// `SHA256:<base64-no-padding>`. Matches `ssh-keygen -l -E sha256` output and the
     /// fingerprint format `HostTrust.trustedCA` and `HostTrust.pinned` rows store.
     private static func opensshSHA256Fingerprint(of key: NIOSSHPublicKey) -> String {
-        // `String.init(openSSHPublicKey:)` emits "algo BASE64". The base64 payload is
-        // the same wire bytes a host-key handler hashes for the pinned-fingerprint
-        // comparison, so we recover them by splitting on the first space and decoding.
-        let text = String(openSSHPublicKey: key)
-        let parts = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-        guard parts.count >= 2, let wire = Data(base64Encoded: String(parts[1])) else {
+        // `String.init(openSSHPublicKey:)` emits "algo BASE64" with no comment today,
+        // but routing through the textual-line helper means the host-key delegate
+        // (Slice 3 commit 6) and any future caller that fingerprints a textual form
+        // with a comment (`algo BASE64 user@host`) both go through the same defensive
+        // split. A bug here would mean cert-attested connections never match.
+        fingerprint(forOpenSSHTextLine: String(openSSHPublicKey: key))
+    }
+
+    /// Computes the OpenSSH SHA-256 fingerprint from a textual public-key line of the
+    /// form `algo BASE64` or `algo BASE64 comment`. The wire bytes for the digest are
+    /// the second whitespace-separated token's base64-decoded payload.
+    ///
+    /// Internal rather than private so the comment-bearing input case has a direct
+    /// regression test; production callers reach this through
+    /// `opensshSHA256Fingerprint(of:)`.
+    static func fingerprint(forOpenSSHTextLine line: String) -> String {
+        // Three-way split tolerates the `algo BASE64 comment` form ssh-keygen emits
+        // by default. `parts[1]` is the base64 payload; any trailing comment lands
+        // in `parts[2]` and is discarded. `.ignoreUnknownCharacters` then defends
+        // against incidental whitespace inside `parts[1]` if a caller already
+        // pre-joined fields.
+        let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard parts.count >= 2,
+              let wire = Data(base64Encoded: String(parts[1]), options: .ignoreUnknownCharacters)
+        else {
             return "SHA256:(unavailable)"
         }
         let digest = SHA256.hash(data: wire)
