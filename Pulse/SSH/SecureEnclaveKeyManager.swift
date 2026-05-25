@@ -38,7 +38,15 @@ import Security
 /// **Storage shape (Slice 3+):** keys are managed through CryptoKit's
 /// `SecureEnclave.P256.Signing.PrivateKey` and persisted as the opaque
 /// `dataRepresentation` blob inside a `kSecClassGenericPassword` Keychain item
-/// keyed by `(service, account)` = `("nz.omega.pulse.ssh", credentialUUID)`.
+/// keyed by `(service, account)` = `("<bundle-id>.ssh", credentialUUID)`.
+/// The service name is derived from `Bundle.main.bundleIdentifier` at runtime
+/// so it tracks the operator's `BUNDLE_IDENTIFIER` xcconfig setting (e.g.,
+/// `nz.net.omega.pulse` → `nz.net.omega.pulse.ssh`). Forks or beta channels
+/// that change the bundle ID automatically get a disjoint keychain namespace,
+/// which is the structural enforcement of ADR §1's bundle-ID reachability
+/// contract: a re-signed build's credentials are never reachable from a
+/// differently-signed build.
+///
 /// The dataRepresentation is encrypted to this device's Secure Enclave and is
 /// useless on any other device or to any other application; reading the blob
 /// does not trigger biometric and is not a private-key extraction.
@@ -106,7 +114,19 @@ enum SecureEnclaveKeyManager {
     /// Keychain service name shared by every Pulse SE credential. The
     /// `(service, account)` pair is the Keychain's idiomatic identification
     /// for generic-password items; `account` carries the credential UUID.
-    private static let keychainService = "nz.omega.pulse.ssh"
+    ///
+    /// Derived from `Bundle.main.bundleIdentifier` rather than hardcoded so
+    /// it tracks the operator's `BUNDLE_IDENTIFIER` xcconfig (which flows
+    /// into `PRODUCT_BUNDLE_IDENTIFIER` in pbxproj and on into the bundle's
+    /// `CFBundleIdentifier` at build time). The fallback literal is the
+    /// Omega default; it covers test contexts where `Bundle.main` may not
+    /// resolve to a configured bundle, and any deployment that didn't
+    /// populate `Development.xcconfig` will end up under the fallback —
+    /// which is the right safety net rather than a crash.
+    private static let keychainService: String = {
+        let bundleID = Bundle.main.bundleIdentifier ?? "nz.net.omega.pulse"
+        return "\(bundleID).ssh"
+    }()
 
     /// OpenSSH algorithm identifier for SE-backed keys. Centralised so the wire-format
     /// encoder and the `authorized_keys` rendering can't drift.

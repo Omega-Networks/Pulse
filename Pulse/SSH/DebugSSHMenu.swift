@@ -71,10 +71,9 @@ struct DebugSSHWindow: View {
 
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \SSHCredential.label) private var credentials: [SSHCredential]
-    @Query private var devices: [Device]
 
     @State private var selectedCredentialID: UUID?
-    @State private var selectedDeviceID: Int64?
+    @State private var host: String = Self.defaultLoopbackV4
     @State private var username: String = NSUserName()
     @State private var port: Int = 22
     @State private var command: String = "ls -la /"
@@ -82,13 +81,16 @@ struct DebugSSHWindow: View {
     @State private var status: String = "Ready"
     @State private var isConnecting: Bool = false
 
+    private static let defaultLoopbackV4 = "127.0.0.1"
+    private static let defaultLoopbackV6 = "::1"
+
     private let logger = Logger(subsystem: "pulse", category: "ssh.debug")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             credentialPicker
-            devicePicker
+            hostField
             connectionFields
             actionRow
             outputArea
@@ -119,23 +121,30 @@ struct DebugSSHWindow: View {
         }
     }
 
-    private var devicePicker: some View {
-        // Filter at view time rather than in the @Query predicate. SwiftData
-        // predicates on optional Strings are awkward (Optional<String> is not
-        // directly comparable to nil in the macro); filtering here keeps the
-        // logic readable. The picker still caps at the first 200 devices —
-        // anything past that is unworkable in a Picker and unrealistic for a
-        // debug surface.
-        let candidates = devices
-            .filter { $0.primaryIP != nil }
-            .sorted { ($0.name ?? "") < ($1.name ?? "") }
-            .prefix(200)
-        return Picker("Device", selection: $selectedDeviceID) {
-            Text("Select…").tag(Int64?.none)
-            ForEach(Array(candidates), id: \.id) { device in
-                Text("\(device.name ?? "(unnamed)") — \(device.primaryIP ?? "?")")
-                    .tag(Int64?.some(device.id))
+    /// Free-form host field with quick-fill buttons for IPv4 and IPv6
+    /// loopback. Defaults to `127.0.0.1` because Slice 3 verification runs
+    /// against a throwaway sshd on the dev machine; any hostname or IP is
+    /// accepted so the same window can drive against staging or a real
+    /// device whose `Device.primaryIP` is known. No device picker — at
+    /// scale that path runs against a million-row @Query and only the
+    /// operator-facing Slice 5 surface justifies the rendering cost.
+    /// `DirectTransport`'s `NIOTSConnectionBootstrap` resolves both
+    /// stacks via Happy Eyeballs (ADR §8 dual-stack invariant), so the
+    /// IPv6 quick-fill is functional rather than cosmetic.
+    private var hostField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField("Host", text: $host)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                Button("IPv4") { host = Self.defaultLoopbackV4 }
+                    .help("Fill with the IPv4 loopback (127.0.0.1).")
+                Button("IPv6") { host = Self.defaultLoopbackV6 }
+                    .help("Fill with the IPv6 loopback (::1).")
             }
+            Text("Default is the loopback address. Any hostname or IP is accepted.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -186,7 +195,7 @@ struct DebugSSHWindow: View {
 
     private var canConnect: Bool {
         selectedCredentialID != nil
-            && selectedDeviceID != nil
+            && !host.trimmingCharacters(in: .whitespaces).isEmpty
             && !username.trimmingCharacters(in: .whitespaces).isEmpty
             && port > 0
             && !command.trimmingCharacters(in: .whitespaces).isEmpty
@@ -219,18 +228,20 @@ struct DebugSSHWindow: View {
     private func runOnce() async {
         guard
             let credentialID = selectedCredentialID,
-            let deviceID = selectedDeviceID,
-            let credential = credentials.first(where: { $0.id == credentialID }),
-            let device = devices.first(where: { $0.id == deviceID }),
-            let host = device.primaryIP
+            let credential = credentials.first(where: { $0.id == credentialID })
         else {
-            status = "Pick a credential and a device first."
+            status = "Pick a credential first."
+            return
+        }
+        let trimmedHost = host.trimmingCharacters(in: .whitespaces)
+        guard !trimmedHost.isEmpty else {
+            status = "Enter a host."
             return
         }
 
         isConnecting = true
         output = ""
-        status = "Connecting to \(host):\(port)…"
+        status = "Connecting to \(trimmedHost):\(port)…"
         defer { isConnecting = false }
 
         let knownHostStore = SwiftDataKnownHostStore(modelContainer: modelContext.container)
@@ -241,7 +252,7 @@ struct DebugSSHWindow: View {
 
         let client = SSHClient(
             transport: DirectTransport(),
-            host: host,
+            host: trimmedHost,
             port: port,
             username: username,
             credentialID: credentialID,
