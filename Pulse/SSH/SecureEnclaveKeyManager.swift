@@ -35,7 +35,7 @@ import Security
 /// compatibility note, not a security one. See ADR 0001 §1.
 ///
 /// Every signature triggers a biometric / device-passcode prompt because the keys are
-/// created with `.privateKeyUsage` combined with `.biometryCurrentSet`. No caching of
+/// created with `.privateKeyUsage` combined with `.biometryAny`. No caching of
 /// the authorisation across signatures. The prompt is driven by `SecKeyCreateSignature`
 /// itself; callers must not invoke `LAContext.evaluatePolicy` directly.
 ///

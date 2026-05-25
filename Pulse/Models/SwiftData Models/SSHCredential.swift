@@ -34,7 +34,7 @@ import SwiftData
 /// across tiers. There is deliberately no `.password` case (see ADR 0001 §2).
 enum SSHCredentialTier: String, Codable, Sendable {
     /// Private key resides in the Secure Enclave. Non-exportable. Every signature is
-    /// gated by `kSecAccessControlBiometryCurrentSet` (or device passcode). Default for new
+    /// gated by `kSecAccessControlBiometryAny` (or device passcode). Default for new
     /// credentials. ECDSA P-256 (the only algorithm the SE supports).
     case secureEnclave
 
