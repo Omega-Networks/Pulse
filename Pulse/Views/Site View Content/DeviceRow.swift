@@ -29,14 +29,15 @@ import SwiftData
 struct DeviceRow: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openWindow) private var openWindow
     var deviceId: Int64
     @Query var device: [Device]
     @Binding var selectedDevice: Device?
-    
+
     init(deviceId: Int64, selectedDevice: Binding<Device?>) {
         self.deviceId = deviceId
         self._selectedDevice = selectedDevice
-        
+
         _device = Query(filter: #Predicate<Device> { $0.id == deviceId } )
     }
     
@@ -82,7 +83,19 @@ struct DeviceRow: View {
             }) {
                 Label("Edit", systemImage: "pencil")
             }
-            
+
+            Button(action: {
+                if let device = device.first {
+                    openWindow(value: device.id)
+                }
+            }) {
+                Label("Open SSH Terminal", systemImage: "terminal.fill")
+            }
+            // Disabled when the device has no primary IP recorded in
+            // NetBox: the operator-facing terminal needs a routable
+            // host to connect to.
+            .disabled(device.first?.primaryIP?.isEmpty != false)
+
             Button(role: .destructive, action: {
                 if let device = device.first {
                     let deviceId = device.id

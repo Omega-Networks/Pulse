@@ -214,10 +214,23 @@ final class Device {
         let r = Double((rgb & 0xFF0000) >> 16) / 255.0
         let g = Double((rgb & 0x00FF00) >> 8) / 255.0
         let b = Double(rgb & 0x0000FF) / 255.0
-        
+
         return Color(red: r, green: g, blue: b)
     }
 }
+
+// MARK: - Identifiable
+
+/// SwiftUI's `WindowGroup(for: Device.ID.self)` routing and any
+/// `ForEach(_:)` that doesn't take an explicit `id:` keypath require
+/// `Identifiable`. `Device.id` is already `@Attribute(.unique) Int64`
+/// (the NetBox primary key) which satisfies the protocol without any
+/// additional work; the empty extension is a structural marker that
+/// the model participates in identity-based SwiftUI APIs. ADR §9 uses
+/// `WindowGroup("SSH Terminal", for: Device.ID.self)` as the entry
+/// point for the operator-facing terminal, so this conformance is
+/// load-bearing for the routing rather than cosmetic.
+extension Device: Identifiable {}
 
 //MARK: API request for device as a reference
 //{

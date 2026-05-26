@@ -201,6 +201,12 @@ struct PulseApp: App {
             }
         }
 
+        // Operator-facing SSH terminal. Routed per-`Device.ID`, which
+        // gives single-window-per-device behaviour via SwiftUI's
+        // per-value `WindowGroup` activation semantics. See
+        // `SSHTerminalScene` for the wrapping rationale.
+        SSHTerminalScene(modelContainer: modelContainer)
+
         #if DEBUG
         WindowGroup("Debug SSH", id: DebugSSHWindow.windowID) {
             DebugSSHWindow()

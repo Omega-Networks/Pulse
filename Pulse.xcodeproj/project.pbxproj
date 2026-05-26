@@ -90,6 +90,8 @@
 		A11CAFE0000000000000114 /* SSHSessionRecordingTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000115 /* SSHSessionRecordingTap.swift */; };
 		A11CAFE0000000000000116 /* SessionLogReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000117 /* SessionLogReplay.swift */; };
 		A11CAFE0000000000000118 /* PulseTerminalAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */; };
+		A11CAFE000000000000011B /* SSHTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000011C /* SSHTerminalView.swift */; };
+		A11CAFE000000000000011D /* SSHTerminalWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000011E /* SSHTerminalWindow.swift */; };
 		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
 		A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F8 /* PulseTransport.swift */; };
@@ -275,6 +277,8 @@
 		A11CAFE0000000000000115 /* SSHSessionRecordingTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSessionRecordingTap.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000117 /* SessionLogReplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogReplay.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTerminalAdapter.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000011C /* SSHTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalView.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000011E /* SSHTerminalWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalWindow.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F8 /* PulseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTransport.swift; sourceTree = "<group>"; };
@@ -751,6 +755,8 @@
 			isa = PBXGroup;
 			children = (
 				A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */,
+				A11CAFE000000000000011C /* SSHTerminalView.swift */,
+				A11CAFE000000000000011E /* SSHTerminalWindow.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -1012,6 +1018,8 @@
 				A11CAFE0000000000000114 /* SSHSessionRecordingTap.swift in Sources */,
 				A11CAFE0000000000000116 /* SessionLogReplay.swift in Sources */,
 				A11CAFE0000000000000118 /* PulseTerminalAdapter.swift in Sources */,
+				A11CAFE000000000000011B /* SSHTerminalView.swift in Sources */,
+				A11CAFE000000000000011D /* SSHTerminalWindow.swift in Sources */,
 				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
 				A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */,
 				A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */,

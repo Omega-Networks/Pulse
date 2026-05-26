@@ -124,6 +124,54 @@ actor SSHSession {
         _ = try? await childChannel.triggerUserOutboundEvent(event).get()
     }
 
+    /// Sends a `pty-req` SSH channel request to allocate a pseudo-
+    /// terminal on the server. Operator-facing shell mode requires this
+    /// before `requestShell()`; the debug verification menu's exec path
+    /// does not. `term` controls the server's `TERM` environment
+    /// variable and therefore which terminal-capabilities database
+    /// (`terminfo`) the shell uses. `xterm-256color` matches what
+    /// SwiftTerm emits for VT100 + 256-colour SGR support and pairs
+    /// with the verified-coverage check in the slice plan.
+    ///
+    /// `wantReply: false` matches the shape of `requestExec` and
+    /// `resize`: the SSH protocol replies with success or failure on a
+    /// pty-req, but Pulse's v1 surface does not observe the reply.
+    /// Servers that refuse pty-req leave the operator with an
+    /// unresponsive terminal; in practice every real device this slice
+    /// targets allocates a PTY for interactive shell. A future
+    /// hardening would handle `ChannelSuccessEvent` /
+    /// `ChannelFailureEvent` from NIOSSH and surface the rejection.
+    func requestPTY(
+        term: String = "xterm-256color",
+        cols: Int,
+        rows: Int
+    ) async {
+        guard !closed else { return }
+        let event = SSHChannelRequestEvent.PseudoTerminalRequest(
+            wantReply: false,
+            term: term,
+            terminalCharacterWidth: cols,
+            terminalRowHeight: rows,
+            terminalPixelWidth: 0,
+            terminalPixelHeight: 0,
+            terminalModes: SSHTerminalModes([:])
+        )
+        _ = try? await childChannel.triggerUserOutboundEvent(event).get()
+    }
+
+    /// Sends a `shell` SSH channel request to launch the server's
+    /// default login shell on the allocated PTY. Must follow a
+    /// successful `requestPTY` call; without a PTY the server may
+    /// silently degrade to a `dumb` terminal or refuse the request.
+    /// `wantReply: false` for symmetry with the other channel-request
+    /// methods; see `requestPTY` for the rationale and the rejection
+    /// caveat.
+    func requestShell() async {
+        guard !closed else { return }
+        let event = SSHChannelRequestEvent.ShellRequest(wantReply: false)
+        _ = try? await childChannel.triggerUserOutboundEvent(event).get()
+    }
+
     /// Sends a `window-change` SSH channel request to update the PTY
     /// dimensions. The debug verification menu doesn't drive resize; the
     /// method is shaped for the operator-facing terminal view, which calls
