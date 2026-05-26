@@ -190,6 +190,13 @@ protocol PulseTransport {
 
 There are no other in-process terminal emulator options on Apple platforms. The SwiftTerm maintainer risk is accepted with the vendoring mitigation above.
 
+**SwiftTerm bump checklist.** When upgrading the pinned SwiftTerm version, the diff review must confirm two invariants the operator-facing byte pump depends on:
+
+- `TerminalView.feed(byteArray: ArraySlice<UInt8>)` remains the public API at the equivalent of `Sources/SwiftTerm/Apple/AppleTerminalView.swift:1910`. `PulseTerminalAdapter.drainPendingFeed` calls this method; it must continue to wrap `Terminal.feed(buffer:)` (the engine) with display-scheduling.
+- `feedFinish()` continues to call `queuePendingDisplay()`. The view's `feed(byteArray:)` is the only path that schedules an AppKit/UIKit `setNeedsDisplay` cycle for inbound bytes. A SwiftTerm restructure that drops `queuePendingDisplay()` from `feedFinish()` (or renames either method without a behavioural replacement) would silently re-introduce a "left-click required to render terminal output" symptom: the engine would accumulate bytes correctly, the grid model would stay current, but the platform view would never get marked dirty and would render only when something else (a click, a resize, a keystroke) triggered a redraw.
+
+If either invariant breaks, the bump is blocked until the equivalent display-scheduling contract is restored, either by SwiftTerm or by an explicit Pulse-side `setNeedsDisplay` poke that respects SwiftTerm's `suspendDisplayUpdates()` coalescing.
+
 ## What ships when
 
 ### v1 (this feature)

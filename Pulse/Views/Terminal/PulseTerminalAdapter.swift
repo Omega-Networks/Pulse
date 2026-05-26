@@ -119,16 +119,25 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
     /// under the lock; a single `Task { @MainActor ... }` hop is scheduled
     /// at the first append in a burst, and subsequent appends piggy-back
     /// on the same hop. The drain reads the pending buffer out under the
-    /// lock and calls `Terminal.feed(buffer:)` exactly once per hop. The
-    /// shape mirrors `SessionLogWriter.drainQueue` and replaces the prior
-    /// Task-per-chunk pattern, which (a) starved the run loop on bursty
-    /// output and (b) relied on a FIFO ordering guarantee Swift's
+    /// lock and calls the view's `feed(byteArray:)` exactly once per hop.
+    /// The shape mirrors `SessionLogWriter.drainQueue` and replaces the
+    /// prior Task-per-chunk pattern, which (a) starved the run loop on
+    /// bursty output and (b) relied on a FIFO ordering guarantee Swift's
     /// concurrency runtime does not promise for unstructured `Task`
     /// dispatches.
     ///
-    /// Forwards through SwiftTerm's `Terminal.feed(buffer: ArraySlice<UInt8>)`
-    /// at `Sources/SwiftTerm/Terminal.swift:4890`, the zero-copy slice
-    /// overload. The slice's backing storage comes from
+    /// Forwards through SwiftTerm's `TerminalView.feed(byteArray: ArraySlice<UInt8>)`
+    /// at `Sources/SwiftTerm/Apple/AppleTerminalView.swift:1910`. The
+    /// view-level call wraps `Terminal.feed(buffer:)` (the engine; same
+    /// zero-copy slice path) with `feedPrepare()` and `feedFinish()`,
+    /// the latter of which calls `queuePendingDisplay()` to schedule an
+    /// AppKit/UIKit `setNeedsDisplay` cycle. Calling only
+    /// `Terminal.feed(buffer:)` would update the grid model but never
+    /// mark the platform view dirty; the operator would see no output
+    /// until something else (a click, a keystroke, a resize) triggered
+    /// a redraw. The view-level wrapper is what makes terminal output
+    /// realtime under SwiftTerm's coalesced display-update model.
+    /// The slice's backing storage comes from
     /// `SSHSession.deliverOutput`'s `getBytes`-materialised `[UInt8]`,
     /// not from a shared ByteBuffer, so cross-thread capture is safe.
     func feed(_ bytes: ArraySlice<UInt8>) {
@@ -146,14 +155,18 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
 
     /// Main-actor drain for the coalesced byte pump. Swaps the pending
     /// buffer out under the lock, clears `hopScheduled`, and (if the
-    /// snapshot is non-empty) calls `Terminal.feed(buffer:)` exactly
-    /// once. Held capacity is preserved across drains so the bursty
-    /// hot path does not thrash the allocator.
+    /// snapshot is non-empty) calls the view-level
+    /// `TerminalView.feed(byteArray:)` exactly once. The view-level
+    /// call is required (not the engine-level `Terminal.feed(buffer:)`)
+    /// because SwiftTerm's `feedFinish` is what queues the AppKit /
+    /// UIKit display update via `queuePendingDisplay()`. Held capacity
+    /// is preserved across drains so the bursty hot path does not
+    /// thrash the allocator.
     @MainActor
     private func drainPendingFeed() {
         let snapshot = consumePendingBytes()
         guard !snapshot.isEmpty else { return }
-        view?.getTerminal().feed(buffer: ArraySlice(snapshot))
+        view?.feed(byteArray: ArraySlice(snapshot))
     }
 
     /// Atomic swap of the pending buffer. Returns the accumulated bytes
