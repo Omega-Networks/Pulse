@@ -89,6 +89,14 @@ actor SSHClient {
     private let pemProvider: PortablePEMProvider
     private let knownHostStore: any KnownHostStore
 
+    /// Optional UI-side provider that surfaces a sheet when the
+    /// presented host key differs from the stored TOFU pin. `nil`
+    /// (the default) means the delegate falls back to the
+    /// reject-unconditionally legacy behaviour; the connecting
+    /// view (`SSHTerminalView`) sets a `HostKeyMismatchCoordinator`
+    /// here to enable the operator-decision flow.
+    private let hostKeyMismatchProvider: (any HostKeyMismatchDecisionProvider)?
+
     /// `Device.id` of the NetBox device this connection is attached
     /// to, or `nil` for ad-hoc connections (debug menu, devices not
     /// imported from NetBox). Required — no default — so call sites
@@ -136,6 +144,7 @@ actor SSHClient {
         certificateBlob: Data? = nil,
         pemProvider: @escaping PortablePEMProvider,
         knownHostStore: any KnownHostStore,
+        hostKeyMismatchProvider: (any HostKeyMismatchDecisionProvider)? = nil,
         deviceID: Int64?,
         recordSessions: Bool
     ) {
@@ -148,6 +157,7 @@ actor SSHClient {
         self.certificateBlob = certificateBlob
         self.pemProvider = pemProvider
         self.knownHostStore = knownHostStore
+        self.hostKeyMismatchProvider = hostKeyMismatchProvider
         self.deviceID = deviceID
         self.recordSessions = recordSessions
     }
@@ -205,7 +215,8 @@ actor SSHClient {
         let hostKeyDelegate = SSHHostKeyDelegate(
             host: host,
             port: port,
-            store: knownHostStore
+            store: knownHostStore,
+            mismatchDecisionProvider: hostKeyMismatchProvider
         )
         let authDelegate = SSHAuthDelegate(
             username: username,

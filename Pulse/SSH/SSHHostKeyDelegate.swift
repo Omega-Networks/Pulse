@@ -59,6 +59,34 @@ protocol KnownHostStore: Sendable {
     /// Updates `lastVerifiedAt` on the matching row after a successful
     /// fingerprint match. Missing rows are not an error.
     func touchLastVerified(forHost host: String, port: Int) async throws
+
+    /// Replaces the stored pin for `(host, port)` with a fresh one
+    /// under a new fingerprint and algorithm. Used by the mismatch-
+    /// accept path: the operator has confirmed a legitimate key
+    /// rotation and Pulse re-pins to the presented key. Implementations
+    /// delete the existing row and insert a new one, restarting the
+    /// `firstSeenAt` clock so the trust relationship starts fresh
+    /// rather than carrying forward the old TOFU date (the operator
+    /// has effectively re-TOFU'd this host).
+    func replacePin(
+        host: String,
+        port: Int,
+        fingerprintSHA256: String,
+        algorithm: String
+    ) async throws
+
+    /// Removes the stored row for `(host, port)`. Used by the
+    /// mismatch-forget path: the operator chooses to abandon the
+    /// trust relationship; the next connection becomes a fresh TOFU.
+    /// Missing rows are not an error (idempotent).
+    func forget(host: String, port: Int) async throws
+
+    /// Returns the `firstSeenAt` timestamp of the stored row for
+    /// `(host, port)`, or `nil` if no row exists. Used by the
+    /// mismatch sheet to surface "key first seen on ..." next to the
+    /// stored fingerprint so the operator can recall when they
+    /// originally TOFU'd this host.
+    func firstSeenAt(forHost host: String, port: Int) async throws -> Date?
 }
 
 // MARK: - SwiftData-backed store
@@ -109,6 +137,47 @@ actor SwiftDataKnownHostStore: KnownHostStore {
         row.lastVerifiedAt = .now
         try modelContext.save()
     }
+
+    func replacePin(
+        host: String,
+        port: Int,
+        fingerprintSHA256: String,
+        algorithm: String
+    ) async throws {
+        var descriptor = FetchDescriptor<KnownHost>(
+            predicate: #Predicate { $0.host == host && $0.port == port }
+        )
+        descriptor.fetchLimit = 1
+        if let existing = try modelContext.fetch(descriptor).first {
+            modelContext.delete(existing)
+        }
+        let row = KnownHost(
+            host: host,
+            port: port,
+            trust: .pinned(fingerprintSHA256: fingerprintSHA256, algorithm: algorithm)
+        )
+        modelContext.insert(row)
+        try modelContext.save()
+    }
+
+    func forget(host: String, port: Int) async throws {
+        var descriptor = FetchDescriptor<KnownHost>(
+            predicate: #Predicate { $0.host == host && $0.port == port }
+        )
+        descriptor.fetchLimit = 1
+        if let existing = try modelContext.fetch(descriptor).first {
+            modelContext.delete(existing)
+            try modelContext.save()
+        }
+    }
+
+    func firstSeenAt(forHost host: String, port: Int) async throws -> Date? {
+        var descriptor = FetchDescriptor<KnownHost>(
+            predicate: #Predicate { $0.host == host && $0.port == port }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first?.firstSeenAt
+    }
 }
 
 // MARK: - Errors
@@ -141,9 +210,14 @@ enum HostKeyDecision: Equatable {
     case pinAndAccept
     /// Stored `.pinned` matches the presented key: accept and touch.
     case acceptKnownPinned
-    /// Stored `.pinned` differs from the presented key: reject unconditionally
-    /// (no UI acceptance sheet in the current build).
-    case rejectMismatch(recorded: String)
+    /// Stored `.pinned` differs from the presented key. The delegate
+    /// consults its `HostKeyMismatchDecisionProvider` (if set) to
+    /// surface the operator decision; absent a provider the path
+    /// rejects unconditionally. The `recordedAlgorithm` rides
+    /// alongside `recordedFingerprint` because the operator sheet
+    /// shows both for the stored row, and the algorithm is in scope
+    /// from `HostTrust.pinned` at evaluation time.
+    case rejectMismatch(recordedFingerprint: String, recordedAlgorithm: String)
     /// Stored `.trustedCA` matches the presented cert chain: accept.
     case acceptCA(caFingerprint: String, principalPattern: String)
     /// Stored `.trustedCA` rejects the presented key for the reason given.
@@ -170,10 +244,51 @@ enum HostKeyDecision: Equatable {
 /// can write the fresh pin without re-deriving them; both values are
 /// already in scope at the call site (the host-key validation path
 /// computes them before consulting the operator).
+///
+/// `.reject` carries an optional `reason` so the audit emission can
+/// distinguish operator-chosen rejection (`reason = nil`) from a
+/// system-driven rejection such as a decision-timeout
+/// (`reason = "decision_timeout"`). The provider is the right layer
+/// to set this metadata; the delegate is consumer-agnostic about
+/// why the rejection happened and just routes the audit field.
 enum HostKeyMismatchDecision: Equatable, Sendable {
     case accept(fingerprintSHA256: String, algorithm: String)
-    case reject
+    case reject(reason: String? = nil)
     case forget
+}
+
+// MARK: - Mismatch decision provider
+
+/// Protocol the delegate consults when a stored `.pinned` host key
+/// differs from the fingerprint the server is now presenting. A
+/// connecting UI implements this to surface the
+/// `HostKeyMismatchSheet` and await the operator's decision. Headless
+/// or background callers leave the provider `nil` on the delegate
+/// and inherit today's reject-unconditionally semantics.
+///
+/// The provider owns the decision timeout. The recommended bound is
+/// 90 seconds: long enough for an operator to read two fingerprints
+/// and decide, short enough to bound a walked-away operator's
+/// half-open channel. The `HostKeyMismatchCoordinator` shipping
+/// alongside the SwiftUI terminal enforces this bound; alternative
+/// providers (CLI, headless scripts) are free to pick their own
+/// bound but should never block indefinitely.
+///
+/// On timeout the provider returns `.reject(reason: "decision_timeout")`.
+/// The delegate emits the matching `host.mismatch.rejected` audit
+/// event with the reason field populated; SIEM rules can match on
+/// the reason to surface walked-away-operator events distinct from
+/// deliberate rejections.
+protocol HostKeyMismatchDecisionProvider: Sendable {
+    func decide(
+        host: String,
+        port: Int,
+        recordedFingerprint: String,
+        recordedAlgorithm: String,
+        recordedFirstSeenAt: Date,
+        newFingerprint: String,
+        newAlgorithm: String
+    ) async -> HostKeyMismatchDecision
 }
 
 // MARK: - Delegate
@@ -193,17 +308,20 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
     private let port: Int
     private let store: any KnownHostStore
     private let now: @Sendable () -> Date
+    private let mismatchDecisionProvider: (any HostKeyMismatchDecisionProvider)?
     private let logger = Logger(subsystem: "pulse", category: "ssh.session")
 
     init(
         host: String,
         port: Int,
         store: any KnownHostStore,
+        mismatchDecisionProvider: (any HostKeyMismatchDecisionProvider)? = nil,
         now: @escaping @Sendable () -> Date = { .now }
     ) {
         self.host = host
         self.port = port
         self.store = store
+        self.mismatchDecisionProvider = mismatchDecisionProvider
         self.now = now
     }
 
@@ -271,12 +389,17 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
                 try? await store.touchLastVerified(forHost: host, port: port)
                 validationCompletePromise.succeed(())
 
-            case .rejectMismatch(let recorded):
-                logger.warning(
-                    "host.mismatch host=\(host, privacy: .public) port=\(port) recorded=\(recorded, privacy: .public) presented=\(presentedFingerprint, privacy: .public)"
-                )
-                validationCompletePromise.fail(
-                    SSHHostKeyError.fingerprintMismatch(recorded: recorded, presented: presentedFingerprint)
+            case .rejectMismatch(let recordedFingerprint, let recordedAlgorithm):
+                await self.handleMismatch(
+                    recordedFingerprint: recordedFingerprint,
+                    recordedAlgorithm: recordedAlgorithm,
+                    presentedFingerprint: presentedFingerprint,
+                    presentedAlgorithm: presentedAlgorithm,
+                    host: host,
+                    port: port,
+                    store: store,
+                    logger: logger,
+                    validationCompletePromise: validationCompletePromise
                 )
 
             case .acceptCA(let caFingerprint, let principalPattern):
@@ -300,6 +423,136 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
         }
     }
 
+    // MARK: - Mismatch handling
+
+    /// Routes a `.rejectMismatch` outcome through the optional
+    /// `HostKeyMismatchDecisionProvider`. Absent a provider, today's
+    /// reject-unconditionally semantics apply: emit `host.mismatch`
+    /// and fail the validation promise with `.fingerprintMismatch`.
+    ///
+    /// With a provider attached, the operator picks one of three
+    /// actions; the delegate routes each to a `KnownHostStore`
+    /// mutation, a NIOSSH validation result, and an audit emission
+    /// under `ssh.session`:
+    /// `host.mismatch.accepted` / `host.mismatch.rejected` /
+    /// `host.mismatch.forgotten`. The provider owns the decision
+    /// timeout; on timeout it returns `.reject(reason: "decision_timeout")`
+    /// and the delegate stamps the audit event with that reason so
+    /// SIEM rules can distinguish walked-away-operator from
+    /// deliberate rejections.
+    private func handleMismatch(
+        recordedFingerprint: String,
+        recordedAlgorithm: String,
+        presentedFingerprint: String,
+        presentedAlgorithm: String,
+        host: String,
+        port: Int,
+        store: any KnownHostStore,
+        logger: Logger,
+        validationCompletePromise: EventLoopPromise<Void>
+    ) async {
+        guard let provider = self.mismatchDecisionProvider else {
+            // No UI on this connection (background flows, debug menu
+            // pre-refactor, tests with a stub delegate). Reject
+            // unconditionally with the legacy emission shape.
+            logger.warning(
+                "host.mismatch host=\(host, privacy: .public) port=\(port) recorded=\(recordedFingerprint, privacy: .public) presented=\(presentedFingerprint, privacy: .public)"
+            )
+            validationCompletePromise.fail(
+                SSHHostKeyError.fingerprintMismatch(
+                    recorded: recordedFingerprint,
+                    presented: presentedFingerprint
+                )
+            )
+            return
+        }
+
+        // The provider's sheet needs the original TOFU timestamp to
+        // help the operator recall when this host was trusted. A
+        // missing row at this point would be unusual (we just read
+        // .pinned from the same store) but we tolerate the absence
+        // by falling back to .distantPast — the sheet renders a
+        // sentinel rather than crashing.
+        let firstSeenAt: Date
+        do {
+            firstSeenAt = try await store.firstSeenAt(forHost: host, port: port) ?? .distantPast
+        } catch {
+            logger.error(
+                "host trust store firstSeenAt lookup failed for \(host, privacy: .public):\(port): \(String(describing: error))"
+            )
+            firstSeenAt = .distantPast
+        }
+
+        let decision = await provider.decide(
+            host: host,
+            port: port,
+            recordedFingerprint: recordedFingerprint,
+            recordedAlgorithm: recordedAlgorithm,
+            recordedFirstSeenAt: firstSeenAt,
+            newFingerprint: presentedFingerprint,
+            newAlgorithm: presentedAlgorithm
+        )
+
+        switch decision {
+        case .accept(let newFingerprint, let newAlgorithm):
+            do {
+                try await store.replacePin(
+                    host: host,
+                    port: port,
+                    fingerprintSHA256: newFingerprint,
+                    algorithm: newAlgorithm
+                )
+            } catch {
+                logger.error(
+                    "host.mismatch.accepted store write failed for \(host, privacy: .public):\(port): \(String(describing: error))"
+                )
+                validationCompletePromise.fail(SSHHostKeyError.storeError(String(describing: error)))
+                return
+            }
+            logger.warning(
+                "host.mismatch.accepted host=\(host, privacy: .public) port=\(port) previousFingerprintSHA256=\(recordedFingerprint, privacy: .public) newFingerprintSHA256=\(newFingerprint, privacy: .public) newAlgorithm=\(newAlgorithm, privacy: .public)"
+            )
+            validationCompletePromise.succeed(())
+
+        case .reject(let reason):
+            if let reason {
+                logger.warning(
+                    "host.mismatch.rejected host=\(host, privacy: .public) port=\(port) recorded=\(recordedFingerprint, privacy: .public) presented=\(presentedFingerprint, privacy: .public) reason=\(reason, privacy: .public)"
+                )
+            } else {
+                logger.warning(
+                    "host.mismatch.rejected host=\(host, privacy: .public) port=\(port) recorded=\(recordedFingerprint, privacy: .public) presented=\(presentedFingerprint, privacy: .public)"
+                )
+            }
+            validationCompletePromise.fail(
+                SSHHostKeyError.fingerprintMismatch(
+                    recorded: recordedFingerprint,
+                    presented: presentedFingerprint
+                )
+            )
+
+        case .forget:
+            do {
+                try await store.forget(host: host, port: port)
+            } catch {
+                logger.error(
+                    "host.mismatch.forgotten store delete failed for \(host, privacy: .public):\(port): \(String(describing: error))"
+                )
+                validationCompletePromise.fail(SSHHostKeyError.storeError(String(describing: error)))
+                return
+            }
+            logger.warning(
+                "host.mismatch.forgotten host=\(host, privacy: .public) port=\(port) previousFingerprintSHA256=\(recordedFingerprint, privacy: .public)"
+            )
+            validationCompletePromise.fail(
+                SSHHostKeyError.fingerprintMismatch(
+                    recorded: recordedFingerprint,
+                    presented: presentedFingerprint
+                )
+            )
+        }
+    }
+
     // MARK: - Pure decision logic
 
     /// Pure function that decides whether to accept a presented host key given
@@ -319,10 +572,13 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
         }
 
         switch recorded {
-        case .pinned(let storedFingerprint, _):
+        case .pinned(let storedFingerprint, let storedAlgorithm):
             return storedFingerprint == presentedFingerprint
                 ? .acceptKnownPinned
-                : .rejectMismatch(recorded: storedFingerprint)
+                : .rejectMismatch(
+                    recordedFingerprint: storedFingerprint,
+                    recordedAlgorithm: storedAlgorithm
+                )
 
         case .trustedCA(let caFingerprint, let principalPattern):
             return evaluateCA(

@@ -206,6 +206,9 @@ final class SSHClientTests: XCTestCase {
         func trust(forHost host: String, port: Int) async throws -> HostTrust? { nil }
         func recordPinned(host: String, port: Int, fingerprintSHA256: String, algorithm: String) async throws {}
         func touchLastVerified(forHost host: String, port: Int) async throws {}
+        func replacePin(host: String, port: Int, fingerprintSHA256: String, algorithm: String) async throws {}
+        func forget(host: String, port: Int) async throws {}
+        func firstSeenAt(forHost host: String, port: Int) async throws -> Date? { nil }
     }
 
     private struct StubError: Error, CustomStringConvertible {

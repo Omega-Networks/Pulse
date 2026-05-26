@@ -62,6 +62,7 @@ struct SSHTerminalView: View {
     @State private var sshClient: SSHClient?
     @State private var selectedCredentialID: UUID?
     @StateObject private var surface = PulseTerminalSurface()
+    @StateObject private var mismatchCoordinator = HostKeyMismatchCoordinator()
 
     private let logger = Logger(subsystem: "pulse", category: "ssh.session")
 
@@ -79,6 +80,20 @@ struct SSHTerminalView: View {
         .frame(minWidth: 720, minHeight: 420)
         .task(id: deviceID) {
             await runConnectionLifecycle()
+        }
+        .sheet(item: $mismatchCoordinator.pending) { request in
+            HostKeyMismatchSheet(
+                host: request.host,
+                port: request.port,
+                recordedFingerprint: request.recordedFingerprint,
+                recordedAlgorithm: request.recordedAlgorithm,
+                recordedFirstSeenAt: request.recordedFirstSeenAt,
+                newFingerprint: request.newFingerprint,
+                newAlgorithm: request.newAlgorithm,
+                resume: { decision in
+                    mismatchCoordinator.resolve(decision)
+                }
+            )
         }
     }
 
@@ -232,6 +247,7 @@ struct SSHTerminalView: View {
             certificateBlob: credential.certificate,
             pemProvider: pemProvider,
             knownHostStore: knownHostStore,
+            hostKeyMismatchProvider: mismatchCoordinator,
             deviceID: device.id,
             recordSessions: credential.recordSessions
         )

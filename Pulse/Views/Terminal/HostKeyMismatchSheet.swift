@@ -169,7 +169,7 @@ struct HostKeyMismatchSheet: View {
             Spacer()
 
             Button("Reject", role: .cancel) {
-                resolve(.reject)
+                resolve(.reject(reason: nil))
             }
             .keyboardShortcut(.cancelAction)
             .tint(.red)

@@ -51,14 +51,18 @@ final class SSHHostKeyDelegateTests: XCTestCase {
     /// TOFU side-effects.
     actor InMemoryKnownHostStore: KnownHostStore {
         private var rows: [String: HostTrust] = [:]
+        private var firstSeen: [String: Date] = [:]
         private(set) var pinWrites: [(host: String, port: Int, fingerprint: String, algorithm: String)] = []
+        private(set) var replacementWrites: [(host: String, port: Int, fingerprint: String, algorithm: String)] = []
+        private(set) var forgottenKeys: [String] = []
         private(set) var touchCount: Int = 0
         private var failNext: Error?
 
         private func key(_ host: String, _ port: Int) -> String { "\(host):\(port)" }
 
-        func preload(host: String, port: Int, trust: HostTrust) {
+        func preload(host: String, port: Int, trust: HostTrust, firstSeenAt: Date = .now) {
             rows[key(host, port)] = trust
+            firstSeen[key(host, port)] = firstSeenAt
         }
 
         func failNextCall(_ error: Error) { failNext = error }
@@ -72,11 +76,31 @@ final class SSHHostKeyDelegateTests: XCTestCase {
             if let err = failNext { failNext = nil; throw err }
             pinWrites.append((host, port, fingerprintSHA256, algorithm))
             rows[key(host, port)] = .pinned(fingerprintSHA256: fingerprintSHA256, algorithm: algorithm)
+            firstSeen[key(host, port)] = firstSeen[key(host, port)] ?? .now
         }
 
         func touchLastVerified(forHost host: String, port: Int) async throws {
             if let err = failNext { failNext = nil; throw err }
             touchCount += 1
+        }
+
+        func replacePin(host: String, port: Int, fingerprintSHA256: String, algorithm: String) async throws {
+            if let err = failNext { failNext = nil; throw err }
+            replacementWrites.append((host, port, fingerprintSHA256, algorithm))
+            rows[key(host, port)] = .pinned(fingerprintSHA256: fingerprintSHA256, algorithm: algorithm)
+            firstSeen[key(host, port)] = .now
+        }
+
+        func forget(host: String, port: Int) async throws {
+            if let err = failNext { failNext = nil; throw err }
+            forgottenKeys.append(key(host, port))
+            rows.removeValue(forKey: key(host, port))
+            firstSeen.removeValue(forKey: key(host, port))
+        }
+
+        func firstSeenAt(forHost host: String, port: Int) async throws -> Date? {
+            if let err = failNext { failNext = nil; throw err }
+            return firstSeen[key(host, port)]
         }
     }
 
@@ -126,10 +150,11 @@ final class SSHHostKeyDelegateTests: XCTestCase {
             host: "10.0.0.1",
             at: .now
         )
-        guard case .rejectMismatch(let recorded) = decision else {
+        guard case .rejectMismatch(let recordedFingerprint, let recordedAlgorithm) = decision else {
             return XCTFail("expected rejectMismatch, got \(decision)")
         }
-        XCTAssertEqual(recorded, "SHA256:someotherfingerprintnotthecurrentone")
+        XCTAssertEqual(recordedFingerprint, "SHA256:someotherfingerprintnotthecurrentone")
+        XCTAssertEqual(recordedAlgorithm, "ssh-ed25519")
     }
 
     func testEvaluateExplicitlyDistrustedRejects() throws {
@@ -320,5 +345,222 @@ final class SSHHostKeyDelegateTests: XCTestCase {
         let touches = await store.touchCount
         XCTAssertEqual(writes.count, 0)
         XCTAssertEqual(touches, 1)
+    }
+
+    // MARK: - Mismatch decision provider integration
+
+    /// Test stub that returns a pre-configured decision after an optional
+    /// delay. The delay path drives the decision-timeout test: the provider
+    /// sleeps longer than the test's injected timeout so the timeout fires
+    /// first.
+    actor StubMismatchProvider: HostKeyMismatchDecisionProvider {
+        private let decision: HostKeyMismatchDecision
+        private let delay: Duration
+
+        init(returns decision: HostKeyMismatchDecision, after delay: Duration = .zero) {
+            self.decision = decision
+            self.delay = delay
+        }
+
+        nonisolated func decide(
+            host: String,
+            port: Int,
+            recordedFingerprint: String,
+            recordedAlgorithm: String,
+            recordedFirstSeenAt: Date,
+            newFingerprint: String,
+            newAlgorithm: String
+        ) async -> HostKeyMismatchDecision {
+            await produce()
+        }
+
+        private func produce() async -> HostKeyMismatchDecision {
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+            }
+            return decision
+        }
+    }
+
+    /// Provider that never resolves. Drives the delegate's behaviour when
+    /// the coordinator's timeout would normally fire; the test injects the
+    /// timeout via a fast-resolving coordinator in lieu of a real
+    /// HostKeyMismatchCoordinator (whose timeout is 90 seconds by default).
+    actor NeverProvider: HostKeyMismatchDecisionProvider {
+        nonisolated func decide(
+            host: String,
+            port: Int,
+            recordedFingerprint: String,
+            recordedAlgorithm: String,
+            recordedFirstSeenAt: Date,
+            newFingerprint: String,
+            newAlgorithm: String
+        ) async -> HostKeyMismatchDecision {
+            // Suspend indefinitely; the test drives a short-timeout
+            // HostKeyMismatchCoordinator wrapper to assert the
+            // timeout-default path. This provider is here for tests that
+            // want to confirm a delegate hangs when no provider responds
+            // and no timeout is in play (currently unused but kept as a
+            // reference shape).
+            await withCheckedContinuation { (_: CheckedContinuation<HostKeyMismatchDecision, Never>) in
+                // never resume
+            }
+        }
+    }
+
+    /// Accept path: provider returns `.accept`. The delegate replaces the
+    /// stored pin with the new fingerprint, succeeds the validation
+    /// promise, and the store now reflects the new fingerprint. A
+    /// follow-up connection against the same store with the new key would
+    /// hit `.acceptKnownPinned` rather than `.rejectMismatch`.
+    func testValidateHostKeyMismatchAcceptReplacesPin() async throws {
+        let store = InMemoryKnownHostStore()
+        await store.preload(
+            host: "10.0.0.7",
+            port: 22,
+            trust: .pinned(
+                fingerprintSHA256: "SHA256:somestoredfingerprintnotmatching",
+                algorithm: "ssh-ed25519"
+            )
+        )
+        let provider = StubMismatchProvider(
+            returns: .accept(
+                fingerprintSHA256: Self.ed25519HostKeyFingerprint,
+                algorithm: "ssh-ed25519"
+            )
+        )
+        let loop = EmbeddedEventLoop()
+        defer { try? loop.syncShutdownGracefully() }
+
+        let delegate = SSHHostKeyDelegate(
+            host: "10.0.0.7",
+            port: 22,
+            store: store,
+            mismatchDecisionProvider: provider
+        )
+        let promise = loop.makePromise(of: Void.self)
+        delegate.validateHostKey(hostKey: try Self.makeHostKey(), validationCompletePromise: promise)
+
+        try await promise.futureResult.get()
+        let replacements = await store.replacementWrites
+        XCTAssertEqual(replacements.count, 1)
+        XCTAssertEqual(replacements.first?.fingerprint, Self.ed25519HostKeyFingerprint)
+        XCTAssertEqual(replacements.first?.algorithm, "ssh-ed25519")
+        let writes = await store.pinWrites
+        XCTAssertEqual(writes.count, 0, "the mismatch-accept path uses replacePin, not recordPinned")
+    }
+
+    /// Reject path: provider returns `.reject(reason: nil)`. The store
+    /// is unchanged; the promise fails with `.fingerprintMismatch`.
+    func testValidateHostKeyMismatchRejectLeavesStoreUntouched() async throws {
+        let store = InMemoryKnownHostStore()
+        await store.preload(
+            host: "10.0.0.7",
+            port: 22,
+            trust: .pinned(
+                fingerprintSHA256: "SHA256:somestoredfingerprintnotmatching",
+                algorithm: "ssh-ed25519"
+            )
+        )
+        let provider = StubMismatchProvider(returns: .reject(reason: nil))
+        let loop = EmbeddedEventLoop()
+        defer { try? loop.syncShutdownGracefully() }
+
+        let delegate = SSHHostKeyDelegate(
+            host: "10.0.0.7",
+            port: 22,
+            store: store,
+            mismatchDecisionProvider: provider
+        )
+        let promise = loop.makePromise(of: Void.self)
+        delegate.validateHostKey(hostKey: try Self.makeHostKey(), validationCompletePromise: promise)
+
+        do {
+            try await promise.futureResult.get()
+            XCTFail("expected promise to fail")
+        } catch let error as SSHHostKeyError {
+            guard case .fingerprintMismatch = error else {
+                return XCTFail("expected fingerprintMismatch, got \(error)")
+            }
+        }
+        let replacements = await store.replacementWrites
+        let forgotten = await store.forgottenKeys
+        XCTAssertEqual(replacements.count, 0, "reject must not mutate the pin")
+        XCTAssertEqual(forgotten.count, 0, "reject must not forget the pin")
+    }
+
+    /// Forget path: provider returns `.forget`. The store deletes the
+    /// existing row; the promise fails with `.fingerprintMismatch` (the
+    /// connection still aborts — forgetting clears the pin so a *next*
+    /// connection becomes a fresh TOFU).
+    func testValidateHostKeyMismatchForgetDeletesPin() async throws {
+        let store = InMemoryKnownHostStore()
+        await store.preload(
+            host: "10.0.0.7",
+            port: 22,
+            trust: .pinned(
+                fingerprintSHA256: "SHA256:somestoredfingerprintnotmatching",
+                algorithm: "ssh-ed25519"
+            )
+        )
+        let provider = StubMismatchProvider(returns: .forget)
+        let loop = EmbeddedEventLoop()
+        defer { try? loop.syncShutdownGracefully() }
+
+        let delegate = SSHHostKeyDelegate(
+            host: "10.0.0.7",
+            port: 22,
+            store: store,
+            mismatchDecisionProvider: provider
+        )
+        let promise = loop.makePromise(of: Void.self)
+        delegate.validateHostKey(hostKey: try Self.makeHostKey(), validationCompletePromise: promise)
+
+        do {
+            try await promise.futureResult.get()
+            XCTFail("expected promise to fail")
+        } catch let error as SSHHostKeyError {
+            guard case .fingerprintMismatch = error else {
+                return XCTFail("expected fingerprintMismatch, got \(error)")
+            }
+        }
+        let forgotten = await store.forgottenKeys
+        XCTAssertEqual(forgotten, ["10.0.0.7:22"], "forget must delete the (host,port) row")
+        let trust = try await store.trust(forHost: "10.0.0.7", port: 22)
+        XCTAssertNil(trust, "the row must be gone from the store")
+    }
+
+    /// Decision-timeout path: the provider takes longer than the
+    /// coordinator's timeout, so the coordinator self-resumes with
+    /// `.reject(reason: "decision_timeout")`. The delegate routes that
+    /// to the same `.fingerprintMismatch` outcome as an operator-driven
+    /// reject; the audit log carries the reason field (exercised by
+    /// the os_log emission inspected in the lab procedure rather than
+    /// here, because XCTest cannot easily subscribe to os_log).
+    ///
+    /// The test wraps a real `HostKeyMismatchCoordinator` with a short
+    /// (50ms) timeout and a stub upstream provider that sleeps longer.
+    /// Wait — the coordinator IS the provider; it has no upstream. So
+    /// the test drives only the coordinator's own timeout: it never
+    /// resolves via `resolve(...)`, and the timeout-default fires.
+    func testHostKeyMismatchCoordinatorTimeoutDefaultsToReject() async {
+        let coordinator = await MainActor.run {
+            HostKeyMismatchCoordinator(decisionTimeout: .milliseconds(50))
+        }
+
+        let decision = await coordinator.decide(
+            host: "10.0.0.7",
+            port: 22,
+            recordedFingerprint: "SHA256:stored",
+            recordedAlgorithm: "ssh-ed25519",
+            recordedFirstSeenAt: .distantPast,
+            newFingerprint: "SHA256:presented",
+            newAlgorithm: "ssh-ed25519"
+        )
+
+        guard case .reject(let reason) = decision else {
+            return XCTFail("expected .reject on timeout, got \(decision)")
+        }
+        XCTAssertEqual(reason, "decision_timeout")
     }
 }
