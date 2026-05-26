@@ -38,13 +38,15 @@ import SwiftUI
 /// `PulseApp.swift` is also `#if DEBUG`-gated so Release builds carry
 /// neither the symbol nor the menu entry.
 ///
-/// This surface is a verification artefact: it drives the SSH byte
-/// pump end to end so the recording stack and audit signal can be
-/// exercised against a real connection without going through the
-/// operator-facing terminal. The operator terminal is a separate,
-/// SwiftTerm-backed window; DebugSSHMenu must not become the
-/// production path. The file's `#if DEBUG` gate keeps that contract
-/// structural rather than conventional.
+/// The window is a thin verification surface: it picks a `Device`
+/// from the SwiftData store and routes through the same
+/// `openWindow(value: device.id)` gesture the device-row context
+/// menu uses, plus a replay action for inspecting the most-recent
+/// recording on disk. There is no separate exec/byte-pump path here;
+/// the operator-facing terminal is the single byte-pump entry point
+/// and the debug window only delegates to it. Operators doing
+/// loopback verification register a `Device` row with
+/// `primaryIP = 127.0.0.1` once and reuse it.
 struct DebugSSHCommands: Commands {
 
     @Environment(\.openWindow) private var openWindow
@@ -61,51 +63,48 @@ struct DebugSSHCommands: Commands {
 
 // MARK: - DebugSSHWindow
 
-/// SwiftUI scene for the SSH byte-pump verification flow. Picks a
-/// credential and a device with a `primaryIP`, opens an `SSHClient`,
-/// runs a one-shot `ls -la /` (or operator-chosen command), captures
-/// the output to the view, and emits the same `session.open` /
-/// `auth.success` / `session.close` audit events the production
-/// terminal emits.
+/// Debug-only window that opens the operator-facing terminal for a
+/// chosen `Device` and offers a replay action for the most-recent
+/// recording on disk. Replaces the earlier free-form
+/// host/credential/exec form that drove the byte pump directly: now
+/// every connection path (operator gesture, lab verification) goes
+/// through the same SwiftUI terminal scene, so a regression there
+/// surfaces in lab regardless of how the operator started the
+/// session.
 struct DebugSSHWindow: View {
 
     static let windowID = "debug-ssh"
 
     @Environment(\.modelContext) private var modelContext
-    // `@Query` without a fetch limit because credentials are operator-owned
-    // and bounded in practice (<50); unlike the device picker that the slice
-    // replaced with a free-form host field, this query won't grow with fleet
-    // size. If credentials ever cross ~500 the picker UX needs rethinking.
-    @Query(sort: \SSHCredential.label) private var credentials: [SSHCredential]
+    @Environment(\.openWindow) private var openWindow
 
-    @State private var selectedCredentialID: UUID?
-    @State private var host: String = Self.defaultLoopbackV4
-    @State private var username: String = NSUserName()
-    @State private var port: Int = 22
-    @State private var command: String = "ls -la /"
+    /// Devices the operator can target with a terminal session.
+    /// Filtered to rows with a non-nil `primaryIP` because the
+    /// connect path needs a routable host; sorted by name for a
+    /// stable picker. The fetch is unbounded but the operator-curated
+    /// device list is small in practice; if a real fleet reaches
+    /// thousands the debug menu's picker UX gets revisited at that
+    /// time.
+    @Query(filter: #Predicate<Device> { $0.primaryIP != nil }, sort: \Device.name)
+    private var devices: [Device]
+
+    @State private var selectedDeviceID: Device.ID?
     @State private var output: String = ""
-    @State private var status: String = "Ready"
-    @State private var isConnecting: Bool = false
     @State private var replayStatus: String = ""
     @State private var isReplaying: Bool = false
-
-    private static let defaultLoopbackV4 = "127.0.0.1"
-    private static let defaultLoopbackV6 = "::1"
 
     private let logger = Logger(subsystem: "pulse", category: "ssh.debug")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            credentialPicker
-            hostField
-            connectionFields
-            actionRow
+            devicePicker
+            openTerminalButton
             outputArea
             replaySection
         }
         .padding(20)
-        .frame(minWidth: 640, minHeight: 460)
+        .frame(minWidth: 560, minHeight: 360)
     }
 
     // MARK: View sections
@@ -114,82 +113,51 @@ struct DebugSSHWindow: View {
         VStack(alignment: .leading, spacing: 4) {
             Label("SSH connection test", systemImage: "terminal.fill")
                 .font(.title2.weight(.semibold))
-            Text("Drives SSHClient end-to-end against a chosen device. Used to verify the byte pump; the operator-facing terminal is a separate window.")
+            Text("Opens the operator-facing terminal for a chosen device, and replays the most-recent recorded session. For loopback verification, register a device with primaryIP = 127.0.0.1.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private var credentialPicker: some View {
-        Picker("Credential", selection: $selectedCredentialID) {
-            Text("Select…").tag(UUID?.none)
-            ForEach(credentials, id: \.id) { cred in
-                Text("\(cred.label) (\(tierLabel(cred.tier)))")
-                    .tag(UUID?.some(cred.id))
+    @ViewBuilder
+    private var devicePicker: some View {
+        if devices.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("No devices with a primary IP are in the local store.")
+                    .font(.callout)
+                Text("Sync devices from NetBox or add a row with primaryIP set (Settings → Devices) to enable the connection test.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Picker("Device", selection: $selectedDeviceID) {
+                Text("Select…").tag(Device.ID?.none)
+                ForEach(devices) { device in
+                    Text("\(device.name ?? "Device \(device.id)") · \(device.primaryIP ?? "")")
+                        .tag(Device.ID?.some(device.id))
+                }
             }
         }
     }
 
-    /// Free-form host field with quick-fill buttons for IPv4 and IPv6
-    /// loopback. Defaults to `127.0.0.1` because the byte-pump
-    /// verification runs against a throwaway sshd on the dev machine;
-    /// any hostname or IP is accepted so the same window can drive
-    /// against staging or a real device whose `Device.primaryIP` is
-    /// known. No device picker: at scale that path runs against a
-    /// million-row @Query and only the operator-facing terminal
-    /// justifies the rendering cost. `DirectTransport`'s
-    /// `NIOTSConnectionBootstrap` resolves both stacks via Happy
-    /// Eyeballs (ADR §8 dual-stack invariant), so the IPv6 quick-fill
-    /// is functional rather than cosmetic.
-    private var hostField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                TextField("Host", text: $host)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-                Button("IPv4") { host = Self.defaultLoopbackV4 }
-                    .help("Fill with the IPv4 loopback (127.0.0.1).")
-                Button("IPv6") { host = Self.defaultLoopbackV6 }
-                    .help("Fill with the IPv6 loopback (::1).")
-            }
-            Text("Default is the loopback address. Any hostname or IP is accepted.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var connectionFields: some View {
-        HStack(spacing: 12) {
-            TextField("Username", text: $username)
-                .textFieldStyle(.roundedBorder)
-            TextField("Port", value: $port, formatter: portFormatter)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 100)
-            TextField("Command", text: $command)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.body, design: .monospaced))
-        }
-    }
-
-    private var actionRow: some View {
+    private var openTerminalButton: some View {
         HStack {
-            Button(isConnecting ? "Connecting…" : "Connect & exec") {
-                Task { await runOnce() }
+            Button("Open SSH Terminal") {
+                if let id = selectedDeviceID {
+                    openWindow(value: id)
+                }
             }
-            .disabled(!canConnect)
+            .disabled(selectedDeviceID == nil)
             .keyboardShortcut(.defaultAction)
 
             Spacer()
-
-            Text(status)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
     private var outputArea: some View {
         ScrollView {
-            Text(output.isEmpty ? "(no output)" : output)
+            Text(output.isEmpty ? "(no replay output)" : output)
                 .font(.system(.callout, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
@@ -227,122 +195,13 @@ struct DebugSSHWindow: View {
         }
     }
 
-    // MARK: Helpers
+    // MARK: Replay
 
-    private var canConnect: Bool {
-        selectedCredentialID != nil
-            && !host.trimmingCharacters(in: .whitespaces).isEmpty
-            && !username.trimmingCharacters(in: .whitespaces).isEmpty
-            && port > 0
-            && !command.trimmingCharacters(in: .whitespaces).isEmpty
-            && !isConnecting
-    }
-
-    private var portFormatter: NumberFormatter {
-        let f = NumberFormatter()
-        f.allowsFloats = false
-        f.minimum = 1
-        f.maximum = 65535
-        return f
-    }
-
-    private func tierLabel(_ tier: SSHCredentialTier) -> String {
-        switch tier {
-        case .secureEnclave: return "SE"
-        case .portable: return "Legacy"
-        }
-    }
-
-    // MARK: Connection flow
-
-    /// Drives one SSHClient round-trip: connect, install output handler,
-    /// exec the command, wait for the session to close, surface the result.
-    /// All audit emissions (session.open, auth.success, cert.accepted,
-    /// session.close) are produced by SSHClient itself — this method just
-    /// drives the bytes and shows the operator-readable result.
-    @MainActor
-    private func runOnce() async {
-        guard
-            let credentialID = selectedCredentialID,
-            let credential = credentials.first(where: { $0.id == credentialID })
-        else {
-            status = "Pick a credential first."
-            return
-        }
-        let trimmedHost = host.trimmingCharacters(in: .whitespaces)
-        guard !trimmedHost.isEmpty else {
-            status = "Enter a host."
-            return
-        }
-
-        isConnecting = true
-        output = ""
-        status = "Connecting to \(trimmedHost):\(port)…"
-        defer { isConnecting = false }
-
-        let knownHostStore = SwiftDataKnownHostStore(modelContainer: modelContext.container)
-        let pemProvider: PortablePEMProvider = { [credentialID] in
-            let pem = await Configuration.shared.sshPrivateKeyPEM(for: credentialID)
-            return pem.map { Data($0.utf8) }
-        }
-
-        let client = SSHClient(
-            transport: DirectTransport(),
-            host: trimmedHost,
-            port: port,
-            username: username,
-            credentialID: credentialID,
-            tier: credential.tier,
-            certificateBlob: credential.certificate,
-            pemProvider: pemProvider,
-            knownHostStore: knownHostStore,
-            // Ad-hoc debug-menu connections aren't tied to a NetBox
-            // Device row, so recorded sessions (if recording is
-            // enabled on the credential) land under
-            // Pulse/Sessions/unassigned/ per ADR §6 amendment. When
-            // the device-row → SSH terminal navigation lands, those
-            // call sites will pass the live `Device.id`.
-            deviceID: nil,
-            recordSessions: credential.recordSessions
-        )
-
-        let collected = OutputCollector()
-        let cause: ExitCause
-        do {
-            let session = try await client.connect()
-            await session.setOutputHandler { bytes in
-                collected.append(bytes)
-            }
-            cause = await withCheckedContinuation { cont in
-                Task {
-                    await session.setExitHandler { resolvedCause in
-                        cont.resume(returning: resolvedCause)
-                    }
-                    do {
-                        try await client.exec(command)
-                    } catch {
-                        cont.resume(returning: .channelError(reason: "\(error)"))
-                    }
-                }
-            }
-            await client.close()
-        } catch {
-            status = "Failed: \(error)"
-            logger.error("debug ssh failed: \(String(describing: error), privacy: .public)")
-            return
-        }
-
-        output = collected.snapshotString()
-        status = "Closed (\(cause))"
-        logger.debug("debug ssh closed cause=\(String(describing: cause), privacy: .public)")
-    }
-
-    /// Find the most-recent recorded session, fire biometric to
-    /// unwrap its session key, validate the chain, and render the
-    /// recovered plaintext into the output panel. Used to verify
-    /// ADR §6 verification step 7 end to end: recorded session is
-    /// non-zero, opens to AES-GCM ciphertext, decrypts only via
-    /// biometric, hash chain validates, tampering fails cleanly.
+    /// Loads the most-recent recording on disk, drives the biometric
+    /// unwrap path, validates the chain, and renders the recovered
+    /// plaintext. ADR §6 verification step 7: the recording→
+    /// encryption→replay loop must round-trip cleanly and tamper
+    /// detection must withhold post-break plaintext.
     @MainActor
     private func replayLatest() async {
         isReplaying = true
@@ -408,26 +267,6 @@ struct DebugSSHWindow: View {
         case .brokenAt(let seq, let reason):
             replayStatus = "Chain broken at seq \(seq) (\(reason)). Plaintext for records before the break was rendered; everything from the break onward is withheld."
         }
-    }
-}
-
-// MARK: - OutputCollector
-
-/// Lock-backed sink for the bytes the session emits. Mirrors the
-/// `LockedBox` pattern from SSHClientTests but with a Swift-side
-/// UTF-8 append helper since the debug window renders the result
-/// as a `String`.
-private final class OutputCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var bytes: [UInt8] = []
-
-    func append(_ chunk: ArraySlice<UInt8>) {
-        lock.withLock { bytes.append(contentsOf: chunk) }
-    }
-
-    func snapshotString() -> String {
-        let snapshot = lock.withLock { bytes }
-        return String(bytes: snapshot, encoding: .utf8) ?? "<\(snapshot.count) non-UTF-8 bytes>"
     }
 }
 
