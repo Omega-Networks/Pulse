@@ -39,10 +39,18 @@ import UIKit
 /// view. Holds the closures that move bytes in and out of SwiftTerm:
 ///
 /// - `feed(_:)` accepts server bytes (called from
-///   `SSHSession.setOutputHandler` on the EventLoop thread) and hands
-///   them to the live `Terminal` instance on the main actor via
-///   `Terminal.feed(buffer: ArraySlice<UInt8>)`, the zero-copy slice
-///   overload at `Sources/SwiftTerm/Terminal.swift:4890`.
+///   `SSHSession.setOutputHandler` on the EventLoop thread), coalesces
+///   them under a lock, and hands the accumulated buffer to the live
+///   `TerminalView` on the main actor via
+///   `TerminalView.feed(byteArray: ArraySlice<UInt8>)`, the view-level
+///   wrapper at `Sources/SwiftTerm/Apple/AppleTerminalView.swift:1910`.
+///   The wrapper bookends the zero-copy engine call
+///   (`Terminal.feed(buffer:)`) with `feedPrepare()` and `feedFinish()`,
+///   and `feedFinish()` is what calls `queuePendingDisplay()` to
+///   schedule the AppKit / UIKit `setNeedsDisplay` cycle. Calling the
+///   engine directly would update the grid model but never mark the
+///   platform view dirty, leaving the operator's screen frozen until
+///   some other event triggered a redraw.
 /// - `sendHandler` is invoked when the terminal emits keystrokes
 ///   (`TerminalViewDelegate.send`). The operator view sets this to
 ///   forward into `SSHSession.write(_:)`.
@@ -279,13 +287,22 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
 /// and minimal lets the SSH layer stay strictly concerned with byte
 /// transport while supporting both macOS and iOS production builds.
 ///
-/// **Hot path.** Bytes flow through `Terminal.feed(buffer: ArraySlice<UInt8>)`
-/// (the slice overload at `Sources/SwiftTerm/Terminal.swift:4890`), which
-/// is zero-copy from Pulse's `SSHSession.setOutputHandler` closure shape.
-/// The other two `feed` overloads (`[UInt8]` and `String`) allocate per
-/// call and must not be used for the SSH consume path: the recording-tap
-/// byte-pump can push kilobyte-per-record paste-bombs through here, and
-/// avoiding the allocation is non-negotiable.
+/// **Hot path.** Bytes flow through
+/// `TerminalView.feed(byteArray: ArraySlice<UInt8>)` at
+/// `Sources/SwiftTerm/Apple/AppleTerminalView.swift:1910`, which is
+/// zero-copy from Pulse's `SSHSession.setOutputHandler` closure shape.
+/// The view-level call wraps the engine call (`Terminal.feed(buffer:)`,
+/// same zero-copy slice path) with `feedPrepare()` / `feedFinish()`,
+/// and `feedFinish()` is the seam that calls `queuePendingDisplay()`
+/// to schedule the AppKit / UIKit redraw. The engine call alone would
+/// update the grid model but never mark the view dirty, so SwiftTerm
+/// output would not appear until something else (a click, a keystroke,
+/// a resize) triggered a redraw cycle. SwiftTerm exposes one other
+/// view-level overload, `feed(text: String)` at line 1918, which
+/// allocates to UTF-8-encode the string; the SSH consume path uses the
+/// slice overload because the recording-tap byte-pump can push
+/// kilobyte-per-record paste-bombs through here and avoiding the
+/// allocation is non-negotiable.
 ///
 /// **Delegate model.** SwiftTerm ships two delegate protocols:
 /// `TerminalDelegate` (engine-level, lower-layer; see `Terminal.swift:18`)
