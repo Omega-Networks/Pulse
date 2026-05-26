@@ -89,6 +89,7 @@
 		A11CAFE0000000000000112 /* SessionRecordingAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000113 /* SessionRecordingAudit.swift */; };
 		A11CAFE0000000000000114 /* SSHSessionRecordingTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000115 /* SSHSessionRecordingTap.swift */; };
 		A11CAFE0000000000000116 /* SessionLogReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000117 /* SessionLogReplay.swift */; };
+		A11CAFE0000000000000118 /* PulseTerminalAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */; };
 		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
 		A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F8 /* PulseTransport.swift */; };
@@ -109,6 +110,7 @@
 		A11CAFE0000000000000B00E /* SSHSessionRecordingTapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00E /* SSHSessionRecordingTapTests.swift */; };
 		A11CAFE0000000000000B00F /* SessionLogReplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00F /* SessionLogReplayTests.swift */; };
 		C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = C923355E2FC3EAF9003BAF42 /* NIOSSH */; };
+		A11CAFE000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000D1 /* SwiftTerm */; };
 		A11CAFE000000000000000C0 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000C1 /* NIOSSH */; };
 		C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = C93291702FC30A3900624995 /* NIOTransportServices */; };
 		C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */; };
@@ -271,6 +273,7 @@
 		A11CAFE0000000000000113 /* SessionRecordingAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRecordingAudit.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000115 /* SSHSessionRecordingTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSessionRecordingTap.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000117 /* SessionLogReplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogReplay.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTerminalAdapter.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F8 /* PulseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTransport.swift; sourceTree = "<group>"; };
@@ -361,6 +364,7 @@
 			files = (
 				C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */,
 				C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */,
+				A11CAFE000000000000000D2 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -733,10 +737,19 @@
 				C96192002ACA5CC4000198DB /* Table Views */,
 				8A4D5B0C123456789ABCDEF0 /* PowerSenseViews */,
 				A11CAFE0000000000000DAD2 /* Settings */,
+				A11CAFE000000000000011A /* Terminal */,
 				C96191F12ACA5C03000198DB /* SiteGroupRow.swift */,
 				419D50F82C227D3600CEA439 /* SitesList.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		A11CAFE000000000000011A /* Terminal */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */,
+			);
+			path = Terminal;
 			sourceTree = "<group>";
 		};
 		C96191992ACA56B3000198DB /* Menu Content */ = {
@@ -851,6 +864,7 @@
 			packageProductDependencies = (
 				C923355E2FC3EAF9003BAF42 /* NIOSSH */,
 				C93291702FC30A3900624995 /* NIOTransportServices */,
+				A11CAFE000000000000000D1 /* SwiftTerm */,
 			);
 			productName = Pulse;
 			productReference = C961915E2ACA552F000198DB /* Pulse.app */;
@@ -930,6 +944,7 @@
 			packageReferences = (
 				C932916F2FC30A3900624995 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */,
 				C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
+				A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 			);
 			productRefGroup = C961915F2ACA552F000198DB /* Products */;
 			projectDirPath = "";
@@ -993,6 +1008,7 @@
 				A11CAFE0000000000000112 /* SessionRecordingAudit.swift in Sources */,
 				A11CAFE0000000000000114 /* SSHSessionRecordingTap.swift in Sources */,
 				A11CAFE0000000000000116 /* SessionLogReplay.swift in Sources */,
+				A11CAFE0000000000000118 /* PulseTerminalAdapter.swift in Sources */,
 				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
 				A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */,
 				A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */,
@@ -1561,6 +1577,14 @@
 				minimumVersion = 1.28.0;
 			};
 		};
+		A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {
+				kind = exactVersion;
+				version = 1.12.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1578,6 +1602,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C932916F2FC30A3900624995 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */;
 			productName = NIOTransportServices;
+		};
+		A11CAFE000000000000000D1 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

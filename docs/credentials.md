@@ -141,6 +141,16 @@ The secret-material cleanup failed. The credential row stays in place so you can
 **The credential editor refuses an imported PEM.**
 The classifier didn't recognise it. Two likely reasons: a corrupted paste (line breaks munged by a chat app), or DSA (rejected on purpose; modern OpenSSH dropped DSA support). Try copying the PEM directly from the file rather than through an intermediate app.
 
+## Connecting to a device
+
+The SSH terminal opens from any device row's context menu, "Open SSH Terminal". The item is disabled when the device has no `primaryIP` recorded in NetBox; populate that field in NetBox first.
+
+Each open invocation activates an existing terminal window for the same device when one is already on screen (SwiftUI's per-value `WindowGroup` semantics). One terminal per device matches the operator mental model and avoids the "did I leave one open?" footgun. If you need a second session against the same device, close the first.
+
+The first SSH connection of an app session triggers two biometric prompts back-to-back: one to sign the user-auth handshake against the Secure Enclave credential, and one to unwrap the session-recording wrapping key if recording is enabled on the credential. Subsequent connections during the same app session re-trigger the signing prompt (per ADR §1, there is no per-session cache) but reuse the already-unwrapped recording key.
+
+The fuller terminal section is filled in as the feature lands.
+
 ## Session recording
 
 Each credential carries a `recordSessions: Bool` toggle, off by default. Operators flip it from Settings → SSH (right-click a credential row → "Record sessions"). When on, every SSH session driven by that credential writes an encrypted log to disk under `<Application Support>/Pulse/Sessions/dev-<Device.id>/<timestamp>_<sessionUUID>.{pulselog,meta}` (or `Pulse/Sessions/unassigned/` for ad-hoc connections that aren't tied to a NetBox device). The toggle is suggested-on at credential creation time for break-glass and production-change credentials; the default-off posture matches ADR §6's opt-in stance.
