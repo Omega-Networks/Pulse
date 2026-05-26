@@ -23,6 +23,7 @@
 import Foundation
 import NIOCore
 import NIOEmbedded
+import NIOSSH
 import XCTest
 @testable import Pulse
 
@@ -142,6 +143,43 @@ final class SSHSessionTests: XCTestCase {
         await session.close()
         await session.close()
         // No assertion needed beyond "didn't throw / hang."
+    }
+
+    /// `SSHSessionDataBridge.OutboundIn` must match what `SSHSession.write`
+    /// emits (`SSHChannelData`), not the rewrap-from-`ByteBuffer` shape that
+    /// would force-cast at runtime. This test installs the bridge on an
+    /// `EmbeddedChannel`, drives an outbound `SSHChannelData`, and asserts
+    /// the cast does not crash and the payload reaches the wire unchanged.
+    /// A regression here would otherwise crash the operator-facing
+    /// terminal's keystroke path on first input.
+    func testBridgeForwardsOutboundSSHChannelDataWithoutCrash() throws {
+        let loop = EmbeddedEventLoop()
+        defer { try? loop.syncShutdownGracefully() }
+        let channel = EmbeddedChannel(loop: loop)
+        let session = SSHSession(childChannel: channel)
+        let bridge = SSHSessionDataBridge(session: session)
+        try channel.pipeline.syncOperations.addHandler(bridge)
+
+        var buffer = channel.allocator.buffer(capacity: 5)
+        buffer.writeBytes("hello".utf8)
+        let payload = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
+
+        // The bridge's `write(context:data:promise:)` was previously
+        // declared `OutboundIn = ByteBuffer`, which would precondition-
+        // fail on this write. Forwarding `SSHChannelData` through the
+        // pipeline must succeed.
+        try channel.writeOutbound(payload)
+
+        // The flushed write should land at the channel's outbound
+        // buffer as the same `SSHChannelData` payload.
+        let emitted: SSHChannelData? = try channel.readOutbound()
+        XCTAssertNotNil(emitted, "bridge must forward outbound SSHChannelData to the wire")
+        if case .byteBuffer(let outBuffer) = emitted?.data {
+            let bytes = outBuffer.getBytes(at: outBuffer.readerIndex, length: outBuffer.readableBytes) ?? []
+            XCTAssertEqual(bytes, Array("hello".utf8))
+        } else {
+            XCTFail("expected byteBuffer-shaped SSHChannelData on the wire")
+        }
     }
 }
 

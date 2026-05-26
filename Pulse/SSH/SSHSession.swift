@@ -230,7 +230,16 @@ actor SSHSession {
 /// closure.
 final class SSHSessionDataBridge: ChannelDuplexHandler {
     typealias InboundIn = SSHChannelData
-    typealias OutboundIn = ByteBuffer
+    /// Outbound payload type matches what `SSHSession.write` actually
+    /// emits: a fully-wrapped `SSHChannelData(.channel, .byteBuffer)`.
+    /// The earlier `ByteBuffer` declaration was a latent type mismatch:
+    /// NIO's `unwrapOutboundIn` force-casts, so the first call to
+    /// `SSHSession.write` would have crashed the byte pump.
+    /// Currently dormant because no production path drives outbound
+    /// writes (the debug menu uses `triggerUserOutboundEvent` for
+    /// `exec`); the operator-facing terminal's keystroke path will be
+    /// the first caller, and this declaration keeps it safe.
+    typealias OutboundIn = SSHChannelData
     typealias OutboundOut = SSHChannelData
 
     private let session: SSHSession
@@ -276,8 +285,13 @@ final class SSHSessionDataBridge: ChannelDuplexHandler {
     }
 
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-        let buffer = self.unwrapOutboundIn(data)
-        let payload = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
-        context.write(self.wrapOutboundOut(payload), promise: promise)
+        // `SSHSession.write` already builds the `SSHChannelData(.channel, .byteBuffer)`
+        // payload; the bridge just forwards. The previous implementation
+        // rewrapped a `ByteBuffer` into `SSHChannelData`, which made the
+        // `OutboundIn = ByteBuffer` declaration consistent on paper but
+        // never matched what `SSHSession.write` actually emits. The
+        // forward-only shape is correct for either direction of future
+        // call site.
+        context.write(data, promise: promise)
     }
 }
