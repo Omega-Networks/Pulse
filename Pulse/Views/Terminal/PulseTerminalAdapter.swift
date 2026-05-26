@@ -25,6 +25,7 @@
 
 import SwiftUI
 import SwiftTerm
+import NIOConcurrencyHelpers
 
 #if os(macOS)
 import AppKit
@@ -32,12 +33,138 @@ import AppKit
 import UIKit
 #endif
 
+// MARK: - PulseTerminalSurface
+
+/// Binding object between the SwiftUI adapter and the operator-facing
+/// view. Holds the closures that move bytes in and out of SwiftTerm:
+///
+/// - `feed(_:)` accepts server bytes (called from
+///   `SSHSession.setOutputHandler` on the EventLoop thread) and hands
+///   them to the live `Terminal` instance on the main actor via
+///   `Terminal.feed(buffer: ArraySlice<UInt8>)`, the zero-copy slice
+///   overload at `Sources/SwiftTerm/Terminal.swift:4890`.
+/// - `sendHandler` is invoked when the terminal emits keystrokes
+///   (`TerminalViewDelegate.send`). The operator view sets this to
+///   forward into `SSHSession.write(_:)`.
+/// - `resizeHandler` is invoked when the terminal's column / row count
+///   changes. The operator view sets this to forward into
+///   `SSHSession.resize(cols:rows:)`.
+///
+/// **Why a separate class.** SwiftUI's `NSViewRepresentable` /
+/// `UIViewRepresentable` value-type structs cannot hold a reference to
+/// the platform view; that reference lives on the `Coordinator`. The
+/// operator view's connection state (the `SSHClient`, the SwiftData
+/// `Device`) lives on the view's own `@State`. The surface is the
+/// stable identity that lets the operator view's lifecycle reach
+/// across to the live view without coupling SwiftUI value semantics
+/// to AppKit / UIKit reference semantics.
+///
+/// **Concurrency.** Mirrors the `SSHSession` pattern: state lives in
+/// an `NIOLockedValueBox` so the surface can be touched from the
+/// EventLoop (`feed`), from the main thread (handler setup, resize
+/// dispatch), and from any actor that owns the operator view, all
+/// without requiring a single isolation domain. The weak view
+/// reference is `nonisolated(unsafe)` because every access path
+/// (`makeNSView`, `makeUIView`, the main-actor hop inside `feed`) is
+/// disciplined to run on the main thread.
+final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
+
+    private struct State {
+        var sendHandler: (@Sendable (ArraySlice<UInt8>) -> Void)?
+        var resizeHandler: (@Sendable (Int, Int) -> Void)?
+        var lastCols: Int = 0
+        var lastRows: Int = 0
+    }
+
+    private let state = NIOLockedValueBox<State>(.init())
+
+    /// The platform `TerminalView` instance. Set in `makeNSView` /
+    /// `makeUIView` (main thread), read in `feed`'s main-actor hop
+    /// (also main thread). `nonisolated(unsafe)` keeps the compiler
+    /// quiet about the cross-context store without paying for a lock
+    /// on the hot path; the discipline is enforced at the call sites.
+    nonisolated(unsafe) fileprivate weak var view: PulseTerminalAdapter.PlatformTerminalView?
+
+    init() {}
+
+    /// Operator view sets this to `{ bytes in await session.write(bytes) }`
+    /// or equivalent. `@Sendable` because keystrokes flow into
+    /// `SSHSession`, which is actor-isolated; the closure crosses the
+    /// boundary.
+    var sendHandler: (@Sendable (ArraySlice<UInt8>) -> Void)? {
+        get { state.withLockedValue { $0.sendHandler } }
+        set { state.withLockedValue { $0.sendHandler = newValue } }
+    }
+
+    /// Operator view sets this to forward into
+    /// `SSHSession.resize(cols:rows:)`.
+    var resizeHandler: (@Sendable (Int, Int) -> Void)? {
+        get { state.withLockedValue { $0.resizeHandler } }
+        set { state.withLockedValue { $0.resizeHandler = newValue } }
+    }
+
+    /// Feed bytes from the server into the terminal. Called from the
+    /// SSH session's `setOutputHandler` closure, which fires on the
+    /// EventLoop thread. Internally hops to the main actor and forwards
+    /// through SwiftTerm's `Terminal.feed(buffer: ArraySlice<UInt8>)`
+    /// at `Sources/SwiftTerm/Terminal.swift:4890`, the zero-copy slice
+    /// overload. `ArraySlice<UInt8>` is `Sendable` (its base storage is
+    /// `[UInt8]`, a value type) so the capture across the actor hop
+    /// does not allocate. The slice's backing storage comes from
+    /// `SSHSession.deliverOutput`'s `getBytes`-materialised `[UInt8]`,
+    /// not from a shared ByteBuffer, so the lifetime is governed by
+    /// the slice's ARC retention and the cross-thread capture is safe.
+    func feed(_ bytes: ArraySlice<UInt8>) {
+        Task { @MainActor [bytes] in
+            view?.getTerminal().feed(buffer: bytes)
+        }
+    }
+
+    /// Invoked by the adapter's `TerminalViewDelegate.send` conformance.
+    /// Forwards the operator's keystrokes unchanged through the
+    /// configured `sendHandler` closure. Tested directly without
+    /// instantiating a `TerminalView`: the contract is that bytes
+    /// arrive at the handler in the same order and content they
+    /// arrived from SwiftTerm.
+    func forwardKeystrokes(_ data: ArraySlice<UInt8>) {
+        let handler = state.withLockedValue { $0.sendHandler }
+        handler?(data)
+    }
+
+    /// Invoked by the adapter's `updateNSView` / `updateUIView`
+    /// lifecycle and by `TerminalViewDelegate.sizeChanged` (the latter
+    /// fires when SwiftTerm reflows in response to a DECCOLM-style
+    /// escape sequence from the server). Both paths converge here.
+    /// Fires the resize handler only when the dimensions changed, and
+    /// only when both are positive: early SwiftUI render passes can
+    /// report 0-sized geometry before layout completes, and a
+    /// `cols=0` resize would propagate as a degenerate
+    /// `SSHSession.resize(cols:0, rows:0)` call.
+    func notifyResize(cols: Int, rows: Int) {
+        guard cols > 0, rows > 0 else { return }
+        let outcome = state.withLockedValue { current -> (changed: Bool, handler: (@Sendable (Int, Int) -> Void)?) in
+            guard cols != current.lastCols || rows != current.lastRows else {
+                return (false, nil)
+            }
+            current.lastCols = cols
+            current.lastRows = rows
+            return (true, current.resizeHandler)
+        }
+        if outcome.changed {
+            outcome.handler?(cols, rows)
+        }
+    }
+}
+
+// MARK: - PulseTerminalAdapter
+
 /// SwiftUI wrapper around SwiftTerm's `TerminalView`. Pulse-owned because
 /// SwiftTerm ships AppKit / UIKit views but no generic SwiftUI bridge:
-/// the iOS sample's `TerminalHostRepresentable` is SSH-specific (it embeds
-/// connection logic), so reusing it would push SSH semantics into the UI
-/// adapter. Keeping the adapter Pulse-owned and minimal lets the SSH layer
-/// stay strictly concerned with byte transport.
+/// the iOS sample's `SwiftUITerminalView` is `#if canImport(UIKit) && DEBUG`
+/// (internal-for-testing, iOS-only), so reusing it would push us into a
+/// debug-only / single-platform corner. Keeping the adapter Pulse-owned
+/// and minimal lets the SSH layer stay strictly concerned with byte
+/// transport while supporting both macOS and iOS production builds.
 ///
 /// **Hot path.** Bytes flow through `Terminal.feed(buffer: ArraySlice<UInt8>)`
 /// (the slice overload at `Sources/SwiftTerm/Terminal.swift:4890`), which
@@ -47,33 +174,40 @@ import UIKit
 /// byte-pump can push kilobyte-per-record paste-bombs through here, and
 /// avoiding the allocation is non-negotiable.
 ///
-/// **Delegate model.** SwiftTerm exposes a single `TerminalDelegate`
-/// protocol (`Sources/SwiftTerm/Terminal.swift:18`). There is no
-/// separate `TerminalViewDelegate`. The adapter's `Coordinator` conforms
-/// to `TerminalDelegate` and forwards keystroke output through a
-/// closure to the operator-facing view, which in turn forwards into
-/// `SSHSession.write(_:)` (also `ArraySlice<UInt8>`-shaped, also
-/// zero-copy on the keystroke direction).
+/// **Delegate model.** SwiftTerm ships two delegate protocols:
+/// `TerminalDelegate` (engine-level, lower-layer; see `Terminal.swift:18`)
+/// and `TerminalViewDelegate` (UI-level, what host apps implement; see
+/// `Apple/TerminalViewDelegate.swift:12`). The adapter's `Coordinator`
+/// conforms to `TerminalViewDelegate`. The 10 required methods are
+/// either wired through the surface (`send`, `sizeChanged`) or stubbed
+/// empty (title, directory, scrolled, clipboard, rangeChanged) or
+/// implemented to forward to the system (`requestOpenLink`). `bell`
+/// and `iTermContent` have default protocol-extension implementations
+/// in SwiftTerm's platform files.
 ///
-/// **Resize.** `TerminalDelegate.sizeChanged(source:)` at
-/// `Terminal.swift:69` is documented as "not wired up" via the
-/// escape-sequence path. The adapter drives resize from the platform
-/// view's bounds observer (`NSView.frame` / `UIView.bounds` change)
-/// into a `resizeHandler` closure that the operator view wires to
-/// `SSHSession.resize(cols:rows:)`. The bounds observer is wired in
-/// a subsequent change; this scaffold establishes the SwiftUI surface
-/// and the underlying `TerminalView` lifecycle only.
+/// **Resize.** Both `MacTerminalView.setFrameSize(_:)` and
+/// `iOSTerminalView.layoutSubviews()` internally call SwiftTerm's
+/// `processSizeChange`, which reflows the terminal grid to the new
+/// pixel size. The adapter reads `terminal.cols` / `terminal.rows`
+/// inside `updateNSView` / `updateUIView` (which SwiftUI fires after
+/// layout) and forwards changes through `PulseTerminalSurface.notifyResize`
+/// which dedupes and guards against zero dimensions. The
+/// `TerminalViewDelegate.sizeChanged` callback fires for server-driven
+/// reflows (DECCOLM 80/132 column switches) and converges on the
+/// same surface method, so both paths share the dedupe logic.
 struct PulseTerminalAdapter {
-    // The platform `TerminalView` type SwiftTerm ships under
-    // `Sources/SwiftTerm/Mac/MacTerminalView.swift` (NSView) and
-    // `Sources/SwiftTerm/iOS/iOSTerminalView.swift` (UIView). Both
-    // export the same `TerminalView` symbol; the typealias here keeps
-    // call sites platform-agnostic.
-    #if os(macOS)
+
+    /// Stable identity holding the byte-pump wiring closures. The
+    /// operator view owns this; the adapter holds it during its
+    /// SwiftUI lifetime.
+    let surface: PulseTerminalSurface
+
+    /// The platform `TerminalView` type SwiftTerm ships under
+    /// `Sources/SwiftTerm/Mac/MacTerminalView.swift` (NSView) and
+    /// `Sources/SwiftTerm/iOS/iOSTerminalView.swift` (UIView). Both
+    /// export the same `TerminalView` symbol; the typealias keeps
+    /// call sites platform-agnostic.
     typealias PlatformTerminalView = SwiftTerm.TerminalView
-    #else
-    typealias PlatformTerminalView = SwiftTerm.TerminalView
-    #endif
 }
 
 #if os(macOS)
@@ -83,23 +217,19 @@ extension PulseTerminalAdapter: NSViewRepresentable {
     typealias NSViewType = PlatformTerminalView
 
     func makeNSView(context: Context) -> PlatformTerminalView {
-        // Initial frame is `.zero`; SwiftUI assigns the real frame via
-        // layout. Default font (`nil`) lets SwiftTerm pick its bundled
-        // monospaced face, which renders consistently on retina and
-        // non-retina displays.
         let view = PlatformTerminalView(frame: .zero, font: nil)
+        view.terminalDelegate = context.coordinator
+        surface.view = view
         return view
     }
 
     func updateNSView(_ nsView: PlatformTerminalView, context: Context) {
-        // Scaffold: no per-update propagation yet. Subsequent change
-        // wires the byte-pump consumer (the SSHSession's output
-        // handler), the keystroke forwarder, and the resize handler
-        // through `context.coordinator`.
+        let terminal = nsView.getTerminal()
+        surface.notifyResize(cols: terminal.cols, rows: terminal.rows)
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(surface: surface)
     }
 }
 
@@ -111,15 +241,18 @@ extension PulseTerminalAdapter: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PlatformTerminalView {
         let view = PlatformTerminalView(frame: .zero, font: nil)
+        view.terminalDelegate = context.coordinator
+        surface.view = view
         return view
     }
 
     func updateUIView(_ uiView: PlatformTerminalView, context: Context) {
-        // Scaffold: no per-update propagation yet. See macOS path.
+        let terminal = uiView.getTerminal()
+        surface.notifyResize(cols: terminal.cols, rows: terminal.rows)
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(surface: surface)
     }
 }
 
@@ -129,12 +262,75 @@ extension PulseTerminalAdapter: UIViewRepresentable {
 
 extension PulseTerminalAdapter {
 
-    /// Owns the `TerminalDelegate` conformance. Subsequent change adds
-    /// the keystroke forwarder closure (`sendHandler`) and the resize
-    /// forwarder closure (`resizeHandler`); the scaffold here is the
-    /// empty class so the SwiftUI representable shape compiles and the
-    /// SwiftTerm SPM resolution is verified by the build.
-    final class Coordinator {
-        init() {}
+    /// Conforms to SwiftTerm's `TerminalViewDelegate`. The protocol
+    /// has 10 required methods covering UI-level events. Only two are
+    /// load-bearing for Pulse: `send` (operator keystrokes → SSH) and
+    /// `sizeChanged` (server-driven reflow → SSH resize). The rest
+    /// are stubbed empty or forward to the system; `bell` and
+    /// `iTermContent` use SwiftTerm's default implementations.
+    final class Coordinator: NSObject, TerminalViewDelegate {
+
+        let surface: PulseTerminalSurface
+
+        init(surface: PulseTerminalSurface) {
+            self.surface = surface
+            super.init()
+        }
+
+        /// Operator keystrokes from the terminal. Forwarded unchanged
+        /// to the surface, which invokes the configured `sendHandler`.
+        /// The data parameter is `ArraySlice<UInt8>` end to end, so
+        /// the forward is zero-copy.
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {
+            surface.forwardKeystrokes(data)
+        }
+
+        /// Server-driven reflow (typically DECCOLM 80/132 column
+        /// switching). Forwarded through the same dedupe path that
+        /// SwiftUI-layout-driven resizes use.
+        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+            surface.notifyResize(cols: newCols, rows: newRows)
+        }
+
+        func setTerminalTitle(source: TerminalView, title: String) {
+            // Not surfaced to the operator. A future Settings → SSH
+            // option could route window-title updates into the
+            // SwiftUI title binding.
+        }
+
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+            // OSC 7. Not surfaced.
+        }
+
+        func scrolled(source: TerminalView, position: Double) {
+            // Scrollback position is the operator's concern, not
+            // ours: SwiftTerm handles its own scroll UI.
+        }
+
+        func clipboardCopy(source: TerminalView, content: Data) {
+            // OSC 52. Bridging clipboard-write requests from the
+            // server is a security-sensitive surface and is
+            // deliberately deferred.
+        }
+
+        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+            // Visual-change notification. Only fires when SwiftTerm's
+            // `notifyUpdateChanges` is set true, which Pulse leaves
+            // false.
+        }
+
+        func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+            // Operator clicked a link in the terminal output. Hand
+            // off to the system URL handler. Mirrors the default
+            // implementation SwiftTerm provides on macOS at
+            // `MacTerminalView.swift:2402`; on iOS the default is
+            // absent so we provide one explicitly.
+            guard let url = URL(string: link) else { return }
+            #if os(macOS)
+            NSWorkspace.shared.open(url)
+            #else
+            UIApplication.shared.open(url)
+            #endif
+        }
     }
 }

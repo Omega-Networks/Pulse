@@ -109,6 +109,7 @@
 		A11CAFE0000000000000B00D /* SessionRecordingAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00D /* SessionRecordingAuditTests.swift */; };
 		A11CAFE0000000000000B00E /* SSHSessionRecordingTapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00E /* SSHSessionRecordingTapTests.swift */; };
 		A11CAFE0000000000000B00F /* SessionLogReplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00F /* SessionLogReplayTests.swift */; };
+		A11CAFE0000000000000B010 /* PulseTerminalAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A010 /* PulseTerminalAdapterTests.swift */; };
 		C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = C923355E2FC3EAF9003BAF42 /* NIOSSH */; };
 		A11CAFE000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000D1 /* SwiftTerm */; };
 		A11CAFE000000000000000C0 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000C1 /* NIOSSH */; };
@@ -293,6 +294,7 @@
 		A11CAFE0000000000000A00D /* SessionRecordingAuditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRecordingAuditTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A00E /* SSHSessionRecordingTapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSessionRecordingTapTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A00F /* SessionLogReplayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogReplayTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A010 /* PulseTerminalAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTerminalAdapterTests.swift; sourceTree = "<group>"; };
 		C926516F2E71AFA2004564DD /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
 		C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceOverviewView.swift; sourceTree = "<group>"; };
 		C961915E2ACA552F000198DB /* Pulse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pulse.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -581,6 +583,7 @@
 				A11CAFE0000000000000A00D /* SessionRecordingAuditTests.swift */,
 				A11CAFE0000000000000A00E /* SSHSessionRecordingTapTests.swift */,
 				A11CAFE0000000000000A00F /* SessionLogReplayTests.swift */,
+				A11CAFE0000000000000A010 /* PulseTerminalAdapterTests.swift */,
 			);
 			path = SSH;
 			sourceTree = "<group>";
@@ -1150,6 +1153,7 @@
 				A11CAFE0000000000000B00D /* SessionRecordingAuditTests.swift in Sources */,
 				A11CAFE0000000000000B00E /* SSHSessionRecordingTapTests.swift in Sources */,
 				A11CAFE0000000000000B00F /* SessionLogReplayTests.swift in Sources */,
+				A11CAFE0000000000000B010 /* PulseTerminalAdapterTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
