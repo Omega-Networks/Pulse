@@ -58,8 +58,8 @@ enum SSHClientError: Error, CustomStringConvertible, Equatable {
 
 /// Owns the lifecycle of a single SSH session from TCP connect through
 /// session-channel open. Stitches `PulseTransport` to NIOSSH's
-/// `NIOSSHHandler`, installing both the auth delegate (Slice 3 commit 7b₃)
-/// and the host-key delegate (Slice 3 commit 6) on the pipeline.
+/// `NIOSSHHandler`, installing both the auth delegate and the host-key
+/// delegate on the pipeline.
 ///
 /// **Per-session, not per-device.** One `SSHClient` instance maps to one
 /// SSH session. Operators that open multiple sessions to the same device
@@ -74,8 +74,7 @@ enum SSHClientError: Error, CustomStringConvertible, Equatable {
 /// EventLoopFuture chains that return Sendable snapshots
 /// (`SSHSession` itself, error values) across the actor boundary. Do not
 /// "optimise" by inlining channel work onto the actor's executor: that would
-/// race with the EventLoop's dispatcher. Same pattern as `SSHHostKeyDelegate`
-/// (commit ea34d22 reminder).
+/// race with the EventLoop's dispatcher. Same pattern as `SSHHostKeyDelegate`.
 actor SSHClient {
 
     // MARK: Configuration
@@ -374,10 +373,10 @@ actor SSHClient {
         }
     }
 
-    /// Triggers an `exec` channel request against the open session. Used by
-    /// `DebugSSHMenu` (commit 9) to run a one-shot command (e.g., `ls -la /`)
-    /// without setting up a full PTY. SwiftTerm (Slice 5) replaces this with
-    /// a `pty-req` + `shell` pair.
+    /// Triggers an `exec` channel request against the open session. Used
+    /// by `DebugSSHMenu` to run a one-shot command (e.g., `ls -la /`)
+    /// without setting up a full PTY. The operator-facing SwiftTerm
+    /// surface uses a `pty-req` + `shell` pair instead.
     func exec(_ command: String) async throws {
         guard let session else {
             throw SSHClientError.execRequestFailed(reason: "session not yet open")

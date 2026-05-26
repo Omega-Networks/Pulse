@@ -177,12 +177,12 @@ struct PulseApp: App {
             }
         }
         #if DEBUG
-        // Slice 3 verification surface. The Debug menu lives on the Site
+        // Debug verification surface. The Debug menu lives on the Site
         // View scene because Site View is the macOS-only main window
         // (matches the host scope of the WindowGroup we attach to here);
         // the command itself is `#if DEBUG` so Release builds carry
         // neither the menu entry nor the DebugSSHMenu symbol. The
-        // operator-facing terminal lives in Slice 5, not here.
+        // operator-facing terminal lives elsewhere, not here.
         .commands {
             DebugSSHCommands()
         }

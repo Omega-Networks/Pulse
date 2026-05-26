@@ -38,8 +38,8 @@ import OSLog
 /// The protocol stays minimal: resolve paths, append a JSONL line,
 /// replace the `.meta` sidecar. Anything more elaborate (atomic
 /// crash-safe append, write-ahead log) lives behind a different protocol
-/// because Slice 4 explicitly defers that hardening (see ADR §6 "Out of
-/// scope" — WAL-style two-phase commit on mid-record crash is a future
+/// because that hardening is explicitly deferred (see ADR §6 "Out of
+/// scope": WAL-style two-phase commit on mid-record crash is a future
 /// concern).
 protocol SessionLogFileStore: Sendable {
 
@@ -216,7 +216,7 @@ struct FileSystemSessionLogFileStore: SessionLogFileStore {
 /// biometric on the SE-resident wrapping key.
 struct PulselogHeader: Codable, Equatable, Sendable {
     /// Format version. Bumped if the on-disk envelope shape changes.
-    /// Slice 4 ships v=1.
+    /// Ships v=1.
     let v: Int
 
     /// UUID stringified. Pairs with the `.meta` sidecar's identity for
@@ -299,7 +299,7 @@ actor SessionLogWriter {
     /// Maximum number of pending records the writer will buffer before
     /// transitioning to the terminal stop state. Matches ADR §6's
     /// stated bound. A future tunable could thread this through `open`;
-    /// Slice 4 ships the static value.
+    /// the current build ships the static value.
     static let maxPendingRecords = 1024
 
     /// Maximum total pending plaintext bytes. 4 MiB — matches ADR §6.
@@ -404,9 +404,9 @@ actor SessionLogWriter {
     /// True once `close()` has run; second close is a no-op.
     private var closed: Bool = false
 
-    /// Logger. Direct os_log emission stays inline here in Slice 4 so
-    /// the structural-failure paths are visible from day one; commit 6
-    /// consolidates the audit-event surface across the slice.
+    /// Logger. Direct os_log emission stays inline here so
+    /// the structural-failure paths are visible; the audit-event
+    /// surface is consolidated elsewhere in the recording stack.
     private static let logger = Logger(subsystem: "pulse", category: "ssh.recording")
 
     // MARK: Bounded pending queue (nonisolated)
@@ -739,8 +739,8 @@ actor SessionLogWriter {
         meta.chain_head_hash = previousChainHash
     }
 
-    /// Marks the writer stopped and emits the audit event. Idempotent —
-    /// only the first transition emits. Called by `processRecord` on a
+    /// Marks the writer stopped and emits the audit event. Idempotent:
+    /// only the first transition emits. Called by `sealAndWriteRecord` on a
     /// seal/write failure; the overflow path uses a different code path
     /// (`tryEnqueue` sets the flag directly because it's nonisolated).
     private func transitionToStopped(_ reason: StopReason) {

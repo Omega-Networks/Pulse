@@ -457,7 +457,7 @@ enum SSHKeyImporter {
 
     /// Algorithm-specific private material extracted from an unencrypted
     /// OpenSSH new-format (`openssh-key-v1`) private-key payload. The auth
-    /// delegate (Slice 3 commit 7b₃) wraps each case in the corresponding
+    /// delegate wraps each case in the corresponding
     /// CryptoKit primitive and hands the result to `NIOSSHPrivateKey`.
     ///
     /// The scalar / seed byte lengths are pinned to the algorithm's curve:

@@ -34,9 +34,9 @@ final class SecureEnclaveKeyManagerTests: XCTestCase {
     // MARK: - CryptoKit dataRepresentation contract
 
     /// The structural non-exportability claim in ADR 0001 §1: SE private keys
-    /// cannot be extracted. Under the Slice 1 SecKey path this was verified by
+    /// cannot be extracted. Under the previous SecKey-based path this was verified by
     /// `SecKeyCopyExternalRepresentation` returning `nil` on the private half.
-    /// Under the Slice 3 7a refactor (CryptoKit's
+    /// Under the CryptoKit-based path (CryptoKit's
     /// `SecureEnclave.P256.Signing.PrivateKey`), the guarantee is stronger and
     /// compile-time: the type exposes no API that returns the raw private
     /// scalar. `dataRepresentation` is an SE-encrypted blob that only this

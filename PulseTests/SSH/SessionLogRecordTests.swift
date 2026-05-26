@@ -25,7 +25,7 @@ import XCTest
 @testable import Pulse
 
 /// Disk-free coverage for `SessionLogCrypto` — the pure-function tier of
-/// the Slice 4 recording stack. Exercises envelope round-trip, the
+/// the recording stack. Exercises envelope round-trip, the
 /// per-record AES.GCM seal/open contract, the hash-chain validator
 /// (including tamper detection at single-byte resolution), and the
 /// session-key wrap/unwrap path using software P-256 keys as the test

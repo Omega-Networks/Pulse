@@ -32,8 +32,9 @@ import OSLog
 // MARK: - SSHSession
 
 /// Byte pump for a single SSH session. Owns one SSH child channel for its
-/// lifetime and exposes a closure-based stream surface that the Slice 5
-/// SwiftTerm `NSViewRepresentable` will hook into without reshaping the API.
+/// lifetime and exposes a closure-based stream surface that the
+/// operator-facing SwiftTerm `NSViewRepresentable` hooks into without
+/// reshaping the API.
 ///
 /// **The hot-path concurrency model.** The SSHSession exposes an actor-isolated
 /// public surface (`write`, `setOutputHandler`, `setExitHandler`, `resize`,
@@ -53,7 +54,7 @@ actor SSHSession {
     /// are safe because every NIOCore Channel operation dispatches to its
     /// `channel.eventLoop`; the `@unchecked Sendable` contract is honoured by
     /// never touching the channel from the actor's executor directly. Same
-    /// pattern as `SSHClient` (commit ea34d22 reminder).
+    /// pattern as `SSHClient`.
     ///
     /// `internal` rather than `private` so the `requestExec` extension in
     /// `SSHClient.swift` can reach the channel without breaking the
@@ -62,9 +63,9 @@ actor SSHSession {
 
     /// Handlers callable from the EventLoop. Backed by an NIO-style locked
     /// box so the inbound data handler can deliver bytes synchronously to
-    /// the operator's consumer (a `SwiftTerm.TerminalView` in Slice 5, an
-    /// `os_log` callback in Slice 3's debug menu) without paying for an
-    /// actor hop per chunk.
+    /// the operator's consumer (a `SwiftTerm.TerminalView` in the
+    /// operator-facing terminal window, an `os_log`-backed sink in the
+    /// debug verification menu) without paying for an actor hop per chunk.
     private nonisolated let handlers = NIOLockedValueBox<Handlers>(.init())
 
     let openedAt: Date
@@ -96,9 +97,9 @@ actor SSHSession {
     }
 
     /// Installs the output handler. Called by the byte-pump consumer
-    /// (`DebugSSHMenu` in Slice 3; SwiftTerm in Slice 5). Replaces any
-    /// previously-set handler; passing `nil` is equivalent to discarding
-    /// output silently.
+    /// (`DebugSSHMenu` for the verification flow; the operator-facing
+    /// SwiftTerm window in production). Replaces any previously-set
+    /// handler; passing `nil` is equivalent to discarding output silently.
     func setOutputHandler(_ handler: (@Sendable (ArraySlice<UInt8>) -> Void)?) {
         handlers.withLockedValue { $0.output = handler }
     }
@@ -111,11 +112,12 @@ actor SSHSession {
     }
 
     /// Sends an `exec` channel request to the server. Called by `SSHClient`'s
-    /// public `exec(_:)` after the session opens to run a one-shot command
-    /// (Slice 3's debug-menu path uses this; Slice 5's SwiftTerm consumer
-    /// will switch to `pty-req` + `shell` instead). Errors during the
-    /// request land on the inbound handler path (which signals the session's
-    /// exit handler) so callers don't observe a separate failure.
+    /// public `exec(_:)` after the session opens to run a one-shot command.
+    /// The debug verification menu uses this path; the operator-facing
+    /// SwiftTerm consumer switches to `pty-req` + `shell` instead.
+    /// Errors during the request land on the inbound handler path (which
+    /// signals the session's exit handler) so callers don't observe a
+    /// separate failure.
     func requestExec(_ command: String) async {
         guard !closed else { return }
         let event = SSHChannelRequestEvent.ExecRequest(command: command, wantReply: false)
@@ -123,9 +125,9 @@ actor SSHSession {
     }
 
     /// Sends a `window-change` SSH channel request to update the PTY
-    /// dimensions. Slice 3's debug menu doesn't drive resize; the method is
-    /// shaped for Slice 5's terminal view, which will call this on every
-    /// `GeometryReader` frame change.
+    /// dimensions. The debug verification menu doesn't drive resize; the
+    /// method is shaped for the operator-facing terminal view, which calls
+    /// this on every `GeometryReader` frame change.
     func resize(cols: Int, rows: Int) async {
         guard !closed else { return }
         let event = SSHChannelRequestEvent.WindowChangeRequest(
@@ -159,11 +161,11 @@ actor SSHSession {
         handler(ArraySlice(bytes))
     }
 
-    /// Stderr arrives as an `SSHChannelData(.stdErr)` message. For terminal
-    /// use (Slice 5 SwiftTerm), stdout and stderr are typically merged into
-    /// the same byte stream because the operator sees a single pty buffer.
-    /// Slice 3 follows the same convention; downstream slices can split if
-    /// the use case demands it.
+    /// Stderr arrives as an `SSHChannelData(.stdErr)` message. For
+    /// terminal use, stdout and stderr are typically merged into the same
+    /// byte stream because the operator sees a single pty buffer. The
+    /// recording tap and the debug verification menu follow the same
+    /// convention; a future consumer can split if its use case demands it.
     nonisolated func deliverStderr(_ buffer: ByteBuffer) {
         deliverOutput(buffer)
     }

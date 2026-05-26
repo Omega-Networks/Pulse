@@ -27,11 +27,12 @@ import Foundation
 
 /// Terminal state of an SSH session as observed by `SSHClient` / `SSHSession`.
 ///
-/// Surfaced both to the `os_log` `session.close` emission (audit trail, ADR §7)
-/// and to the byte pump's exit-handler closure (the Slice 5 SwiftTerm consumer
-/// will use this to drive the terminal's exit display). Cases match the
-/// failure-mode inventory in the Slice 3 plan, plus a clean client-initiated
-/// case for normal teardown.
+/// Surfaced both to the `os_log` `session.close` emission (audit trail,
+/// ADR §7) and to the byte pump's exit-handler closure (the
+/// operator-facing SwiftTerm consumer uses this to drive the terminal's
+/// exit display). Cases cover the failure-mode inventory the SSH
+/// connect path enumerates, plus a clean client-initiated case for
+/// normal teardown.
 ///
 /// `Equatable` so tests can assert specific failure modes without reaching
 /// through `String(describing:)`; `Sendable` so the exit-handler closure can

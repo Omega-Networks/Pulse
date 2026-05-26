@@ -55,7 +55,7 @@ enum SessionRecordingAudit {
 
     // MARK: - Event
 
-    /// Every audit signal Slice 4 emits, in one place. Field sets match
+    /// Every audit signal the recording stack emits, in one place. Field sets match
     /// the ADR §7 "Audit events" table. Plaintext session bytes and
     /// key material are deliberately absent from every case —
     /// regression-checkable structurally.

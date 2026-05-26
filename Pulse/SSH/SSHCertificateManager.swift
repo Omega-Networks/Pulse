@@ -69,7 +69,7 @@ enum SSHCertificateManager {
 
     /// Parses the textual OpenSSH cert form stored in `SSHCredential.certificate`
     /// and returns the underlying `NIOSSHCertifiedPublicKey`. The auth delegate
-    /// (Slice 3 commit 7b₃) uses this to present the cert to NIOSSH; the
+    /// uses this to present the cert to NIOSSH; the
     /// `metadata(for:)` accessor below wraps `parse(_:)` for callers that
     /// only need the human-readable summary.
     static func parse(_ serialised: Data) throws -> NIOSSHCertifiedPublicKey {
@@ -121,7 +121,7 @@ enum SSHCertificateManager {
     /// fingerprint format `HostTrust.trustedCA` and `HostTrust.pinned` rows store.
     ///
     /// Routed through the textual-line helper so the cert path (this file) and the
-    /// host-key delegate (Slice 3 commit 6) share a single fingerprint algorithm.
+    /// host-key delegate share a single fingerprint algorithm.
     /// Visibility is `static` rather than `private` so the delegate can call it
     /// without re-implementing the same split-and-hash logic.
     static func opensshSHA256Fingerprint(of key: NIOSSHPublicKey) -> String {

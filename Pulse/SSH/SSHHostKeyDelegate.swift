@@ -142,7 +142,7 @@ enum HostKeyDecision: Equatable {
     /// Stored `.pinned` matches the presented key: accept and touch.
     case acceptKnownPinned
     /// Stored `.pinned` differs from the presented key: reject unconditionally
-    /// (no UI acceptance sheet until Slice 5).
+    /// (no UI acceptance sheet in the current build).
     case rejectMismatch(recorded: String)
     /// Stored `.trustedCA` matches the presented cert chain: accept.
     case acceptCA(caFingerprint: String, principalPattern: String)
@@ -158,8 +158,8 @@ enum HostKeyDecision: Equatable {
 /// to decide whether to accept the server's presented host key.
 ///
 /// Behaviour matches ADR 0001 §5. TOFU pins the first key observed; subsequent
-/// mismatches are rejected unconditionally for the duration of Slice 3 (no
-/// UI sheet until Slice 5). Trusted-CA rows are honoured when the presented
+/// mismatches are rejected unconditionally in the current build (no
+/// UI sheet yet). Trusted-CA rows are honoured when the presented
 /// host key is a `NIOSSHCertifiedPublicKey` whose signing key fingerprint
 /// matches the stored CA fingerprint and whose validPrincipals (or empty,
 /// per spec) cover the host being connected to.
@@ -347,7 +347,7 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
     /// glob (e.g., `*.internal.example`) or a literal hostname. Either the
     /// pattern itself or one of the cert's `validPrincipals` must match the
     /// host. v1 supports literal-equality and trailing-`*` wildcard; richer
-    /// patterns can land alongside the CA-import UI in Slice 7.
+    /// patterns can land alongside the future CA-import UI.
     private static func matches(host: String, anyOf principals: [String], pattern: String) -> Bool {
         if principals.contains(host) { return true }
         if Self.glob(pattern, matches: host) { return true }

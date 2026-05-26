@@ -251,8 +251,8 @@ enum SessionLogRetention {
     }
 
     /// Parse the `.meta.opened_at` ISO 8601 string. Tolerates both
-    /// fractional-second and integer-second variants because Slice 4
-    /// writes fractional but a future v2 may opt to drop them; the
+    /// fractional-second and integer-second variants because the current
+    /// writer emits fractional but a future v2 may opt to drop them; the
     /// parser absorbs both shapes so retention doesn't gate on
     /// version churn.
     static func parseISO8601(_ string: String) -> Date? {

@@ -68,8 +68,8 @@ final class SSHCredential {
     /// OpenSSH wire-format public key. Exportable on both tiers (this is the public half).
     ///
     /// Populated at credential-creation time by `SSHCredentialsSettings.commit()`
-    /// via `SSHKeyImporter.derivePublicKey`. Credentials imported before Slice 3
-    /// landed the derivation path may carry an empty placeholder; the auth path
+    /// via `SSHKeyImporter.derivePublicKey`. Credentials imported before the
+    /// derivation path landed may carry an empty placeholder; the auth path
     /// does not backfill, so such credentials must be re-imported to get a
     /// non-empty `publicKey` for the credential-editor's copy-button and
     /// downstream display.

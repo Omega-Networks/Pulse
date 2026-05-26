@@ -36,7 +36,7 @@ final class SSHKeyImporterTests: XCTestCase {
     }
 
     /// Encrypted OpenSSH new-format keys are rejected at the front door per
-    /// the Slice 3 7b₁ v1 scope (bcrypt-pbkdf is the KDF we'd have to roll
+    /// the v1 import scope (bcrypt-pbkdf is the KDF we'd have to roll
     /// in-house against §10). The classifier reads cipher name first, so the
     /// algorithm-identification path is bypassed entirely.
     func testOpenSSHEd25519EncryptedIsRejected() {
@@ -69,7 +69,7 @@ final class SSHKeyImporterTests: XCTestCase {
 
     // MARK: - v1 portable scope (ADR §1 amendment)
 
-    /// RSA is rejected at the front door per the Slice 3 7b₁ v1 scope.
+    /// RSA is rejected at the front door per the v1 import scope.
     /// `swift-nio-ssh` 0.13.0 (+ main) has no RSA private-key signing path;
     /// accepting RSA at import would create credentials that fail at first
     /// use. The error carries operator-facing remediation pointing at
@@ -150,7 +150,7 @@ final class SSHKeyImporterTests: XCTestCase {
         }
     }
 
-    // MARK: - OpenSSH new-format private-key decoder (Slice 3 7b₂)
+    // MARK: - OpenSSH new-format private-key decoder
 
     /// Round-trip contract: the seed the decoder extracts from an Ed25519
     /// OpenSSH new-format payload must derive the same public key the

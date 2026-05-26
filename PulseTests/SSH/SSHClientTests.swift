@@ -59,8 +59,8 @@ final class SSHSessionTests: XCTestCase {
     }
 
     /// stderr arrives on a separate `SSHChannelData(.stdErr)` path but
-    /// merges into the same byte stream for terminal use (Slice 5
-    /// SwiftTerm). Verifies the bridge keeps the merge.
+    /// merges into the same byte stream for terminal use (the
+    /// operator-facing SwiftTerm consumer). Verifies the bridge keeps the merge.
     func testDeliverStderrMergesIntoOutputHandler() async throws {
         let (session, _, loop) = makeSession()
         defer { try? loop.syncShutdownGracefully() }

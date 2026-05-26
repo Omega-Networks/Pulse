@@ -38,11 +38,13 @@ import SwiftUI
 /// `PulseApp.swift` is also `#if DEBUG`-gated so Release builds carry
 /// neither the symbol nor the menu entry.
 ///
-/// Slice 3 commit 9 owns this surface as the verification artefact —
-/// the operator-facing terminal lives in Slice 5 (SwiftTerm-backed
-/// `WindowGroup("SSH Terminal", for: Device.ID.self)`); DebugSSHMenu
-/// must not become the production path. The file's `#if DEBUG` gate
-/// keeps that contract structural rather than conventional.
+/// This surface is a verification artefact: it drives the SSH byte
+/// pump end to end so the recording stack and audit signal can be
+/// exercised against a real connection without going through the
+/// operator-facing terminal. The operator terminal is a separate,
+/// SwiftTerm-backed window; DebugSSHMenu must not become the
+/// production path. The file's `#if DEBUG` gate keeps that contract
+/// structural rather than conventional.
 struct DebugSSHCommands: Commands {
 
     @Environment(\.openWindow) private var openWindow
@@ -59,12 +61,12 @@ struct DebugSSHCommands: Commands {
 
 // MARK: - DebugSSHWindow
 
-/// SwiftUI scene for the Slice 3 verification flow. Picks a credential
-/// and a device with a `primaryIP`, opens an `SSHClient`, runs a one-shot
-/// `ls -la /` (or operator-chosen command), captures the output to the
-/// view, and emits the same `session.open` / `auth.success` /
-/// `session.close` audit events that the production terminal will emit
-/// in Slice 5.
+/// SwiftUI scene for the SSH byte-pump verification flow. Picks a
+/// credential and a device with a `primaryIP`, opens an `SSHClient`,
+/// runs a one-shot `ls -la /` (or operator-chosen command), captures
+/// the output to the view, and emits the same `session.open` /
+/// `auth.success` / `session.close` audit events the production
+/// terminal emits.
 struct DebugSSHWindow: View {
 
     static let windowID = "debug-ssh"
@@ -110,9 +112,9 @@ struct DebugSSHWindow: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label("Debug SSH (Slice 3 verification)", systemImage: "terminal.fill")
+            Label("SSH connection test", systemImage: "terminal.fill")
                 .font(.title2.weight(.semibold))
-            Text("Drives SSHClient end-to-end against a chosen device. Not the operator-facing terminal — that ships in Slice 5.")
+            Text("Drives SSHClient end-to-end against a chosen device. Used to verify the byte pump; the operator-facing terminal is a separate window.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -129,15 +131,16 @@ struct DebugSSHWindow: View {
     }
 
     /// Free-form host field with quick-fill buttons for IPv4 and IPv6
-    /// loopback. Defaults to `127.0.0.1` because Slice 3 verification runs
-    /// against a throwaway sshd on the dev machine; any hostname or IP is
-    /// accepted so the same window can drive against staging or a real
-    /// device whose `Device.primaryIP` is known. No device picker — at
-    /// scale that path runs against a million-row @Query and only the
-    /// operator-facing Slice 5 surface justifies the rendering cost.
-    /// `DirectTransport`'s `NIOTSConnectionBootstrap` resolves both
-    /// stacks via Happy Eyeballs (ADR §8 dual-stack invariant), so the
-    /// IPv6 quick-fill is functional rather than cosmetic.
+    /// loopback. Defaults to `127.0.0.1` because the byte-pump
+    /// verification runs against a throwaway sshd on the dev machine;
+    /// any hostname or IP is accepted so the same window can drive
+    /// against staging or a real device whose `Device.primaryIP` is
+    /// known. No device picker: at scale that path runs against a
+    /// million-row @Query and only the operator-facing terminal
+    /// justifies the rendering cost. `DirectTransport`'s
+    /// `NIOTSConnectionBootstrap` resolves both stacks via Happy
+    /// Eyeballs (ADR §8 dual-stack invariant), so the IPv6 quick-fill
+    /// is functional rather than cosmetic.
     private var hostField: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -297,8 +300,8 @@ struct DebugSSHWindow: View {
             // Device row, so recorded sessions (if recording is
             // enabled on the credential) land under
             // Pulse/Sessions/unassigned/ per ADR §6 amendment. When
-            // Slice 5 wires up device-row → SSH terminal navigation,
-            // those call sites will pass the live `Device.id`.
+            // the device-row → SSH terminal navigation lands, those
+            // call sites will pass the live `Device.id`.
             deviceID: nil,
             recordSessions: credential.recordSessions
         )

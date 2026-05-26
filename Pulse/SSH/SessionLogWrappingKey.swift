@@ -34,7 +34,7 @@ import Security
 /// per-credential, not per-session.
 ///
 /// **Why a separate file from `SecureEnclaveKeyManager`.** The signing-key
-/// surface (Slice 3) and the wrapping-key surface (Slice 4) share a
+/// surface and the wrapping-key surface share a
 /// storage pattern but model very different concerns:
 ///
 /// - Signing keys are operator-facing identity. Each credential is its own
@@ -42,8 +42,8 @@ import Security
 ///   surfaces fingerprints and per-credential metadata.
 /// - The log wrapping key is the root of recording confidentiality on
 ///   this device. Deleting it destroys access to every historical
-///   recording. It has no operator-facing UI in Slice 4 (the future
-///   "purge all recordings" gesture is out of scope here) and no
+///   recording. It has no operator-facing UI in the current build (the
+///   future "purge all recordings" gesture is out of scope here) and no
 ///   per-credential cardinality.
 ///
 /// Keeping the two surfaces in separate files makes the intent legible
@@ -309,7 +309,7 @@ extension SessionLogWrappingKey {
     /// to every recording on this device that was wrapped against it.
     /// Exposed under `#if DEBUG` so unit tests can clean up after
     /// themselves; production code never deletes the wrapping key, and
-    /// no operator gesture in Slice 4 reaches this method.
+    /// no operator gesture in the current build reaches this method.
     ///
     /// Idempotent: `errSecItemNotFound` is treated as success.
     static func __deleteForTests() throws {

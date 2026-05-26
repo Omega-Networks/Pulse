@@ -188,9 +188,8 @@ final class SSHHostKeyDelegateTests: XCTestCase {
     /// Trusted-CA happy path: presented cert is signed by the stored CA
     /// fingerprint, current time is inside the validity window, and the
     /// requested host matches one of the cert's validPrincipals. The
-    /// evaluator returns `.acceptCA`. Closes the gap flagged in Slice 3
-    /// commit 6 review (cert validates, fingerprint matches, principals
-    /// cover host).
+    /// evaluator returns `.acceptCA` (cert validates, fingerprint matches,
+    /// principals cover host).
     func testEvaluateTrustedCAAcceptsValidCertWithMatchingPrincipal() throws {
         let certKey = try NIOSSHPublicKey(openSSHPublicKey: Self.trustedCACertLine)
         let stored = HostTrust.trustedCA(
@@ -265,7 +264,7 @@ final class SSHHostKeyDelegateTests: XCTestCase {
 
     /// Mismatch path: the stored fingerprint differs from the presented key.
     /// The delegate fails the promise with `.fingerprintMismatch` and does NOT
-    /// write a new pin (no UI acceptance sheet until Slice 5).
+    /// write a new pin (no UI acceptance sheet in the current build).
     func testValidateHostKeyMismatchRejects() async throws {
         let store = InMemoryKnownHostStore()
         await store.preload(

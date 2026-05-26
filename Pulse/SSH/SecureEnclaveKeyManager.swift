@@ -35,7 +35,7 @@ import Security
 /// (≥6.5, 2014) accept `ecdsa-sha2-nistp256` so the constraint is purely a
 /// compatibility note, not a security one. See ADR 0001 §1.
 ///
-/// **Storage shape (Slice 3+):** keys are managed through CryptoKit's
+/// **Storage shape (CryptoKit migration):** keys are managed through CryptoKit's
 /// `SecureEnclave.P256.Signing.PrivateKey` and persisted as the opaque
 /// `dataRepresentation` blob inside a `kSecClassGenericPassword` Keychain item
 /// keyed by `(service, account)` = `("<bundle-id>.ssh", credentialUUID)`.
@@ -56,7 +56,7 @@ import Security
 /// accepts CryptoKit's `SecureEnclave.P256.Signing.PrivateKey` directly. The
 /// alternative — forking NIOSSH to expose its internal `BackingKey` enum —
 /// carries a merge-debt tax we refuse to take on for a security-critical
-/// dependency. See the Slice 3 7a refactor commit for the full rationale.
+/// dependency.
 ///
 /// Every signature triggers a biometric / device-passcode prompt because the keys are
 /// created with `[.privateKeyUsage, .biometryAny, .or, .devicePasscode]` baked into
@@ -148,8 +148,8 @@ enum SecureEnclaveKeyManager {
     /// raw private scalar; the `dataRepresentation` blob is an SE-encrypted
     /// reference that only this device's SE can unwrap for use. This is a
     /// stronger, compile-time guarantee than the runtime
-    /// `SecKeyCopyExternalRepresentation`-returns-nil contract the Slice 1
-    /// implementation relied on.
+    /// `SecKeyCopyExternalRepresentation`-returns-nil contract the previous
+    /// SecKey-based implementation relied on.
     @discardableResult
     static func generateKey(
         for credentialID: UUID,
@@ -302,13 +302,13 @@ enum SecureEnclaveKeyManager {
     /// Signs `message` with the SE-backed credential and returns the
     /// DER-encoded ECDSA signature (X9.62 / RFC 3279 form). This is what
     /// the existing OpenSSH wire-format consumer expects and is byte-identical
-    /// to what the Slice 1 `SecKeyCreateSignature` path produced.
+    /// to what the previous `SecKeyCreateSignature` path produced.
     ///
     /// Every invocation prompts for biometric or device passcode via
     /// CryptoKit's `.signature(for:)`. The prompt is the
     /// human-attested signing operation that ADR 0001 §1 requires.
     ///
-    /// The auth delegate (Slice 3 commit 7b) does not call this directly:
+    /// The auth delegate does not call this directly:
     /// it hands the `SecureEnclave.P256.Signing.PrivateKey` straight to
     /// `NIOSSHPrivateKey(secureEnclaveP256Key:)` which routes signing
     /// through NIOSSH's built-in path. `sign(_:for:)` remains public as
@@ -354,7 +354,7 @@ enum SecureEnclaveKeyManager {
     /// `SecureEnclave.P256.Signing.PrivateKey.publicKey.x963Representation`
     /// returns the 65-byte SEC1 uncompressed point: `0x04 || X(32) || Y(32)`.
     /// Byte-identical to what `SecKeyCopyExternalRepresentation` produced
-    /// under the Slice 1 SecKey path, so the wire-format encoder below
+    /// under the previous SecKey-based path, so the wire-format encoder below
     /// works unchanged.
     private static func openSSHPublicKeyWireFormat(
         from privateKey: SecureEnclave.P256.Signing.PrivateKey
@@ -401,7 +401,7 @@ extension SecureEnclaveKeyManager {
     /// pinned to the data-protection keychain, aren't synchronisable, and use the
     /// expected access-control policy.
     ///
-    /// **Slice 3 storage shape.** Pulse SE credentials are now stored as
+    /// **Current storage shape.** Pulse SE credentials are stored as
     /// `kSecClassGenericPassword` items whose `kSecValueData` is the
     /// `dataRepresentation` blob from CryptoKit's
     /// `SecureEnclave.P256.Signing.PrivateKey`. `kSecAttrTokenID` is not set on

@@ -341,7 +341,7 @@ enum SessionLogCrypto {
     /// Returns `.valid` with the final chain-head hash for `.meta`
     /// finalisation, or `.brokenAt(seq:reason:)` at the first divergence.
     /// On a break, callers must halt before yielding any further plaintext
-    /// to the operator — Slice 4's replay path enforces this.
+    /// to the operator: the replay path enforces this.
     static func validateChain(records: [Data], using key: SymmetricKey) -> ChainValidationResult {
         var previousHash: String = ""
         var previousSeq: UInt64 = 0

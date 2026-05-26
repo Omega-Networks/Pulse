@@ -172,6 +172,6 @@ final class SSHCertificateManagerTests: XCTestCase {
     // is not visible at compile time here. The serialise path is structurally a
     // single call into NIOSSH's String(openSSHPublicKey:) emitter, and is
     // exercised implicitly once the credential-import flow that produces a cert
-    // blob lands (Slice 4+). When that flow lands, add a parse → serialise →
+    // blob lands. When that flow lands, add a parse → serialise →
     // parse round-trip here and assert metadata equality across the two parses.
 }

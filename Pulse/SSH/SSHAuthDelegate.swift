@@ -85,8 +85,7 @@ enum SSHAuthDelegateError: Error, CustomStringConvertible, Equatable {
 ///   the auth delegate tries P-256 → P-384 → P-521 until one succeeds.
 ///
 /// RSA, encrypted PEMs, Ed25519 in non-OpenSSH-new-format are rejected at
-/// the importer's front door in Slice 3 commit 7b₁; they never reach this
-/// delegate.
+/// the importer's front door; they never reach this delegate.
 ///
 /// **Audit emissions (ADR §7).** Once per auth attempt:
 /// - `cert.expired` under `ssh.certificates` when a stored cert fails the
@@ -170,7 +169,7 @@ final class SSHAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked 
         // EventLoop. Do not "optimise" by inlining the lookup on the calling
         // thread; the Keychain read can block, and blocking the EventLoop
         // stalls every other channel sharing it (same pattern as the
-        // host-key delegate, documented in commit ea34d22).
+        // host-key delegate).
         let username = self.username
         let host = self.host
         let port = self.port
@@ -300,8 +299,8 @@ final class SSHAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked 
             // init API takes `String`. The improvement over holding it
             // longer is real but not absolute; same framing as
             // `SSHCredentialsSettings.ImportLegacyCredentialSheet`'s
-            // `@State Data` zeroing block (commit baf9ce9). Do not "fix"
-            // by wrapping CryptoKit — the API boundary is the constraint.
+            // `@State Data` zeroing block. Do not "fix"
+            // by wrapping CryptoKit: the API boundary is the constraint.
             guard let pemData = await pemProvider(),
                   let pem = String(data: pemData, encoding: .utf8) else {
                 throw SSHAuthDelegateError.portablePEMUnavailable(credentialID)
