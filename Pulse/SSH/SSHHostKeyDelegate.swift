@@ -495,6 +495,15 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
 
         switch decision {
         case .accept(let newFingerprint, let newAlgorithm):
+            // Record operator intent before attempting the trust-store
+            // commit. A SIEM rule keyed on `host.mismatch.accepted`
+            // matches this line whether or not the commit succeeds; the
+            // commit-failure path emits a distinct `commit_failed`
+            // sub-event so the forensic record is complete. Naming
+            // convention is pinned in ADR §7.
+            logger.warning(
+                "host.mismatch.accepted host=\(host, privacy: .public) port=\(port) previousFingerprintSHA256=\(recordedFingerprint, privacy: .public) newFingerprintSHA256=\(newFingerprint, privacy: .public) newAlgorithm=\(newAlgorithm, privacy: .public)"
+            )
             do {
                 try await store.replacePin(
                     host: host,
@@ -504,14 +513,11 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
                 )
             } catch {
                 logger.error(
-                    "host.mismatch.accepted store write failed for \(host, privacy: .public):\(port): \(String(describing: error))"
+                    "host.mismatch.accepted.commit_failed host=\(host, privacy: .public) port=\(port) reason=\(String(describing: error), privacy: .public)"
                 )
                 validationCompletePromise.fail(SSHHostKeyError.storeError(String(describing: error)))
                 return
             }
-            logger.warning(
-                "host.mismatch.accepted host=\(host, privacy: .public) port=\(port) previousFingerprintSHA256=\(recordedFingerprint, privacy: .public) newFingerprintSHA256=\(newFingerprint, privacy: .public) newAlgorithm=\(newAlgorithm, privacy: .public)"
-            )
             validationCompletePromise.succeed(())
 
         case .reject(let reason):
@@ -532,18 +538,19 @@ final class SSHHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate, @unche
             )
 
         case .forget:
+            // Same intent-before-commit ordering as .accept above.
+            logger.warning(
+                "host.mismatch.forgotten host=\(host, privacy: .public) port=\(port) previousFingerprintSHA256=\(recordedFingerprint, privacy: .public)"
+            )
             do {
                 try await store.forget(host: host, port: port)
             } catch {
                 logger.error(
-                    "host.mismatch.forgotten store delete failed for \(host, privacy: .public):\(port): \(String(describing: error))"
+                    "host.mismatch.forgotten.commit_failed host=\(host, privacy: .public) port=\(port) reason=\(String(describing: error), privacy: .public)"
                 )
                 validationCompletePromise.fail(SSHHostKeyError.storeError(String(describing: error)))
                 return
             }
-            logger.warning(
-                "host.mismatch.forgotten host=\(host, privacy: .public) port=\(port) previousFingerprintSHA256=\(recordedFingerprint, privacy: .public)"
-            )
             validationCompletePromise.fail(
                 SSHHostKeyError.fingerprintMismatch(
                     recorded: recordedFingerprint,

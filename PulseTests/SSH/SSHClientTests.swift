@@ -86,7 +86,7 @@ final class SSHSessionTests: XCTestCase {
         defer { try? loop.syncShutdownGracefully() }
 
         let count = LockedBox<Int>(0)
-        await session.setExitHandler { _ in
+        await session.addExitHandler { _ in
             count.modify { $0 += 1 }
         }
 
@@ -106,7 +106,7 @@ final class SSHSessionTests: XCTestCase {
         defer { try? loop.syncShutdownGracefully() }
 
         let observed = LockedBox<ExitCause?>(nil)
-        await session.setExitHandler { cause in
+        await session.addExitHandler { cause in
             observed.modify { $0 = cause }
         }
 
@@ -124,12 +124,72 @@ final class SSHSessionTests: XCTestCase {
         defer { try? loop.syncShutdownGracefully() }
 
         let observed = LockedBox<ExitCause?>(nil)
-        await session.setExitHandler { cause in
+        await session.addExitHandler { cause in
             observed.modify { $0 = cause }
         }
 
         session.recordExitStatus(7)
         session.signalExit(.transportDropped)
+
+        XCTAssertEqual(observed.snapshot(), .transportDropped)
+    }
+
+    /// Multicast contract: every registered exit handler fires exactly
+    /// once on the first `signalExit`. Regression pin for the slice-4
+    /// silent-audit bug where the lifecycle wrapper's `setExitHandler`
+    /// overwrote the audit handler installed by `SSHClient.connect`.
+    func testMultipleExitHandlersAllFireOnSignalExit() async throws {
+        let (session, _, loop) = makeSession()
+        defer { try? loop.syncShutdownGracefully() }
+
+        let firstCount = LockedBox<Int>(0)
+        let secondCount = LockedBox<Int>(0)
+        await session.addExitHandler { _ in firstCount.modify { $0 += 1 } }
+        await session.addExitHandler { _ in secondCount.modify { $0 += 1 } }
+
+        session.signalExit(.clientInitiated)
+        session.signalExit(.transportDropped)  // latched: must not fire again
+
+        XCTAssertEqual(firstCount.snapshot(), 1)
+        XCTAssertEqual(secondCount.snapshot(), 1)
+    }
+
+    /// Registration order is the firing order. The audit handler
+    /// (registered first by `SSHClient.connect`) must always observe the
+    /// session.close event before the lifecycle wrapper's continuation
+    /// resumes; a future refactor that inverts the order would race the
+    /// audit emission against the SwiftTerm view teardown.
+    func testExitHandlersFireInRegistrationOrder() async throws {
+        let (session, _, loop) = makeSession()
+        defer { try? loop.syncShutdownGracefully() }
+
+        let order = LockedBox<[Int]>([])
+        await session.addExitHandler { _ in order.modify { $0.append(1) } }
+        await session.addExitHandler { _ in order.modify { $0.append(2) } }
+        await session.addExitHandler { _ in order.modify { $0.append(3) } }
+
+        session.signalExit(.clientInitiated)
+
+        XCTAssertEqual(order.snapshot(), [1, 2, 3])
+    }
+
+    /// Late-registration immediate-fire. A handler registered after
+    /// `signalExit` has already latched the session is invoked
+    /// synchronously with the recorded cause. Without this contract the
+    /// multicast model would introduce a deadlock surface: a fast
+    /// handshake-then-drop sequence between `SSHClient.connect`'s
+    /// registration and the lifecycle wrapper's registration would
+    /// strand the second continuation forever.
+    func testAddExitHandlerAfterSignalExitFiresImmediately() async throws {
+        let (session, _, loop) = makeSession()
+        defer { try? loop.syncShutdownGracefully() }
+
+        session.signalExit(.transportDropped)
+
+        let observed = LockedBox<ExitCause?>(nil)
+        await session.addExitHandler { cause in
+            observed.modify { $0 = cause }
+        }
 
         XCTAssertEqual(observed.snapshot(), .transportDropped)
     }

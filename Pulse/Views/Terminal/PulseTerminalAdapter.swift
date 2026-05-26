@@ -74,6 +74,14 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
         var resizeHandler: (@Sendable (Int, Int) -> Void)?
         var lastCols: Int = 0
         var lastRows: Int = 0
+        /// Inbound bytes that arrived between hops. All mutation flows
+        /// through `state.withLockedValue`; see `feed` and
+        /// `drainPendingFeed`.
+        var pendingBytes: [UInt8] = []
+        /// True between scheduling a drain hop and the drain reading the
+        /// pending bytes back out. Coalesces bursts so the main run loop
+        /// is not starved by a Task-per-chunk storm.
+        var hopScheduled: Bool = false
     }
 
     private let state = NIOLockedValueBox<State>(.init())
@@ -105,19 +113,76 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
 
     /// Feed bytes from the server into the terminal. Called from the
     /// SSH session's `setOutputHandler` closure, which fires on the
-    /// EventLoop thread. Internally hops to the main actor and forwards
-    /// through SwiftTerm's `Terminal.feed(buffer: ArraySlice<UInt8>)`
+    /// EventLoop thread on every inbound `SSHChannelData(.channel)` read.
+    ///
+    /// **Single-flight coalesce.** Bytes are appended to a pending buffer
+    /// under the lock; a single `Task { @MainActor ... }` hop is scheduled
+    /// at the first append in a burst, and subsequent appends piggy-back
+    /// on the same hop. The drain reads the pending buffer out under the
+    /// lock and calls `Terminal.feed(buffer:)` exactly once per hop. The
+    /// shape mirrors `SessionLogWriter.drainQueue` and replaces the prior
+    /// Task-per-chunk pattern, which (a) starved the run loop on bursty
+    /// output and (b) relied on a FIFO ordering guarantee Swift's
+    /// concurrency runtime does not promise for unstructured `Task`
+    /// dispatches.
+    ///
+    /// Forwards through SwiftTerm's `Terminal.feed(buffer: ArraySlice<UInt8>)`
     /// at `Sources/SwiftTerm/Terminal.swift:4890`, the zero-copy slice
-    /// overload. `ArraySlice<UInt8>` is `Sendable` (its base storage is
-    /// `[UInt8]`, a value type) so the capture across the actor hop
-    /// does not allocate. The slice's backing storage comes from
+    /// overload. The slice's backing storage comes from
     /// `SSHSession.deliverOutput`'s `getBytes`-materialised `[UInt8]`,
-    /// not from a shared ByteBuffer, so the lifetime is governed by
-    /// the slice's ARC retention and the cross-thread capture is safe.
+    /// not from a shared ByteBuffer, so cross-thread capture is safe.
     func feed(_ bytes: ArraySlice<UInt8>) {
-        Task { @MainActor [bytes] in
-            view?.getTerminal().feed(buffer: bytes)
+        let needsHop = state.withLockedValue { state -> Bool in
+            state.pendingBytes.append(contentsOf: bytes)
+            if state.hopScheduled { return false }
+            state.hopScheduled = true
+            return true
         }
+        guard needsHop else { return }
+        Task { @MainActor [weak self] in
+            self?.drainPendingFeed()
+        }
+    }
+
+    /// Main-actor drain for the coalesced byte pump. Swaps the pending
+    /// buffer out under the lock, clears `hopScheduled`, and (if the
+    /// snapshot is non-empty) calls `Terminal.feed(buffer:)` exactly
+    /// once. Held capacity is preserved across drains so the bursty
+    /// hot path does not thrash the allocator.
+    @MainActor
+    private func drainPendingFeed() {
+        let snapshot = consumePendingBytes()
+        guard !snapshot.isEmpty else { return }
+        view?.getTerminal().feed(buffer: ArraySlice(snapshot))
+    }
+
+    /// Atomic swap of the pending buffer. Returns the accumulated bytes
+    /// in arrival order and clears `hopScheduled` so the next feed
+    /// schedules a fresh drain. Extracted as a seam so the coalesce
+    /// contract is exercisable from tests without standing up a real
+    /// `TerminalView`. The race between a test calling this and the
+    /// scheduled MainActor drain is benign: whoever wins the lock takes
+    /// the bytes; the loser gets an empty snapshot and is a no-op.
+    func consumePendingBytes() -> [UInt8] {
+        state.withLockedValue { state in
+            state.hopScheduled = false
+            let out = state.pendingBytes
+            state.pendingBytes.removeAll(keepingCapacity: true)
+            return out
+        }
+    }
+
+    /// Read-only snapshot of the pending byte buffer. Test-observable
+    /// without consuming the buffer; production code does not read this.
+    var pendingByteCount: Int {
+        state.withLockedValue { $0.pendingBytes.count }
+    }
+
+    /// Whether a MainActor drain hop is currently scheduled. Becomes
+    /// true on the first `feed` in a burst and false either when the
+    /// hop runs the drain or when a test calls `consumePendingBytes`.
+    var isDrainHopScheduled: Bool {
+        state.withLockedValue { $0.hopScheduled }
     }
 
     /// Invoked by the adapter's `TerminalViewDelegate.send` conformance.

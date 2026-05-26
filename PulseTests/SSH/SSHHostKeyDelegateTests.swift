@@ -563,4 +563,199 @@ final class SSHHostKeyDelegateTests: XCTestCase {
         }
         XCTAssertEqual(reason, "decision_timeout")
     }
+
+    // MARK: - Audit-before-commit (commit-failure paths)
+
+    /// Accept path with the store throwing on `replacePin`: the
+    /// promise fails with `.storeError` and the store reflects no
+    /// replacement. The audit-event ordering (intent line emitted
+    /// before the commit attempt) is enforced by code structure and
+    /// inspected by reading the source; XCTest cannot subscribe to
+    /// `os_log`, so the ordering is not behaviourally pinned here.
+    /// This test pins the failure handling so a future refactor that
+    /// drops the `commit_failed` branch (or stops surfacing
+    /// `.storeError`) trips the test rather than silently corrupting
+    /// the failure mode.
+    func testValidateHostKeyMismatchAcceptCommitFailureSurfacesStoreError() async throws {
+        let store = InMemoryKnownHostStore()
+        await store.preload(
+            host: "10.0.0.7",
+            port: 22,
+            trust: .pinned(
+                fingerprintSHA256: "SHA256:somestoredfingerprintnotmatching",
+                algorithm: "ssh-ed25519"
+            )
+        )
+        struct StubStoreError: Error, CustomStringConvertible {
+            let description = "deliberate store write failure"
+        }
+        await store.failNextCall(StubStoreError())
+
+        let provider = StubMismatchProvider(
+            returns: .accept(
+                fingerprintSHA256: Self.ed25519HostKeyFingerprint,
+                algorithm: "ssh-ed25519"
+            )
+        )
+        let loop = EmbeddedEventLoop()
+        defer { try? loop.syncShutdownGracefully() }
+
+        let delegate = SSHHostKeyDelegate(
+            host: "10.0.0.7",
+            port: 22,
+            store: store,
+            mismatchDecisionProvider: provider
+        )
+        let promise = loop.makePromise(of: Void.self)
+        delegate.validateHostKey(hostKey: try Self.makeHostKey(), validationCompletePromise: promise)
+
+        do {
+            try await promise.futureResult.get()
+            XCTFail("expected promise to fail with storeError")
+        } catch let error as SSHHostKeyError {
+            guard case .storeError = error else {
+                return XCTFail("expected storeError, got \(error)")
+            }
+        }
+
+        let replacements = await store.replacementWrites
+        XCTAssertEqual(replacements.count, 0, "replacePin threw; no replacement should be recorded")
+    }
+
+    /// Forget path with the store throwing on `forget`: symmetric pin.
+    /// Promise fails with `.storeError`, no row is recorded as
+    /// forgotten in the store's audit, the original pin remains.
+    func testValidateHostKeyMismatchForgetCommitFailureSurfacesStoreError() async throws {
+        let store = InMemoryKnownHostStore()
+        await store.preload(
+            host: "10.0.0.7",
+            port: 22,
+            trust: .pinned(
+                fingerprintSHA256: "SHA256:somestoredfingerprintnotmatching",
+                algorithm: "ssh-ed25519"
+            )
+        )
+        struct StubStoreError: Error, CustomStringConvertible {
+            let description = "deliberate store delete failure"
+        }
+        await store.failNextCall(StubStoreError())
+
+        let provider = StubMismatchProvider(returns: .forget)
+        let loop = EmbeddedEventLoop()
+        defer { try? loop.syncShutdownGracefully() }
+
+        let delegate = SSHHostKeyDelegate(
+            host: "10.0.0.7",
+            port: 22,
+            store: store,
+            mismatchDecisionProvider: provider
+        )
+        let promise = loop.makePromise(of: Void.self)
+        delegate.validateHostKey(hostKey: try Self.makeHostKey(), validationCompletePromise: promise)
+
+        do {
+            try await promise.futureResult.get()
+            XCTFail("expected promise to fail with storeError")
+        } catch let error as SSHHostKeyError {
+            guard case .storeError = error else {
+                return XCTFail("expected storeError, got \(error)")
+            }
+        }
+
+        let forgotten = await store.forgottenKeys
+        XCTAssertEqual(forgotten.count, 0, "forget threw; no row should be recorded as forgotten")
+    }
+
+    // MARK: - HostKeyMismatchCoordinator cancellation + concurrent decide
+
+    /// Parent task cancellation resumes the decide call with
+    /// `.reject(reason: "cancelled")` immediately rather than holding
+    /// for the 90-second timeout. Distinguishes "operator closed the
+    /// window mid-sheet" from "operator walked away from the sheet"
+    /// (the latter surfaces as `decision_timeout`).
+    func testHostKeyMismatchCoordinatorCancellationRejectsWithCancelledReason() async {
+        let coordinator = await MainActor.run {
+            HostKeyMismatchCoordinator(decisionTimeout: .seconds(60))
+        }
+
+        let task = Task {
+            await coordinator.decide(
+                host: "10.0.0.7",
+                port: 22,
+                recordedFingerprint: "SHA256:stored",
+                recordedAlgorithm: "ssh-ed25519",
+                recordedFirstSeenAt: .distantPast,
+                newFingerprint: "SHA256:presented",
+                newAlgorithm: "ssh-ed25519"
+            )
+        }
+
+        // Give the coordinator a beat to set up its continuation and
+        // post `pending` to the MainActor. Without this the cancel may
+        // race the synchronous setup; the reshaped ResumeBox handles
+        // that path (deferredDecision) but we want to exercise the
+        // normal cancellation flow.
+        try? await Task.sleep(for: .milliseconds(50))
+        task.cancel()
+
+        let decision = await task.value
+        guard case .reject(let reason) = decision else {
+            return XCTFail("expected .reject on cancel, got \(decision)")
+        }
+        XCTAssertEqual(reason, "cancelled")
+
+        // Pending should clear so the sheet dismisses.
+        let pending = await MainActor.run { coordinator.pending }
+        XCTAssertNil(pending)
+    }
+
+    /// A second `decide` call while the first is in flight is a
+    /// contract violation. The coordinator degrades gracefully: it
+    /// fault-logs (lands in Console.app and any SIEM ingesting os_log)
+    /// and resolves the second call with `.reject(reason:
+    /// "concurrent_decide")`. No `assertionFailure`, no trap: debug and
+    /// release behave identically.
+    func testHostKeyMismatchCoordinatorConcurrentDecideDegradesToReject() async {
+        let coordinator = await MainActor.run {
+            HostKeyMismatchCoordinator(decisionTimeout: .seconds(60))
+        }
+
+        // First decide. Don't await — we want it in flight while we
+        // start the second. We hold the task so it doesn't deinit and
+        // cancel itself; we'll let it timeout-or-cancel at the end.
+        let first = Task {
+            await coordinator.decide(
+                host: "10.0.0.7",
+                port: 22,
+                recordedFingerprint: "SHA256:stored",
+                recordedAlgorithm: "ssh-ed25519",
+                recordedFirstSeenAt: .distantPast,
+                newFingerprint: "SHA256:presented",
+                newAlgorithm: "ssh-ed25519"
+            )
+        }
+
+        // Let the first decide reach the MainActor and set `pending`.
+        try? await Task.sleep(for: .milliseconds(50))
+
+        // Second decide on the same coordinator.
+        let secondDecision = await coordinator.decide(
+            host: "10.0.0.7",
+            port: 22,
+            recordedFingerprint: "SHA256:stored",
+            recordedAlgorithm: "ssh-ed25519",
+            recordedFirstSeenAt: .distantPast,
+            newFingerprint: "SHA256:presented2",
+            newAlgorithm: "ssh-ed25519"
+        )
+
+        guard case .reject(let reason) = secondDecision else {
+            return XCTFail("expected concurrent-decide to degrade to reject, got \(secondDecision)")
+        }
+        XCTAssertEqual(reason, "concurrent_decide")
+
+        // Clean up the first decide so the test doesn't leak a task.
+        first.cancel()
+        _ = await first.value
+    }
 }

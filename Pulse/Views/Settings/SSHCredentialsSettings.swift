@@ -266,13 +266,16 @@ struct SSHCredentialsSettings: View {
     }
 
     private func tierBadge(_ tier: SSHCredentialTier) -> some View {
+        // The title string comes from the canonical extension; the icon
+        // and tint stay here because they are presentation concerns this
+        // surface owns.
         Group {
             switch tier {
             case .secureEnclave:
-                Label("Secure Enclave", systemImage: "lock.shield.fill")
+                Label(tier.displayName, systemImage: "lock.shield.fill")
                     .foregroundStyle(.green)
             case .portable:
-                Label("Legacy", systemImage: "exclamationmark.shield")
+                Label(tier.displayName, systemImage: "exclamationmark.shield")
                     .foregroundStyle(.orange)
             }
         }

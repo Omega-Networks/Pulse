@@ -311,7 +311,7 @@ actor SSHClient {
         let credentialID = self.credentialID
         let openedAt = self.connectStartedAt ?? .now
         let sessionLogger = self.sessionLogger
-        await session.setExitHandler { cause in
+        await session.addExitHandler { cause in
             let durationMs = Int(Date().timeIntervalSince(openedAt) * 1000)
             sessionLogger.info(
                 "session.close user=\(username, privacy: .public) host=\(host, privacy: .public) port=\(port) credential=\(credentialID, privacy: .public) cause=\(String(describing: cause), privacy: .public) durationMs=\(durationMs)"

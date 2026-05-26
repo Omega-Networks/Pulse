@@ -175,7 +175,13 @@ struct HostKeyMismatchSheet: View {
             .tint(.red)
             .focused($focusedButton, equals: .reject)
 
-            Button("Accept", role: .destructive) {
+            // Accept is the only action that writes new trust state.
+            // No `role: .destructive`: HIG reserves that role for actions
+            // that delete data or are otherwise irreversible. Pinning a
+            // new fingerprint is neither — the prior pin can be
+            // re-asserted by an operator who knows the previous
+            // fingerprint. The orange tint carries the visual weight.
+            Button("Accept") {
                 resolve(.accept(fingerprintSHA256: newFingerprint, algorithm: newAlgorithm))
             }
             .tint(.orange)

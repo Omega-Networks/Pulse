@@ -24,6 +24,7 @@
 //
 
 import Foundation
+import OSLog
 import SwiftUI
 
 /// Bridges `SSHHostKeyDelegate`'s async `HostKeyMismatchDecisionProvider`
@@ -90,30 +91,65 @@ final class HostKeyMismatchCoordinator: ObservableObject, HostKeyMismatchDecisio
         newFingerprint: String,
         newAlgorithm: String
     ) async -> HostKeyMismatchDecision {
-        await withCheckedContinuation { (continuation: CheckedContinuation<HostKeyMismatchDecision, Never>) in
-            let box = ResumeBox(continuation: continuation)
-            let request = PendingRequest(
-                host: host,
-                port: port,
-                recordedFingerprint: recordedFingerprint,
-                recordedAlgorithm: recordedAlgorithm,
-                recordedFirstSeenAt: recordedFirstSeenAt,
-                newFingerprint: newFingerprint,
-                newAlgorithm: newAlgorithm,
-                resume: { decision in box.resumeIfNeeded(with: decision) }
-            )
-            let requestID = request.id
-            let timeout = self.decisionTimeout
+        // The box is created before the continuation so the cancellation
+        // handler can reach it without a circular capture. The reshaped
+        // ResumeBox holds the resume in a `deferredDecision` slot if the
+        // attach happens after a cancel.
+        let box = ResumeBox()
+        let logger = Logger(subsystem: "pulse", category: "hostkey.coordinator")
 
-            Task { @MainActor in
-                self.pending = request
-            }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<HostKeyMismatchDecision, Never>) in
+                box.attach(continuation)
 
-            Task {
-                try? await Task.sleep(for: timeout)
-                box.resumeIfNeeded(with: .reject(reason: "decision_timeout"))
-                await self.clearPendingIfMatching(requestID)
+                let request = PendingRequest(
+                    host: host,
+                    port: port,
+                    recordedFingerprint: recordedFingerprint,
+                    recordedAlgorithm: recordedAlgorithm,
+                    recordedFirstSeenAt: recordedFirstSeenAt,
+                    newFingerprint: newFingerprint,
+                    newAlgorithm: newAlgorithm,
+                    resume: { decision in box.resumeIfNeeded(with: decision) }
+                )
+                let requestID = request.id
+                let timeout = self.decisionTimeout
+
+                Task { @MainActor in
+                    // V1 contract: one coordinator per terminal view. A
+                    // second decide while the first is in flight is a
+                    // contract violation. Degrade gracefully: fault-log
+                    // the violation (lands in Console.app and any SIEM
+                    // ingesting os_log) and resolve the second call with
+                    // an explicit reject reason so the audit trail
+                    // explains what happened. No assertionFailure: debug
+                    // and release behave identically, and the test in
+                    // step 11 runs without preprocessor gating.
+                    if self.pending != nil {
+                        logger.fault(
+                            "hostkey.coordinator.concurrent_decide host=\(host, privacy: .public) port=\(port)"
+                        )
+                        box.resumeIfNeeded(with: .reject(reason: "concurrent_decide"))
+                        return
+                    }
+                    self.pending = request
+                }
+
+                Task {
+                    try? await Task.sleep(for: timeout)
+                    box.resumeIfNeeded(with: .reject(reason: "decision_timeout"))
+                    await self.clearPendingIfMatching(requestID)
+                }
             }
+        } onCancel: {
+            // Parent view torn down (window closed, navigation popped,
+            // task scope cancelled). Distinguish this from
+            // decision_timeout in the audit vocabulary so operations can
+            // tell "walked away" from "closed the window". ResumeBox's
+            // single-resume contract makes the timeout-or-sheet path
+            // idempotent if either races us.
+            box.resumeIfNeeded(with: .reject(reason: "cancelled"))
+            Task { @MainActor in self.pending = nil }
         }
     }
 
@@ -135,22 +171,49 @@ final class HostKeyMismatchCoordinator: ObservableObject, HostKeyMismatchDecisio
 // MARK: - ResumeBox
 
 /// Lock-protected single-resume wrapper around a `CheckedContinuation`.
-/// The coordinator's operator-action path and timeout path both call
-/// `resumeIfNeeded(...)`; the box guarantees the underlying
-/// continuation resumes exactly once even when they race.
+/// The coordinator's operator-action, timeout, concurrent-decide-degrade,
+/// and external-cancellation paths all call `resumeIfNeeded(...)`; the box
+/// guarantees the underlying continuation resumes exactly once even when
+/// they race.
+///
+/// **Late-attach support.** The box is created before
+/// `withCheckedContinuation` so the cancellation handler can reach it. If
+/// a resume call arrives before the continuation is attached (the
+/// cancellation handler firing in a tight race), the decision is parked
+/// in `deferredDecision` and applied at attach time.
 private final class ResumeBox: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<HostKeyMismatchDecision, Never>?
+    private var deferredDecision: HostKeyMismatchDecision?
 
-    init(continuation: CheckedContinuation<HostKeyMismatchDecision, Never>) {
-        self.continuation = continuation
+    init() {}
+
+    func attach(_ c: CheckedContinuation<HostKeyMismatchDecision, Never>) {
+        lock.lock()
+        if let deferred = deferredDecision {
+            deferredDecision = nil
+            lock.unlock()
+            c.resume(returning: deferred)
+            return
+        }
+        continuation = c
+        lock.unlock()
     }
 
     func resumeIfNeeded(with decision: HostKeyMismatchDecision) {
         lock.lock()
-        let c = continuation
-        continuation = nil
+        if let c = continuation {
+            continuation = nil
+            lock.unlock()
+            c.resume(returning: decision)
+            return
+        }
+        // Continuation not attached yet (cancellation racing with the
+        // body's synchronous setup). Park the decision so attach can
+        // deliver it. Subsequent resumes are dropped.
+        if deferredDecision == nil {
+            deferredDecision = decision
+        }
         lock.unlock()
-        c?.resume(returning: decision)
     }
 }

@@ -46,10 +46,14 @@ struct SSHTerminalScene: Scene {
     let modelContainer: ModelContainer
 
     var body: some Scene {
-        #if os(macOS)
+        // The scene shape is identical on macOS and iOS; the platform
+        // difference is whether anything currently routes into it. On
+        // iOS the device-row gesture that calls `openWindow(value:)`
+        // arrives in a future slice; the scene registration itself is
+        // platform-agnostic.
         WindowGroup("SSH Terminal", for: Device.ID.self) { $deviceID in
             if let id = deviceID {
-                SSHTerminalView(deviceID: id)
+                SSHTerminalView(connection: .device(id))
                     .modelContainer(modelContainer)
             } else {
                 // SwiftUI can instantiate the scene with a nil value
@@ -59,17 +63,5 @@ struct SSHTerminalScene: Scene {
                     .padding()
             }
         }
-        #else
-        // iOS routing lands in a future change.
-        WindowGroup("SSH Terminal", for: Device.ID.self) { $deviceID in
-            if let id = deviceID {
-                SSHTerminalView(deviceID: id)
-                    .modelContainer(modelContainer)
-            } else {
-                Text("No device selected.")
-                    .padding()
-            }
-        }
-        #endif
     }
 }

@@ -37,7 +37,7 @@ import OSLog
 /// reshaping the API.
 ///
 /// **The hot-path concurrency model.** The SSHSession exposes an actor-isolated
-/// public surface (`write`, `setOutputHandler`, `setExitHandler`, `resize`,
+/// public surface (`write`, `setOutputHandler`, `addExitHandler`, `resize`,
 /// `close`) and a `nonisolated` companion for the inbound-data path that
 /// dispatches output bytes from the EventLoop straight to the registered
 /// handler. The handlers live in an `NIOLockedValueBox` so the EventLoop
@@ -104,11 +104,37 @@ actor SSHSession {
         handlers.withLockedValue { $0.output = handler }
     }
 
-    /// Installs the exit handler. Invoked exactly once per session when the
-    /// child channel closes, with the `ExitCause` reflecting the close
-    /// reason (clean remote exit, transport drop, etc.).
-    func setExitHandler(_ handler: (@Sendable (ExitCause) -> Void)?) {
-        handlers.withLockedValue { $0.exit = handler }
+    /// Registers a handler to be invoked exactly once when the session
+    /// transitions to inactive. Multiple handlers may be registered and fire
+    /// in registration order; this is the multicast seam that lets the audit
+    /// subsystem (`SSHClient.connect`), the lifecycle wrapper
+    /// (`SSHTerminalView.runConnectionLifecycle`), and future consumers
+    /// (recording-status indicator, metrics, compliance taps) attach without
+    /// competing for a single slot.
+    ///
+    /// If the session has already exited at the time of registration, the
+    /// handler is invoked synchronously on the calling thread with the
+    /// recorded `ExitCause`. Without this immediate-fire path, a fast
+    /// handshake-then-drop sequence between two registration sites would
+    /// silently strand the second registrant (the lifecycle wrapper's
+    /// continuation would suspend forever).
+    ///
+    /// Handlers must be cheap, must not throw, and must not block. Swift
+    /// cannot catch synchronous traps from within the calling task, so the
+    /// per-handler call boundary is the isolation seam, not a `do/catch`
+    /// wrapper. Misbehaving handlers will affect subsequent registrants;
+    /// keep them small.
+    func addExitHandler(_ handler: @escaping @Sendable (ExitCause) -> Void) {
+        let immediate: ExitCause? = handlers.withLockedValue { box in
+            if box.exitDelivered {
+                return box.deliveredCause
+            }
+            box.exitHandlers.append(handler)
+            return nil
+        }
+        if let cause = immediate {
+            handler(cause)
+        }
     }
 
     /// Sends an `exec` channel request to the server. Called by `SSHClient`'s
@@ -221,19 +247,22 @@ actor SSHSession {
     /// Invoked by the inbound handler when the child channel closes. Picks
     /// up any recorded exit status (set by the inbound handler in response
     /// to an `SSHChannelRequestEvent.ExitStatus`), maps to an `ExitCause`,
-    /// and invokes the exit handler exactly once. The `recordedExitStatus`
-    /// snapshot lives in the same lock-backed box so the handler can read
-    /// it synchronously without an actor hop.
+    /// and invokes each registered exit handler exactly once in registration
+    /// order. The `recordedExitStatus` snapshot lives in the same lock-backed
+    /// box so the handlers can be resolved synchronously without an actor hop.
+    ///
+    /// Handlers fire outside the lock so a slow or misbehaving handler does
+    /// not block subsequent `addExitHandler` calls — though those calls will
+    /// take the late-registration immediate-fire path because `exitDelivered`
+    /// is already set.
     nonisolated func signalExit(_ cause: ExitCause) {
-        struct Resolution {
-            let cause: ExitCause
-            let handler: (@Sendable (ExitCause) -> Void)?
+        enum Resolution {
+            case deliver([@Sendable (ExitCause) -> Void], ExitCause)
+            case alreadyDelivered
         }
         let resolution = handlers.withLockedValue { box -> Resolution in
-            // Latch: only the first signal fires the handler.
-            guard !box.exitDelivered else {
-                return Resolution(cause: cause, handler: nil)
-            }
+            // Latch: only the first signal fires the handlers.
+            guard !box.exitDelivered else { return .alreadyDelivered }
             box.exitDelivered = true
             // If the channel went down with a generic close but the server
             // already reported an exit status, prefer the remote-exit cause.
@@ -243,9 +272,19 @@ actor SSHSession {
             } else {
                 chosenCause = cause
             }
-            return Resolution(cause: chosenCause, handler: box.exit)
+            box.deliveredCause = chosenCause
+            let snapshot = box.exitHandlers
+            // Drop the handler refs once delivery is latched. Late
+            // registrants are served by the immediate-fire path on
+            // `addExitHandler` reading `deliveredCause`.
+            box.exitHandlers.removeAll()
+            return .deliver(snapshot, chosenCause)
         }
-        resolution.handler?(resolution.cause)
+        if case let .deliver(snapshot, chosenCause) = resolution {
+            for handler in snapshot {
+                handler(chosenCause)
+            }
+        }
     }
 
     /// Recorded by the inbound handler in response to
@@ -261,7 +300,14 @@ actor SSHSession {
     /// methods (which read them on the hot path).
     private struct Handlers: Sendable {
         var output: (@Sendable (ArraySlice<UInt8>) -> Void)?
-        var exit: (@Sendable (ExitCause) -> Void)?
+        /// Multicast list of exit handlers. Iterated in registration order
+        /// on `signalExit`; cleared once the latch flips so late registrants
+        /// take the immediate-fire path from `deliveredCause`.
+        var exitHandlers: [@Sendable (ExitCause) -> Void] = []
+        /// Records the cause delivered on the first `signalExit` call, so a
+        /// handler registered after delivery can be invoked synchronously
+        /// with the same cause.
+        var deliveredCause: ExitCause?
         var recordedExitStatus: Int32?
         var exitDelivered: Bool = false
     }

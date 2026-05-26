@@ -27,30 +27,46 @@ import SwiftData
 import SwiftUI
 import OSLog
 
-/// Operator-facing SSH terminal for a single `Device`. Owns the
-/// `SSHClient` lifecycle via `@State`: the connection's lifetime is
-/// the view's lifetime. The `.task(id:)` modifier opens the
-/// connection when the view appears (or the device ID changes);
-/// SwiftUI auto-cancels the task on dismissal, which triggers the
-/// deferred `await client.close()` and drives the underlying
-/// SwiftNIO event loop and the recording writer through their
-/// teardown paths deterministically.
+/// Operator-facing SSH terminal for a single `Device` or for an ad-hoc
+/// host/port pair. Owns the `SSHClient` lifecycle via `@State`: the
+/// connection's lifetime is the view's lifetime. The `.task(id:)`
+/// modifier opens the connection when the view appears (or when the
+/// connection target changes); SwiftUI auto-cancels the task on
+/// dismissal, which triggers the deferred `await client.close()` and
+/// drives the underlying SwiftNIO event loop and the recording writer
+/// through their teardown paths deterministically.
 ///
 /// Single-window-per-device is enforced by SwiftUI's
-/// `WindowGroup(for: Device.ID.self)` semantics, not by this view:
-/// `openWindow(value: device.id)` activates the existing window for
-/// the same `Device.ID` rather than creating a duplicate. This view
-/// can therefore assume it is the sole owner of the connection for
-/// the lifetime of the on-screen window.
+/// `WindowGroup(for: Device.ID.self)` semantics for the
+/// device-backed path, not by this view: `openWindow(value: device.id)`
+/// activates the existing window for the same `Device.ID` rather than
+/// creating a duplicate. The ad-hoc path (driven from `DebugSSHWindow`)
+/// is one connection at a time per debug window because the debug
+/// window itself is a singleton scene.
 ///
-/// The host-key mismatch sheet is wired in a subsequent change; this
-/// view ships the byte pump and the connection lifecycle. Mismatches
-/// during connection continue to reject via the existing
-/// `SSHHostKeyDelegate` path; the operator sees the failed-status
-/// banner.
+/// **Connection mode.** Two shapes:
+///
+/// - `.device(Device.ID)`: looks up the device via `@Query`, reads
+///   `primaryIP`, `preferredSSHPort`, `defaultUsername`, and
+///   `defaultCredentialID` from the SwiftData row. Recordings land
+///   under `Pulse/Sessions/dev-<Device.id>/...`.
+/// - `.adHoc(host:port:credentialID:)`: skips the SwiftData lookup
+///   and uses the supplied connection params directly. Used by the
+///   debug verification window for loopback testing. Recordings
+///   land under `Pulse/Sessions/unassigned/...` (the SSH layer's
+///   `deviceID` parameter is `nil` in this mode).
+///
+/// Either way the byte pump, recording stack, and host-key mismatch
+/// flow are identical; the two modes only differ in where the
+/// connection params come from.
 struct SSHTerminalView: View {
 
-    let deviceID: Device.ID
+    enum Connection: Equatable, Hashable {
+        case device(Device.ID)
+        case adHoc(host: String, port: Int, username: String, credentialID: UUID)
+    }
+
+    let connection: Connection
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -66,9 +82,22 @@ struct SSHTerminalView: View {
 
     private let logger = Logger(subsystem: "pulse", category: "ssh.session")
 
-    init(deviceID: Device.ID) {
-        self.deviceID = deviceID
-        _devices = Query(filter: #Predicate<Device> { $0.id == deviceID })
+    // MARK: Inits
+
+    init(connection: Connection) {
+        self.connection = connection
+        switch connection {
+        case .device(let id):
+            _devices = Query(filter: #Predicate<Device> { $0.id == id })
+        case .adHoc:
+            // Empty fetch. Ad-hoc mode does not consult the device store,
+            // but @Query must be initialised on every code path so the
+            // SwiftData binding is well-formed. The tautological-false
+            // predicate is the structural placeholder; a future refactor
+            // that splits this view into device-backed and ad-hoc shapes
+            // will remove it.
+            _devices = Query(filter: #Predicate<Device> { _ in false })
+        }
     }
 
     var body: some View {
@@ -78,7 +107,7 @@ struct SSHTerminalView: View {
             terminalArea
         }
         .frame(minWidth: 720, minHeight: 420)
-        .task(id: deviceID) {
+        .task(id: connection) {
             await runConnectionLifecycle()
         }
         .sheet(item: $mismatchCoordinator.pending) { request in
@@ -94,20 +123,60 @@ struct SSHTerminalView: View {
                     mismatchCoordinator.resolve(decision)
                 }
             )
+            // The three buttons inside the sheet are the only legitimate
+            // exits. iOS swipe-down or a stray Esc on macOS would drop
+            // the operator into the 90-second timeout silently; block
+            // those paths so the audit trail is always one of the three
+            // explicit decisions (or the cancellation reason if the
+            // parent view is torn down).
+            .interactiveDismissDisabled()
         }
     }
+
+    // MARK: Connection-target derivations
 
     private var device: Device? {
         devices.first
     }
 
-    private var activeCredentialID: UUID? {
-        selectedCredentialID ?? device?.defaultCredentialID
+    private var connectionHost: String? {
+        switch connection {
+        case .device:
+            return device?.primaryIP
+        case .adHoc(let host, _, _, _):
+            return host
+        }
     }
 
-    private var activeCredential: SSHCredential? {
-        guard let id = activeCredentialID else { return nil }
-        return credentials.first(where: { $0.id == id })
+    private var connectionPort: Int {
+        switch connection {
+        case .device:
+            return device?.preferredSSHPort ?? 22
+        case .adHoc(_, let port, _, _):
+            return port
+        }
+    }
+
+    private var connectionTitle: String {
+        switch connection {
+        case .device(let id):
+            return device?.name ?? "Device \(id)"
+        case .adHoc(let host, let port, let username, _):
+            return "\(username)@\(host):\(port)"
+        }
+    }
+
+    private var defaultCredentialID: UUID? {
+        switch connection {
+        case .device:
+            return device?.defaultCredentialID
+        case .adHoc(_, _, _, let credentialID):
+            return credentialID
+        }
+    }
+
+    private var activeCredentialID: UUID? {
+        selectedCredentialID ?? defaultCredentialID
     }
 
     // MARK: View sections
@@ -116,7 +185,7 @@ struct SSHTerminalView: View {
         HStack(spacing: 12) {
             statusIndicator
             VStack(alignment: .leading, spacing: 2) {
-                Text(device?.name ?? "Device \(deviceID)")
+                Text(connectionTitle)
                     .font(.headline)
                 Text(statusDescription)
                     .font(.caption)
@@ -150,11 +219,10 @@ struct SSHTerminalView: View {
         case .idle:
             return "Idle"
         case .connecting:
-            guard let host = device?.primaryIP else { return "Connecting…" }
-            let port = device?.preferredSSHPort ?? 22
-            return "Connecting to \(host):\(port)…"
+            guard let host = connectionHost else { return "Connecting…" }
+            return "Connecting to \(host):\(connectionPort)…"
         case .connected:
-            guard let host = device?.primaryIP else { return "Connected" }
+            guard let host = connectionHost else { return "Connected" }
             return "Connected to \(host)"
         case .disconnected(let cause):
             return "Disconnected: \(cause)"
@@ -210,26 +278,46 @@ struct SSHTerminalView: View {
     // MARK: Connection lifecycle
 
     /// Drives the full connect → run → teardown lifecycle. Cancellation
-    /// (window close, view dismissal) lands as a `CancellationError`
-    /// inside the `await` and the `defer` block runs the close.
+    /// (window close, view dismissal, connection-target change) lands
+    /// as a `CancellationError` inside the `await` and the `defer`
+    /// block runs the close.
     private func runConnectionLifecycle() async {
-        guard let device else {
-            status = .failed("Device \(deviceID) not found in the local store.")
-            return
+        // Resolve the connection params and the per-connection
+        // metadata. For device-backed mode we need the SwiftData row
+        // to exist; for ad-hoc we get the params directly.
+        let resolvedHost: String
+        let resolvedPort: Int
+        let resolvedUsername: String
+        let resolvedDeviceID: Int64?
+
+        switch connection {
+        case .device(let id):
+            guard let device else {
+                status = .failed("Device \(id) not found in the local store.")
+                return
+            }
+            guard let host = device.primaryIP, !host.isEmpty else {
+                status = .failed("Device has no primary IP configured in NetBox.")
+                return
+            }
+            resolvedHost = host
+            resolvedPort = device.preferredSSHPort ?? 22
+            resolvedUsername = device.defaultUsername ?? NSUserName()
+            resolvedDeviceID = device.id
+
+        case .adHoc(let host, let port, let username, _):
+            resolvedHost = host
+            resolvedPort = port
+            resolvedUsername = username
+            resolvedDeviceID = nil
         }
-        guard let host = device.primaryIP, !host.isEmpty else {
-            status = .failed("Device has no primary IP configured in NetBox.")
-            return
-        }
+
         guard let credentialID = activeCredentialID,
               let credential = credentials.first(where: { $0.id == credentialID })
         else {
             status = .failed("Pick a credential to connect.")
             return
         }
-
-        let port = device.preferredSSHPort ?? 22
-        let username = device.defaultUsername ?? NSUserName()
 
         let knownHostStore = SwiftDataKnownHostStore(modelContainer: modelContext.container)
         let pemProvider: PortablePEMProvider = { [credentialID] in
@@ -239,16 +327,16 @@ struct SSHTerminalView: View {
 
         let client = SSHClient(
             transport: DirectTransport(),
-            host: host,
-            port: port,
-            username: username,
+            host: resolvedHost,
+            port: resolvedPort,
+            username: resolvedUsername,
             credentialID: credentialID,
             tier: credential.tier,
             certificateBlob: credential.certificate,
             pemProvider: pemProvider,
             knownHostStore: knownHostStore,
             hostKeyMismatchProvider: mismatchCoordinator,
-            deviceID: device.id,
+            deviceID: resolvedDeviceID,
             recordSessions: credential.recordSessions
         )
         sshClient = client
@@ -266,7 +354,9 @@ struct SSHTerminalView: View {
         do {
             session = try await client.connect()
         } catch {
-            logger.error("SSH connect failed for device \(device.id, privacy: .public): \(String(describing: error), privacy: .public)")
+            logger.error(
+                "SSH connect failed for \(resolvedHost, privacy: .public):\(resolvedPort): \(String(describing: error), privacy: .public)"
+            )
             status = .failed("Connection failed: \(error)")
             return
         }
@@ -285,22 +375,54 @@ struct SSHTerminalView: View {
             Task { await session.resize(cols: cols, rows: rows) }
         }
 
-        // Hold a continuation against the session's exit signal so the
-        // outer task suspends until the connection ends.
-        await session.setExitHandler { cause in
-            Task { @MainActor in
-                status = .disconnected("\(cause)")
+        status = .connected
+
+        // Suspend the lifecycle until the session ends. The exit
+        // handler resumes the continuation; view dismissal cancels
+        // the .task, which fires `onCancel` to close the client,
+        // which drives the session's `channelInactive` path, which
+        // fires the exit handler, which resumes the continuation.
+        // Either way the continuation resolves exactly once and the
+        // defer block at the top of this function gets to run the
+        // idempotent cleanup `await client.close()`.
+        //
+        // Without this suspension the function returned straight
+        // after `status = .connected`, the defer fired
+        // `client.close()`, and the operator saw
+        // `session.open → auth.success → channel-error: child
+        // channel inactive` within the same UI tick. The byte pump
+        // never got bytes; the recording stack never got records.
+        let exitCause = await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<ExitCause, Never>) in
+                Task {
+                    // Register the lifecycle exit handler. Multicast
+                    // semantics: the audit handler registered by
+                    // SSHClient.connect fires alongside this one in
+                    // registration order, and a late registration (the
+                    // session already closed in the brief window between
+                    // SSHClient.connect returning and this Task running)
+                    // takes the immediate-fire path in
+                    // SSHSession.addExitHandler.
+                    await session.addExitHandler { cause in
+                        continuation.resume(returning: cause)
+                    }
+                    // Then drive pty-req + shell. The 80x24 default is a
+                    // placeholder; the first notifyResize callback from
+                    // PulseTerminalSurface fires a window-change to the
+                    // real terminal-view bounds shortly after connect.
+                    await session.requestPTY(cols: 80, rows: 24)
+                    await session.requestShell()
+                }
             }
+        } onCancel: {
+            // View dismissed (window closed, Back-to-form button
+            // pressed). Close the client; the exit handler will
+            // resume the continuation with a channelError cause and
+            // the function returns through the defer.
+            Task { await client.close() }
         }
 
-        // pty-req + shell. The SwiftUI layout's first updateNSView/
-        // updateUIView pass will report the real cols/rows and drive
-        // a resize event via the surface; the initial 80x24 is a
-        // reasonable default that gets refined immediately.
-        await session.requestPTY(cols: 80, rows: 24)
-        await session.requestShell()
-
-        status = .connected
+        status = .disconnected("\(exitCause)")
     }
 
     // MARK: Connection status

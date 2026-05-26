@@ -99,6 +99,68 @@ final class PulseTerminalAdapterTests: XCTestCase {
         XCTAssertEqual(sizes.snapshot(), [Size(cols: 80, rows: 24)])
     }
 
+    /// FIFO coalesce of inbound server bytes. The contract:
+    /// `feed(_:)` calls arriving in close succession (between MainActor
+    /// drain hops) accumulate into a single pending buffer in arrival
+    /// order, and exactly one drain hop is scheduled per burst.
+    ///
+    /// This is the load-bearing replacement for the slice-5 Task-per-chunk
+    /// pattern, which (a) starved the run loop on bursty output and (b)
+    /// relied on a FIFO ordering guarantee Swift's concurrency runtime
+    /// does not promise for unstructured `Task` dispatches. Mirrors
+    /// `SessionLogWriter.drainQueue`'s single-flight shape.
+    ///
+    /// Single-producer framing keeps the test deterministic: we are
+    /// pinning what the lock observes under sequential calls, not what
+    /// the Swift runtime promises for cross-Task arrival ordering
+    /// (which it doesn't).
+    ///
+    /// The test runs on the MainActor so the `Task { @MainActor ... }`
+    /// drain hop scheduled by `feed(_:)` queues behind the synchronous
+    /// test body and cannot run before the assertions observe the
+    /// pre-drain state. Off-MainActor the test would race the drain.
+    @MainActor
+    func testFeedCoalescesMultipleChunksBeforeMainActorDrain() {
+        let surface = PulseTerminalSurface()
+
+        // Three feeds in succession, no awaits between them. Each
+        // append is under the lock; the second and third see
+        // `hopScheduled == true` and skip the Task dispatch.
+        surface.feed(ArraySlice([0x01, 0x02]))
+        surface.feed(ArraySlice([0x03]))
+        surface.feed(ArraySlice([0x04, 0x05, 0x06]))
+
+        // All bytes are pending in arrival order, exactly one drain
+        // hop is scheduled. The scheduled Task is queued behind this
+        // synchronous test body because we are on MainActor.
+        XCTAssertEqual(surface.pendingByteCount, 6)
+        XCTAssertTrue(surface.isDrainHopScheduled)
+
+        // Drain via the synchronous test seam. This is the same swap
+        // the MainActor drain would perform; whichever fires first
+        // gets the bytes, the other gets an empty snapshot.
+        let drained = surface.consumePendingBytes()
+        XCTAssertEqual(drained, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
+        XCTAssertEqual(surface.pendingByteCount, 0)
+        XCTAssertFalse(surface.isDrainHopScheduled)
+    }
+
+    /// After a drain, the next `feed` call schedules a fresh hop. The
+    /// `hopScheduled` latch resets cleanly so a follow-up burst does
+    /// not stall.
+    @MainActor
+    func testFeedReschedulesAfterDrain() {
+        let surface = PulseTerminalSurface()
+
+        surface.feed(ArraySlice([0x10]))
+        _ = surface.consumePendingBytes()
+        XCTAssertFalse(surface.isDrainHopScheduled)
+
+        surface.feed(ArraySlice([0x20]))
+        XCTAssertTrue(surface.isDrainHopScheduled)
+        XCTAssertEqual(surface.pendingByteCount, 1)
+    }
+
     // MARK: - Test helpers
 
     /// Lock-protected byte-list collector. `sendHandler` is a

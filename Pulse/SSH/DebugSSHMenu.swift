@@ -38,15 +38,13 @@ import SwiftUI
 /// `PulseApp.swift` is also `#if DEBUG`-gated so Release builds carry
 /// neither the symbol nor the menu entry.
 ///
-/// The window is a thin verification surface: it picks a `Device`
-/// from the SwiftData store and routes through the same
-/// `openWindow(value: device.id)` gesture the device-row context
-/// menu uses, plus a replay action for inspecting the most-recent
-/// recording on disk. There is no separate exec/byte-pump path here;
-/// the operator-facing terminal is the single byte-pump entry point
-/// and the debug window only delegates to it. Operators doing
-/// loopback verification register a `Device` row with
-/// `primaryIP = 127.0.0.1` once and reuse it.
+/// The window is a thin verification surface: it takes a free-form
+/// host (loopback by default), a port, and a credential, then opens
+/// the same operator-facing `SSHTerminalView` inline in ad-hoc mode.
+/// Recordings driven from here land under
+/// `Pulse/Sessions/unassigned/...` because the connection is not
+/// tied to a NetBox `Device`. The Replay action surfaces the
+/// most-recent recording for visual inspection.
 struct DebugSSHCommands: Commands {
 
     @Environment(\.openWindow) private var openWindow
@@ -63,96 +61,165 @@ struct DebugSSHCommands: Commands {
 
 // MARK: - DebugSSHWindow
 
-/// Debug-only window that opens the operator-facing terminal for a
-/// chosen `Device` and offers a replay action for the most-recent
-/// recording on disk. Replaces the earlier free-form
-/// host/credential/exec form that drove the byte pump directly: now
-/// every connection path (operator gesture, lab verification) goes
-/// through the same SwiftUI terminal scene, so a regression there
-/// surfaces in lab regardless of how the operator started the
-/// session.
+/// Debug-only window that wires a free-form host + port + credential
+/// into the operator-facing `SSHTerminalView` in ad-hoc mode. The
+/// terminal renders inline (replacing the form pane) once connected
+/// so the window itself is the verification surface — no separate
+/// per-connection scene needed for the lab path. The Replay action
+/// stays available in form mode.
+///
+/// For loopback testing: type `127.0.0.1` (or click the IPv4 / IPv6
+/// quick-fill), pick a credential, click Open SSH Terminal. The
+/// terminal connects against `Remote Login` on the dev Mac. Back
+/// returns to the form so a fresh test can be set up against
+/// different parameters.
 struct DebugSSHWindow: View {
 
     static let windowID = "debug-ssh"
 
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.openWindow) private var openWindow
 
-    /// Devices the operator can target with a terminal session.
-    /// Filtered to rows with a non-nil `primaryIP` because the
-    /// connect path needs a routable host; sorted by name for a
-    /// stable picker. The fetch is unbounded but the operator-curated
-    /// device list is small in practice; if a real fleet reaches
-    /// thousands the debug menu's picker UX gets revisited at that
-    /// time.
-    @Query(filter: #Predicate<Device> { $0.primaryIP != nil }, sort: \Device.name)
-    private var devices: [Device]
+    @Query(sort: \SSHCredential.label) private var credentials: [SSHCredential]
 
-    @State private var selectedDeviceID: Device.ID?
+    @State private var host: String = Self.defaultLoopbackV4
+    @State private var port: Int = 22
+    @State private var username: String = NSUserName()
+    @State private var selectedCredentialID: UUID?
+    @State private var activeTarget: SSHTerminalView.Connection?
+
     @State private var output: String = ""
     @State private var replayStatus: String = ""
     @State private var isReplaying: Bool = false
 
+    private static let defaultLoopbackV4 = "127.0.0.1"
+    private static let defaultLoopbackV6 = "::1"
+
     private let logger = Logger(subsystem: "pulse", category: "ssh.debug")
 
     var body: some View {
+        Group {
+            if let target = activeTarget {
+                inlineTerminal(for: target)
+            } else {
+                formPane
+            }
+        }
+        .frame(minWidth: 720, minHeight: 460)
+    }
+
+    // MARK: Form pane
+
+    private var formPane: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            devicePicker
-            openTerminalButton
+            hostField
+            connectionFields
+            openButton
             outputArea
             replaySection
         }
         .padding(20)
-        .frame(minWidth: 560, minHeight: 360)
     }
-
-    // MARK: View sections
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Label("SSH connection test", systemImage: "terminal.fill")
                 .font(.title2.weight(.semibold))
-            Text("Opens the operator-facing terminal for a chosen device, and replays the most-recent recorded session. For loopback verification, register a device with primaryIP = 127.0.0.1.")
+            Text("Opens the operator-facing terminal against a typed host. Either IPv4 or IPv6 works; the default is the IPv4 loopback. Recordings driven from here land under Pulse/Sessions/unassigned/.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    @ViewBuilder
-    private var devicePicker: some View {
-        if devices.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("No devices with a primary IP are in the local store.")
-                    .font(.callout)
-                Text("Sync devices from NetBox or add a row with primaryIP set (Settings → Devices) to enable the connection test.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    /// Free-form host field with quick-fill buttons for IPv4 and IPv6
+    /// loopback. Any hostname or IP is accepted; `DirectTransport`'s
+    /// `NIOTSConnectionBootstrap` resolves both stacks via Happy
+    /// Eyeballs (ADR §8 dual-stack invariant), so the IPv6 quick-fill
+    /// is functional rather than cosmetic.
+    private var hostField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField("Host", text: $host)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                Button("IPv4") { host = Self.defaultLoopbackV4 }
+                    .help("Fill with the IPv4 loopback (127.0.0.1).")
+                Button("IPv6") { host = Self.defaultLoopbackV6 }
+                    .help("Fill with the IPv6 loopback (::1).")
             }
+            Text("Default is the loopback address. Any hostname or IP is accepted.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var connectionFields: some View {
+        HStack(spacing: 12) {
+            TextField("Username", text: $username)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 180)
+            TextField("Port", value: $port, formatter: portFormatter)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 100)
+            credentialPicker
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var credentialPicker: some View {
+        if credentials.isEmpty {
+            Text("No credentials in the local store.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } else {
-            Picker("Device", selection: $selectedDeviceID) {
-                Text("Select…").tag(Device.ID?.none)
-                ForEach(devices) { device in
-                    Text("\(device.name ?? "Device \(device.id)") · \(device.primaryIP ?? "")")
-                        .tag(Device.ID?.some(device.id))
+            Picker("Credential", selection: $selectedCredentialID) {
+                Text("Select…").tag(UUID?.none)
+                ForEach(credentials, id: \.id) { credential in
+                    Text("\(credential.label) (\(credential.tier.label))")
+                        .tag(UUID?.some(credential.id))
                 }
             }
         }
     }
 
-    private var openTerminalButton: some View {
+    private var openButton: some View {
         HStack {
             Button("Open SSH Terminal") {
-                if let id = selectedDeviceID {
-                    openWindow(value: id)
-                }
+                guard canOpen,
+                      let credentialID = selectedCredentialID
+                else { return }
+                let trimmedHost = host.trimmingCharacters(in: .whitespaces)
+                let trimmedUsername = username.trimmingCharacters(in: .whitespaces)
+                activeTarget = .adHoc(
+                    host: trimmedHost,
+                    port: port,
+                    username: trimmedUsername,
+                    credentialID: credentialID
+                )
             }
-            .disabled(selectedDeviceID == nil)
+            .disabled(!canOpen)
             .keyboardShortcut(.defaultAction)
 
             Spacer()
         }
+    }
+
+    private var canOpen: Bool {
+        selectedCredentialID != nil
+            && !host.trimmingCharacters(in: .whitespaces).isEmpty
+            && !username.trimmingCharacters(in: .whitespaces).isEmpty
+            && port > 0
+            && port <= 65535
+    }
+
+    private var portFormatter: NumberFormatter {
+        let f = NumberFormatter()
+        f.allowsFloats = false
+        f.minimum = 1
+        f.maximum = 65535
+        return f
     }
 
     private var outputArea: some View {
@@ -192,6 +259,29 @@ struct DebugSSHWindow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    // MARK: Inline terminal pane
+
+    /// Replaces the form pane with the operator-facing terminal in
+    /// ad-hoc mode. The same byte pump, recording stack, and host-key
+    /// mismatch flow as the device-row gesture; only the connection
+    /// params come from the form rather than from a SwiftData
+    /// `Device` row.
+    @ViewBuilder
+    private func inlineTerminal(for target: SSHTerminalView.Connection) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("← Back to form") {
+                    activeTarget = nil
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            SSHTerminalView(connection: target)
         }
     }
 

@@ -94,6 +94,7 @@
 		A11CAFE000000000000011D /* SSHTerminalWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000011E /* SSHTerminalWindow.swift */; };
 		A11CAFE000000000000011F /* HostKeyMismatchSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000120 /* HostKeyMismatchSheet.swift */; };
 		A11CAFE0000000000000121 /* HostKeyMismatchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000122 /* HostKeyMismatchCoordinator.swift */; };
+		A11CAFE0000000000000123 /* SSHCredentialTier+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */; };
 		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
 		A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F8 /* PulseTransport.swift */; };
@@ -284,6 +285,7 @@
 		A11CAFE000000000000011E /* SSHTerminalWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalWindow.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000120 /* HostKeyMismatchSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyMismatchSheet.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000122 /* HostKeyMismatchCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyMismatchCoordinator.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SSHCredentialTier+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F8 /* PulseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTransport.swift; sourceTree = "<group>"; };
@@ -434,6 +436,7 @@
 				067FD09D2ECC6D5500146D44 /* Logger+Extensions.swift */,
 				067FD09B2ECC6D1600146D44 /* Array+Extensions.swift */,
 				A11CAFE000000000000000F7 /* Data+Extensions.swift */,
+				A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */,
 			);
 			path = Extensions;
 			sourceTree = "<group>";
@@ -1041,6 +1044,7 @@
 				41D8E68E2D2B76A0002CA36D /* FetchEventsTip.swift in Sources */,
 				067FD09C2ECC6D1600146D44 /* Array+Extensions.swift in Sources */,
 				A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */,
+				A11CAFE0000000000000123 /* SSHCredentialTier+Extensions.swift in Sources */,
 				C96191DF2ACA5B62000198DB /* GridLayerView.swift in Sources */,
 				C96191F22ACA5C03000198DB /* SiteGroupRow.swift in Sources */,
 				41A0BE9C2C8FBF5C00C39B50 /* SettingsView.swift in Sources */,
