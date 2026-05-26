@@ -166,6 +166,8 @@ final class SessionLogWriterTests: XCTestCase {
     // MARK: - Happy path
 
     func testOpenWritesHeaderAndInitialMeta() async throws {
+        let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
+
         let store = InMemoryStore()
         let writer = try await makeWriter(store: store)
         await writer.close(exitCauseDescription: "test_close")
@@ -188,6 +190,21 @@ final class SessionLogWriterTests: XCTestCase {
         XCTAssertEqual(meta.exit_cause, "test_close")
         XCTAssertNotNil(meta.closed_at)
         XCTAssertNotNil(meta.duration_ms)
+
+        // Audit-event assertion: opening the writer emits
+        // session.recording.opened with the right credential/device
+        // identifiers and the resolved pulselog path. Folded in here
+        // rather than as a standalone test because the audit emission
+        // is part of the open() contract, not a separate concern.
+        let opened = capture.events.first { event in
+            if case .recordingOpened = event { return true }
+            return false
+        }
+        guard case .recordingOpened(_, _, let deviceID, let path) = opened else {
+            return XCTFail("Expected recordingOpened audit event, got \(String(describing: opened))")
+        }
+        XCTAssertEqual(deviceID, 42)
+        XCTAssertTrue(path.contains("dev-42"))
     }
 
     func testRoundTripRecordsAreRecoverableViaChainValidator() async throws {
@@ -272,6 +289,8 @@ final class SessionLogWriterTests: XCTestCase {
     // MARK: - Idempotent close
 
     func testCloseIsIdempotent() async throws {
+        let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
+
         let store = InMemoryStore()
         let writer = try await makeWriter(store: store)
         await writer.close(exitCauseDescription: "first")
@@ -280,6 +299,15 @@ final class SessionLogWriterTests: XCTestCase {
         let metaSnap = store.snapshot(of: writer.fileStorePaths.meta)
         let meta = try JSONDecoder().decode(SessionMeta.self, from: metaSnap.meta!)
         XCTAssertEqual(meta.exit_cause, "first", "Second close must be a no-op")
+
+        // Audit-event assertion folded in: close() emits exactly one
+        // recordingClosed event regardless of how many times it is
+        // called. A second emission would be observable here.
+        let closedEvents = capture.events.filter { event in
+            if case .recordingClosed = event { return true }
+            return false
+        }
+        XCTAssertEqual(closedEvents.count, 1, "close() must emit recordingClosed exactly once, even when called twice")
     }
 
     // MARK: - Mid-session failure → terminal stop

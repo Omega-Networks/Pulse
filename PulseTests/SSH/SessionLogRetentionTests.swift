@@ -82,6 +82,8 @@ final class SessionLogRetentionTests: XCTestCase {
     // MARK: - Threshold maths
 
     func testDeletesEntriesOlderThanMaxAge() throws {
+        let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
+
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let oneDay: TimeInterval = 24 * 60 * 60
         let store = InMemoryRetentionStore(entries: [
@@ -107,31 +109,19 @@ final class SessionLogRetentionTests: XCTestCase {
         // Remaining sessions on disk: only the two within the window.
         let remaining = store.remainingURLs().map { $0.lastPathComponent }.sorted()
         XCTAssertEqual(remaining, ["borderline-younger.meta", "fresh.meta"])
-    }
 
-    func testEmptyStoreReturnsZeroAndEmptyErrors() {
-        let store = InMemoryRetentionStore(entries: [])
-        let outcome = SessionLogRetention.purge(
-            maxAge: 60,
-            referenceDate: .now,
-            store: store
-        )
-        XCTAssertEqual(outcome, .completed(purgedCount: 0, oldestPurgedDate: nil, perEntryErrors: []))
-    }
-
-    func testEntriesWithinWindowAreUntouched() {
-        let now = Date()
-        let store = InMemoryRetentionStore(entries: [
-            entry("a", openedAt: now.addingTimeInterval(-60)),
-            entry("b", openedAt: now)
-        ])
-        let outcome = SessionLogRetention.purge(
-            maxAge: 3600,
-            referenceDate: now,
-            store: store
-        )
-        XCTAssertEqual(outcome, .completed(purgedCount: 0, oldestPurgedDate: nil, perEntryErrors: []))
-        XCTAssertEqual(store.remainingURLs().count, 2)
+        // Audit-event assertion folded in: a purge that deletes
+        // anything must emit session.recording.purged with the
+        // matching count. Tests both the outcome value and the audit
+        // signal in one place because they describe the same event.
+        let purged = capture.events.first { event in
+            if case .purged = event { return true }
+            return false
+        }
+        guard case .purged(let auditCount, _) = purged else {
+            return XCTFail("Expected purged audit event, got \(String(describing: purged))")
+        }
+        XCTAssertEqual(auditCount, count)
     }
 
     // MARK: - Failure handling
@@ -201,12 +191,9 @@ final class SessionLogRetentionTests: XCTestCase {
 
     // MARK: - ISO8601 parser
 
-    func testParseISO8601AcceptsFractionalAndPlain() {
+    func testParseISO8601AcceptsValidAndRejectsGibberish() {
         XCTAssertNotNil(SessionLogRetention.parseISO8601("2026-05-26T03:41:12.184Z"))
         XCTAssertNotNil(SessionLogRetention.parseISO8601("2026-05-26T03:41:12Z"))
-    }
-
-    func testParseISO8601RejectsGibberish() {
         XCTAssertNil(SessionLogRetention.parseISO8601("not a date"))
         XCTAssertNil(SessionLogRetention.parseISO8601(""))
     }

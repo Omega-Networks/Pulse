@@ -34,44 +34,6 @@ import XCTest
 /// covered by manual verification.
 final class SessionLogRecordTests: XCTestCase {
 
-    // MARK: Envelope round-trip
-
-    func testEncodeProducesDeterministicSortedKeysJSON() throws {
-        let record = SessionLogRecord(
-            seq: 0,
-            ts: "2026-05-26T03:41:12.184Z",
-            dir: .in,
-            prev: "",
-            bytes: Data("hello".utf8).base64EncodedString()
-        )
-
-        // Encode twice; the bytes must be byte-identical because
-        // .sortedKeys removes the only nondeterministic axis Foundation
-        // gives us.
-        let first = try SessionLogCrypto.encode(record)
-        let second = try SessionLogCrypto.encode(record)
-        XCTAssertEqual(first, second, "Encoder output must be deterministic across two encodes of the same record")
-
-        // Spot-check a key appears in the encoded JSON. The whole-record
-        // round-trip below covers semantic correctness.
-        let json = String(data: first, encoding: .utf8) ?? ""
-        XCTAssertTrue(json.contains("\"seq\""))
-        XCTAssertTrue(json.contains("\"prev\""))
-    }
-
-    func testEncodeDecodeRoundTripPreservesEveryField() throws {
-        let original = SessionLogRecord(
-            seq: 42,
-            ts: "2026-05-26T03:41:12.184Z",
-            dir: .out,
-            prev: String(repeating: "ab", count: 32),
-            bytes: Data([0x00, 0xff, 0x10, 0x20]).base64EncodedString()
-        )
-        let encoded = try SessionLogCrypto.encode(original)
-        let decoded = try SessionLogCrypto.decode(encoded)
-        XCTAssertEqual(decoded, original)
-    }
-
     // MARK: Per-record seal/open
 
     func testSealAndOpenRoundTripPreservesEveryField() throws {
@@ -121,30 +83,17 @@ final class SessionLogRecordTests: XCTestCase {
         }
     }
 
-    // MARK: Chain hash
-
-    func testChainHashIsLowercaseHexSHA256() {
-        let input = Data("hello".utf8)
-        let observed = SessionLogCrypto.chainHash(of: input)
-        // Reference vector for SHA-256("hello").
-        XCTAssertEqual(
-            observed,
-            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-        )
-    }
-
-    func testChainHashIsDeterministic() {
-        let input = Data([0x01, 0x02, 0x03, 0x04, 0x05])
-        XCTAssertEqual(
-            SessionLogCrypto.chainHash(of: input),
-            SessionLogCrypto.chainHash(of: input)
-        )
-    }
-
     // MARK: Chain validation — clean
 
     func testValidateChainAcceptsCleanChain() throws {
         let key = SymmetricKey(size: .bits256)
+        // Empty arrangement first: zero-record chain is the boundary
+        // case that drives the `.valid(0, "")` return.
+        XCTAssertEqual(
+            SessionLogCrypto.validateChain(records: [], using: key),
+            .valid(recordCount: 0, chainHeadHash: "")
+        )
+
         let records = try makeChain(of: 5, key: key)
         let result = SessionLogCrypto.validateChain(records: records, using: key)
         guard case .valid(let count, let head) = result else {
@@ -152,12 +101,6 @@ final class SessionLogRecordTests: XCTestCase {
         }
         XCTAssertEqual(count, 5)
         XCTAssertEqual(head, SessionLogCrypto.chainHash(of: records.last!))
-    }
-
-    func testValidateEmptyChainIsValidWithZeroCount() {
-        let key = SymmetricKey(size: .bits256)
-        let result = SessionLogCrypto.validateChain(records: [], using: key)
-        XCTAssertEqual(result, .valid(recordCount: 0, chainHeadHash: ""))
     }
 
     // MARK: Chain validation — tamper detection

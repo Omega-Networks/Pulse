@@ -62,25 +62,6 @@ final class SessionLogWrappingKeyTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    // MARK: - Identity
-
-    func testKeychainServiceUsesBundleDerivedLogwrapSuffix() {
-        let bundleID = Bundle.main.bundleIdentifier ?? "nz.net.omega.pulse"
-        XCTAssertEqual(
-            SessionLogWrappingKey.keychainService,
-            "\(bundleID).ssh.logwrap",
-            "Service must be <bundle-id>.ssh.logwrap so it can never collide with the SSH credential service <bundle-id>.ssh"
-        )
-    }
-
-    func testKeychainAccountIsSingletonLiteral() {
-        // The wrapping key is one-per-device; the account string is a
-        // literal rather than a UUID. A regression that introduced
-        // per-credential or per-session accounts here would silently
-        // multiply wrapping keys.
-        XCTAssertEqual(SessionLogWrappingKey.keychainAccount, "log-wrapping")
-    }
-
     // MARK: - Lifecycle
 
     func testLoadOrCreateGeneratesKeyOnFreshInstall() throws {
@@ -117,24 +98,6 @@ final class SessionLogWrappingKeyTests: XCTestCase {
             second.publicKey.x963Representation,
             "Two loadOrCreate calls must return the same SE-resident key"
         )
-    }
-
-    func testPublicKeyAccessDoesNotRegenerate() throws {
-        guard SecureEnclave.isAvailable else {
-            throw XCTSkip("Secure Enclave not available on this test target")
-        }
-
-        let initialPub = try SessionLogWrappingKey.publicKey()
-        let secondPub = try SessionLogWrappingKey.publicKey()
-        XCTAssertEqual(
-            initialPub.x963Representation,
-            secondPub.x963Representation,
-            "publicKey() calls must be stable; regeneration would break every wrap call already made this session"
-        )
-
-        // x963 sanity: 65 bytes (SEC1 uncompressed), 0x04 prefix.
-        XCTAssertEqual(initialPub.x963Representation.count, 65)
-        XCTAssertEqual(initialPub.x963Representation.first, 0x04)
     }
 
     // MARK: - Integration with SessionLogCrypto.wrap

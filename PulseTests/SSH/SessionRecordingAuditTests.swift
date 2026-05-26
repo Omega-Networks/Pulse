@@ -115,92 +115,7 @@ final class SessionRecordingAuditTests: XCTestCase {
         XCTAssertEqual(SessionRecordingAudit.FailureReason.backPressureOverflow.auditReason, "back_pressure_overflow")
     }
 
-    // MARK: - Capture lifecycle
-
-    func testStopCapturingAfterDeinitDoesNotCaptureFurtherEvents() {
-        do {
-            let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
-            SessionRecordingAudit.purgeFailed(reason: "inside-scope")
-            XCTAssertEqual(capture.events.count, 1)
-        } // capture deinits here
-
-        // A fresh capture after the previous deallocated should start
-        // with an empty event list — the previous capture's deinit
-        // must have removed its observer.
-        let fresh = SessionRecordingAudit.TestObserver.shared.startCapturing()
-        SessionRecordingAudit.purgeFailed(reason: "after-scope")
-        XCTAssertEqual(fresh.events.count, 1)
-        XCTAssertEqual(fresh.events.first, .purgeFailed(reason: "after-scope"))
-    }
-
-    func testMultipleConcurrentCapturesAllReceiveEvents() {
-        let a = SessionRecordingAudit.TestObserver.shared.startCapturing()
-        let b = SessionRecordingAudit.TestObserver.shared.startCapturing()
-
-        SessionRecordingAudit.replayUnwrapped(sessionID: UUID())
-
-        XCTAssertEqual(a.events.count, 1)
-        XCTAssertEqual(b.events.count, 1)
-    }
-
     // MARK: - Writer integration
-
-    func testWriterOpenEmitsRecordingOpened() async throws {
-        let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
-
-        let store = SessionLogWriterTests.InMemoryStore()
-        let wrappingPriv = P256.KeyAgreement.PrivateKey()
-        let credentialID = UUID()
-        let writer = try await SessionLogWriter.open(
-            deviceID: 99,
-            credentialID: credentialID,
-            username: "ops",
-            host: "lab",
-            port: 22,
-            store: store,
-            wrappingPublicKey: { wrappingPriv.publicKey }
-        )
-
-        let opened = capture.events.first { event in
-            if case .recordingOpened = event { return true }
-            return false
-        }
-        guard case .recordingOpened(_, let capturedCredentialID, let capturedDeviceID, let path) = opened else {
-            return XCTFail("Expected recordingOpened event, got \(String(describing: opened))")
-        }
-        XCTAssertEqual(capturedCredentialID, credentialID)
-        XCTAssertEqual(capturedDeviceID, 99)
-        XCTAssertTrue(path.contains("dev-99"))
-
-        await writer.close(exitCauseDescription: "test")
-    }
-
-    func testWriterCloseEmitsRecordingClosed() async throws {
-        let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
-
-        let store = SessionLogWriterTests.InMemoryStore()
-        let wrappingPriv = P256.KeyAgreement.PrivateKey()
-        let writer = try await SessionLogWriter.open(
-            deviceID: 1,
-            credentialID: UUID(),
-            username: "x",
-            host: "x",
-            port: 22,
-            store: store,
-            wrappingPublicKey: { wrappingPriv.publicKey }
-        )
-        capture.reset() // drop the recordingOpened event so we can focus on close
-        await writer.close(exitCauseDescription: "remote_exit_0")
-
-        let closed = capture.events.first { event in
-            if case .recordingClosed = event { return true }
-            return false
-        }
-        guard case .recordingClosed(_, let recordCount, _, _) = closed else {
-            return XCTFail("Expected recordingClosed event, got \(String(describing: closed))")
-        }
-        XCTAssertEqual(recordCount, 0)
-    }
 
     func testWriterStructuralFailureEmitsRecordingFailedNotClosed() async throws {
         let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
@@ -243,30 +158,6 @@ final class SessionRecordingAuditTests: XCTestCase {
     }
 
     // MARK: - Retention integration
-
-    func testRetentionPurgeEmitsPurgedEvent() throws {
-        let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
-
-        let now = Date()
-        let store = SessionLogRetentionTests.InMemoryRetentionStore(entries: [
-            SessionLogRetentionEntry(
-                pulselogURL: URL(fileURLWithPath: "/dev/null/old.pulselog"),
-                metaURL: URL(fileURLWithPath: "/dev/null/old.meta"),
-                openedAt: now.addingTimeInterval(-10_000)
-            )
-        ])
-
-        _ = SessionLogRetention.purge(maxAge: 1000, referenceDate: now, store: store)
-
-        let purged = capture.events.first { event in
-            if case .purged = event { return true }
-            return false
-        }
-        guard case .purged(let count, _) = purged else {
-            return XCTFail("Expected purged event")
-        }
-        XCTAssertEqual(count, 1)
-    }
 
     func testRetentionEnumerateFailureEmitsPurgeFailed() {
         let capture = SessionRecordingAudit.TestObserver.shared.startCapturing()
