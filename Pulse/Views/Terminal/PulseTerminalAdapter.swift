@@ -198,6 +198,41 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
         state.withLockedValue { $0.hopScheduled }
     }
 
+    /// Reads the live terminal grid geometry from the attached
+    /// `TerminalView`. Returns `nil` when the view has not yet been
+    /// created or has not yet been laid out (either because
+    /// `makeNSView` / `makeUIView` has not run, or because SwiftUI has
+    /// not completed its first layout pass and SwiftTerm reports zero
+    /// dimensions). Callers in the connection lifecycle use the `nil`
+    /// case as a signal to fall back to the SSH protocol default
+    /// (80x24).
+    ///
+    /// **Why this is the two-pump primitive.** `SSHTerminalView`
+    /// `runConnectionLifecycle` allocates the PTY at request time with
+    /// whatever this returns (falling back to 80x24), then re-reads
+    /// once more after `requestShell` and sends an explicit
+    /// `window-change` if the geometry has changed between the two
+    /// reads. This is the canonical SwiftTermApp pattern from
+    /// `TerminalApp/iOSTerminal/UIKitSshTerminalView.swift` lines
+    /// 362-379 (initial size) + lines 310-315 (`sendInitialResize`).
+    /// Without it the SSH session lands in 80-column mode while the
+    /// platform view is rendered at the operator's actual size, and
+    /// bash's readline state corrupts under backspace / arrow-key
+    /// edits.
+    ///
+    /// Must run on the main actor because `TerminalView` and the
+    /// underlying `Terminal` object are AppKit / UIKit views with main-
+    /// thread affinity; reading `cols` and `rows` from a background
+    /// thread would be unsound even if it appears to work.
+    @MainActor
+    func currentTerminalGeometry() -> (cols: Int, rows: Int)? {
+        guard let terminal = view?.getTerminal() else { return nil }
+        let cols = terminal.cols
+        let rows = terminal.rows
+        guard cols > 0, rows > 0 else { return nil }
+        return (cols: cols, rows: rows)
+    }
+
     /// Invoked by the adapter's `TerminalViewDelegate.send` conformance.
     /// Forwards the operator's keystrokes unchanged through the
     /// configured `sendHandler` closure. Tested directly without

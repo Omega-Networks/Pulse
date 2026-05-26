@@ -377,6 +377,31 @@ struct SSHTerminalView: View {
 
         status = .connected
 
+        // Give SwiftUI a chance to complete its first layout pass for
+        // the freshly-mounted PulseTerminalAdapter before we read the
+        // terminal grid geometry below. Task.yield() requeues this
+        // coroutine on the cooperative pool; pending MainActor work
+        // (including the makeNSView/updateNSView pair we just
+        // triggered by flipping status to .connected) runs ahead of
+        // our resumption. The yield is not a synchronisation
+        // primitive — if SwiftUI defers layout further, our geometry
+        // read will still return nil and we will fall back to 80x24
+        // for the initial PTY request, with the post-shell re-pump
+        // catching up to reality. The yield just maximises the
+        // probability that the initial PTY is allocated at the right
+        // size to begin with, eliminating the bash readline
+        // confusion that the post-pump alone cannot fully clean up
+        // because SIGWINCH doesn't reset in-flight input state.
+        await Task.yield()
+
+        // Pump 1: read the current terminal geometry from the live
+        // PulseTerminalSurface and use it for the initial PTY
+        // allocation. Fall back to the SSH protocol default 80x24 if
+        // the view has not yet been laid out (nil case).
+        let initialGeometry = await MainActor.run {
+            surface.currentTerminalGeometry()
+        } ?? (cols: 80, rows: 24)
+
         // Suspend the lifecycle until the session ends. The exit
         // handler resumes the continuation; view dismissal cancels
         // the .task, which fires `onCancel` to close the client,
@@ -406,12 +431,35 @@ struct SSHTerminalView: View {
                     await session.addExitHandler { cause in
                         continuation.resume(returning: cause)
                     }
-                    // Then drive pty-req + shell. The 80x24 default is a
-                    // placeholder; the first notifyResize callback from
-                    // PulseTerminalSurface fires a window-change to the
-                    // real terminal-view bounds shortly after connect.
-                    await session.requestPTY(cols: 80, rows: 24)
+                    // Drive pty-req + shell at the size we read from
+                    // the surface above (or the 80x24 fallback). Two-
+                    // pump pattern: pump 2 fires immediately after
+                    // requestShell to re-read the geometry and send an
+                    // explicit window-change if layout completed
+                    // between pump 1 and now. Matches the SwiftTermApp
+                    // reference at TerminalApp/iOSTerminal/UIKitSshTerminalView.swift
+                    // lines 362-379 (initial) + 310-315 (sendInitialResize).
+                    await session.requestPTY(
+                        cols: initialGeometry.cols,
+                        rows: initialGeometry.rows
+                    )
                     await session.requestShell()
+
+                    // Pump 2: re-read geometry on MainActor. If layout
+                    // completed between pump 1 and now (and reported
+                    // dimensions that differ from what we allocated),
+                    // send window-change so bash sees the right size
+                    // before it finishes printing its prompt. The
+                    // surface's notifyResize dedupe will skip the
+                    // subsequent updateNSView pass if it would report
+                    // the same dimensions.
+                    if let actualGeometry = await MainActor.run(body: { surface.currentTerminalGeometry() }),
+                       actualGeometry.cols != initialGeometry.cols || actualGeometry.rows != initialGeometry.rows {
+                        await session.resize(
+                            cols: actualGeometry.cols,
+                            rows: actualGeometry.rows
+                        )
+                    }
                 }
             }
         } onCancel: {
