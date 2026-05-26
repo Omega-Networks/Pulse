@@ -269,11 +269,13 @@ Slice 4 extends PR #14 rather than branching off — Slice 3 has not merged to m
 - **§6 mid-session recording-failure semantics** — new prose. Terminal `.recordingStopped` state on first failure; no gap records, no chain holes. `.meta.exit_cause = "recording_failed_midstream"` carries the truth. Chosen over chain-continues-with-discontinuous-seq because the latter creates a recording that replays seamlessly with no operator-visible indication that bytes are missing, which is the worst framing for a tamper-evident log.
 - **§6 back-pressure bound** — new prose. Writer queue capped at 1024 records or 4 MiB pending plaintext, whichever is reached first. Overflow emits `session.recording.failed` with `reason: "back_pressure_overflow"` and transitions to the same terminal stop. EventLoop is never blocked and the session byte pump never observes the overflow.
 - **§7 replay event split** — `session.recording.replayUnwrapped` fires on biometric success regardless of subsequent chain validation outcome (operator access to a recorded log is security-relevant independent of file integrity); `session.recording.replayChainBroken` fires on validation failure during replay (distinct event so any future SIEM rule can fire cleanly on tamper-after-access).
+- **Byte-pump outbound-type correction (post-implementation).** `SSHSessionDataBridge.OutboundIn` was declared `ByteBuffer` but `SSHSession.write` emits `SSHChannelData` directly via `childChannel.writeAndFlush(...)`. The bridge's `write(context:data:promise:)` rewrapped a (never-actually-flowing) `ByteBuffer` into `SSHChannelData`, keeping the declaration internally consistent on paper while never matching the runtime payload. The mismatch would have surfaced as a `unwrapOutboundIn` force-cast crash the moment any caller drove `SSHSession.write` end-to-end. Dormant during the recording slice because the debug menu uses `triggerUserOutboundEvent` for `exec`; the operator-facing terminal's keystroke path is the first real caller. Bridge now declares `OutboundIn = SSHChannelData` and forwards `context.write(data, promise: promise)` as a pure pass-through. Regression guard test on an `EmbeddedChannel` lives in `SSHClientTests.testBridgeForwardsOutboundSSHChannelDataWithoutCrash`. Caught during the structural-gate audit of the byte-pump shape and fixed pre-emptively.
 
-Two implementation guardrails worth surfacing because they're easy to lose silently:
+Three implementation guardrails worth surfacing because they're easy to lose silently:
 
 - The chain hash is always computed from the raw on-disk `SealedBox.combined` bytes, never from a re-encoded `Codable` envelope. Any path that round-trips through `JSONDecoder` then `JSONEncoder` to compute the next `prev` is a future-`JSONEncoder`-update timebomb (a Foundation patch changing key ordering, escaping, or number formatting would silently invalidate every historical log).
 - The recording tap lives in `SSHClient`'s channel pipeline as a `ChannelDuplexHandler` before `SSHSessionDataBridge`. `SSHSession` stays consumer-agnostic — widening `SSHSession.setOutputHandler` to a multiplexer would push consumer-fan-out concern into a foundational class where the next slice (compliance audit, replay, metrics) would force it further. The structural gate `grep -n "SessionLogWriter\|RecordingTap" Pulse/SSH/SSHSession.swift` returns empty.
+- The recording writer's actor uses a single-drain-task queue rather than fire-and-forget `Task`s per record. Swift's concurrency runtime does not guarantee that two independently-spawned `Task { await actor.method(...) }` calls enter the actor in spawn order. Each `Task` races independently for actor entry. For ordered ingest from an EventLoop the queue-and-drain pattern (push into a `NIOLockedValueBox`-backed queue under the nonisolated entry point; kick a single drain `Task` if none is running; the drain pops FIFO under the actor's isolation) gives strict ordering without an `AsyncStream`-shaped channel dependency. Any future actor consuming an ordered stream from an EventLoop should reach for this pattern. Discovery cost was an intermittent test flake mid-implementation; the precedent is documented here to skip that round next time.
 
 ## Forward-looking implementation discipline
 
@@ -287,6 +289,7 @@ Every slice that depends on external API surfaces (Apple SDK, vendored package, 
 2. **Init / method / property reachability.** For every external API the plan calls, confirm the init or method exists in the public API and is reachable from Pulse code (not `internal` or `private`).
 3. **Capability coverage.** Confirm the external type's documented capabilities cover what the plan requires (e.g., "Does CryptoKit's Curve25519 init from PEM?"). When the answer is uncertain, write a ~20-line spike before locking the plan rather than assuming.
 4. **Dependency version confirmation.** Re-check `Package.resolved` if the slice depends on transitively-pulled deps; surfaces can move across minor versions.
+5. **Cross-layer identifier consistency.** For any identifier the plan threads across layers (SwiftData model, network API, filesystem, on-disk envelope, audit fields), grep that the layers agree on the type. The recording stack surfaced `Device.id: Int64` mid-plan because the SwiftData model wasn't checked against the planned `<deviceUUID>` path scheme. A five-minute SwiftData-model grep before plan-lock would have caught the mismatch and saved an amendment cycle. Internal cross-layer consistency is as load-bearing as external-API reachability; the verification pass covers both.
 
 Three cascades the SSH foundations implementation hit that this discipline would have caught at planning rather than implementation time:
 
@@ -295,6 +298,39 @@ Three cascades the SSH foundations implementation hit that this discipline would
 - CryptoKit's `Curve25519.Signing.PrivateKey` has no PEM init — visible in Apple's Developer documentation.
 
 The discipline is cheap and forces explicit confrontation with the v1 dependency surfaces before commitments are made. It complements the pause-decide-resume discipline; doesn't replace it.
+
+### Transient context stays out of long-lived artefacts
+
+Branch context (slice numbers, commit hashes, PR numbers, in-flight feature names) must not appear in production source code, test files, or operator-facing documentation. The failure modes are concrete:
+
+- **Commit hashes don't survive rebase or squash-merge.** A docstring saying *"regression guard for the round-1 fix in commit `4dfe844`"* stops resolving the day the branch is squashed. The hash points at an object that no longer exists in the merged history.
+- **Slice numbers don't survive the codebase outliving the plan.** Pulse organises the SSH and Web work into roughly seven slices; in two years no one reading the code will remember which slice was which. *"Slice 4 ships v=1"* tells the next maintainer nothing they can act on; *"Ships v=1"* says the same thing and remains true.
+- **In-flight feature names confuse operators.** A UI label like *"Debug SSH (Slice 3 verification)"* ships the development workflow's vocabulary to the user. Feature-descriptive language (*"SSH connection test"*) describes the thing in terms the operator can act on.
+
+The single exception is explicit historical-lineage sections in ADRs. The *"Slice N amendments summary"* sections in this document record when a contract changed and what changed; the slice numbers there are correct because they're dating decisions, not describing the code's current state. Operator-facing docs (`docs/credentials.md`) describe behaviour, not lineage.
+
+Mechanical check before merge: a grep over `Pulse`, `PulseTests`, and operator-facing docs for `Slice\s*[0-9]`, commit-hash patterns, and `PR #` references should return empty. Intentional references live only in `docs/architecture/` historical sections. The recording-slice cleanup retroactively applied this discipline across the SSH module; subsequent slices should apply it incrementally rather than carrying transient context into long-lived artefacts.
+
+### Test-sizing first-principles
+
+Before adding a test, apply the delete-rather-than-optimise lens: would deleting this test make the code suite worse? If the test pins a non-obvious correctness property that would silently regress under refactor, it pays rent. If it asserts that the standard library or a vendored dependency behaves as documented, it does not.
+
+Concrete categories that consistently fail the rent test:
+
+- **Framework or SDK behaviour tests.** Asserting `JSONEncoder.outputFormatting = [.sortedKeys]` produces sorted keys, or that `SHA256.hash(of:)` is deterministic, tests Apple's contracts rather than Pulse's. Delete; if Apple breaks these contracts, higher-level tests will surface the failure.
+- **Tautological string-format tests.** Asserting `keychainService == "\(bundleID).ssh.logwrap"` where the production code is `"\(bundleID).ssh.logwrap"` doesn't catch typos. Both sides edit together. Delete unless the format is a wire-compatible contract with an external system.
+- **Test-harness self-tests.** Tests asserting the test observer captures events correctly, or that a mock store stores values. If the harness is broken, every downstream test that uses it fails visibly; a standalone harness test duplicates that signal.
+- **Reductively-redundant edge cases.** An "empty input" test that's subsumed by a parameterised happy-path test's first arrangement. Fold into the happy path rather than carrying as a separate method.
+
+What does pay rent:
+
+- **Cryptographic round-trips.** Encrypt/decrypt, wrap/unwrap, hash-chain validation. The algebra is non-obvious and would regress silently.
+- **Tamper detection.** Single-byte flip surfaces as a clean failure with no plaintext leaking past the break.
+- **Bounded resources.** Back-pressure overflow, retention threshold, pool exhaustion. These are properties production deployment will hit; lab-verifying at the bound is cheaper than discovering at scale.
+- **Concurrency invariants.** FIFO ordering across EventLoop-to-actor boundaries, idempotent close, single-flighted drains.
+- **Wire-shape regression guards.** Audit-event field sets that SIEM rules depend on; on-disk envelope shapes that future readers parse.
+
+The recording slice's worked example: 61 new tests landed; 16 (26%) deleted or folded during cleanup, all from the framework, tautology, and harness categories. The remaining 45 each pin a property that would not be obvious from reading the code. The cut was retroactive; the discipline is to apply it at test-authoring time so the retroactive pass shrinks toward zero over subsequent slices.
 
 ### Per-feature verification questions
 
