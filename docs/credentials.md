@@ -145,11 +145,38 @@ The classifier didn't recognise it. Two likely reasons: a corrupted paste (line 
 
 The SSH terminal opens from any device row's context menu, "Open SSH Terminal". The item is disabled when the device has no `primaryIP` recorded in NetBox; populate that field in NetBox first.
 
-Each open invocation activates an existing terminal window for the same device when one is already on screen (SwiftUI's per-value `WindowGroup` semantics). One terminal per device matches the operator mental model and avoids the "did I leave one open?" footgun. If you need a second session against the same device, close the first.
+When you open the terminal, Pulse picks the credential to use from the device's "Default credential" setting (Settings → Devices → … → SSH); if none is set, the terminal's top-bar picker defaults to the first credential in your list and you can change it before connecting. The connecting view runs the full handshake: TCP connect, host-key check, user-auth, channel open, PTY request, shell.
 
-The first SSH connection of an app session triggers two biometric prompts back-to-back: one to sign the user-auth handshake against the Secure Enclave credential, and one to unwrap the session-recording wrapping key if recording is enabled on the credential. Subsequent connections during the same app session re-trigger the signing prompt (per ADR §1, there is no per-session cache) but reuse the already-unwrapped recording key.
+The first SSH connection of an app session triggers two biometric prompts back-to-back. The first signs the user-auth handshake against the Secure Enclave credential; the second unwraps the session-recording wrapping key if recording is enabled on the credential. Subsequent connections during the same app session re-trigger the signing prompt (per ADR §1, there is no per-session cache) but reuse the already-unwrapped recording key.
 
-The fuller terminal section is filled in as the feature lands.
+Each open invocation activates an existing terminal window for the same device when one is already on screen (SwiftUI's per-value `WindowGroup` semantics). One terminal per device matches the operator mental model and avoids the "did I leave one open?" footgun. If you need a second session against the same device, close the first window first.
+
+While the terminal is open, every keystroke flows directly to the SSH session and every byte from the server renders into SwiftTerm. The status bar at the top of the window reflects the connection state (Idle, Connecting, Connected, Disconnected, Failed) with a colour-coded indicator: green Connected is the steady state, yellow Connecting is the handshake in flight, red Failed is a connection error, neutral Disconnected is a clean teardown.
+
+**Closing the terminal closes the connection.** When you close the window, Pulse cancels the connection task, which tears down the SSH session, finalises the recording if one was running (the `.meta` sidecar gets `closed_at` and `chain_head_hash`), and shuts down the SwiftNIO event loop. There is no idle-disconnect timer; the connection lives until you close it or the server hangs up.
+
+For lab testing, the Debug menu's "Open SSH Test Window" surface offers a device picker that routes through the same context-menu gesture. Register a device with `primaryIP = 127.0.0.1` once and the debug surface gives you a one-click path to a loopback terminal against a `Remote Login`-enabled dev Mac.
+
+## Host-key mismatch
+
+When you connect to a device for the first time, Pulse pins (TOFU) the server's host key fingerprint to a `KnownHost` row in the local SwiftData store. Every subsequent connection compares the presented fingerprint to the stored pin. A match proceeds silently; a mismatch triggers the mismatch sheet.
+
+The mismatch sheet displays:
+
+- The host and port being connected to.
+- The **stored** fingerprint, the algorithm under which it was pinned, and the date Pulse first saw it.
+- The **presented** fingerprint and algorithm — what the server is offering right now.
+- Three operator actions.
+
+The three actions:
+
+- **Accept** (amber). You've confirmed this is a legitimate key rotation (the operator at the other end re-keyed sshd; a hardware upgrade; a certificate renewal). Pulse replaces the stored pin with the new fingerprint and the connection proceeds. The audit log captures `host.mismatch.accepted` with both fingerprints.
+- **Reject** (red, default focus). You don't trust the new key. The connection aborts with `fingerprintMismatch`; the stored pin is unchanged. The audit log captures `host.mismatch.rejected`. **This is the default**: a stray Return key on the sheet rejects rather than accepts, so you cannot accidentally trust a man-in-the-middle just by pressing Enter.
+- **Forget** (neutral). You want to abandon the trust relationship entirely and let the next connection TOFU fresh. Pulse deletes the stored row; the connection aborts. The next connection will pin whatever fingerprint it sees. The audit log captures `host.mismatch.forgotten`.
+
+The sheet has a **90-second decision timeout**. If you walk away or get distracted, the sheet self-dismisses after 90 seconds and the connection rejects with `reason: "decision_timeout"` in the audit log. This bounds the half-open SSH channel: a real operator decision takes seconds, and 90 seconds is plenty for "actually read both fingerprints and decide". SIEM rules can match on the reason field to surface walked-away-operator events distinct from deliberate rejections.
+
+**The trust store is the source of truth.** The sheet only gathers your decision; the `SSHHostKeyDelegate` mutates `KnownHost` and emits the audit event. The UI never writes to the trust store directly. This means a future "Forget all hosts" gesture, or an automated policy that revokes certain hosts on alert, can run through the same delegate code path.
 
 ## Session recording
 
