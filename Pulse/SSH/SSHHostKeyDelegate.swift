@@ -152,6 +152,30 @@ enum HostKeyDecision: Equatable {
     case rejectDistrusted(reason: String)
 }
 
+// MARK: - Host-key mismatch decision (operator-chosen)
+
+/// Operator's response when a stored `.pinned` host key differs from the
+/// fingerprint the server is now presenting. ADR §5 defines three actions
+/// for this surface. The delegate (next change) maps each to a
+/// `KnownHostStore` mutation, a NIOSSH validation result, and an audit
+/// event under `ssh.session`:
+///
+/// | Case | `KnownHost` write | NIOSSH | Audit |
+/// |---|---|---|---|
+/// | `.accept(fingerprint, algorithm)` | replace pin | `.success` | `host.mismatch.accepted` |
+/// | `.reject` | none | `.failure(.fingerprintMismatch)` | `host.mismatch.rejected` |
+/// | `.forget` | delete row | `.failure(.fingerprintMismatch)` | `host.mismatch.forgotten` |
+///
+/// `.accept` carries the *new* fingerprint and algorithm so the delegate
+/// can write the fresh pin without re-deriving them; both values are
+/// already in scope at the call site (the host-key validation path
+/// computes them before consulting the operator).
+enum HostKeyMismatchDecision: Equatable, Sendable {
+    case accept(fingerprintSHA256: String, algorithm: String)
+    case reject
+    case forget
+}
+
 // MARK: - Delegate
 
 /// `NIOSSHClientServerAuthenticationDelegate` that consults a `KnownHostStore`
