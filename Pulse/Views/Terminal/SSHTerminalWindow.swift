@@ -90,12 +90,20 @@ struct SSHTerminalScene: Scene {
         //   size); the surplus gives the recording-state toolbar item
         //   room to render without the title eliding.
         //
-        // - `.windowToolbarStyle(.unifiedCompact(showsTitle: true))`
-        //   collapses the title bar and toolbar into a single compact
-        //   row, matching Terminal.app and iTerm's chrome conventions.
-        //   The toolbar items declared on `SSHTerminalView.body`
-        //   (status pill, recording badge, primary action) render in
-        //   this row.
+        // - `.windowToolbarStyle(.unified(showsTitle: true))` renders
+        //   the title alongside toolbar items in a single bar. The
+        //   `.unifiedCompact` variant was used initially but produced
+        //   a click-to-update regression where server output did not
+        //   repaint until the operator clicked in the window (the
+        //   debug surface, which carries no `.windowToolbarStyle`,
+        //   did not exhibit the symptom — strong evidence the compact
+        //   style was interfering with SwiftTerm's `setNeedsDisplay`
+        //   propagation). The full-size unified style preserves the
+        //   inline-title chrome at slightly taller height without
+        //   the rendering issue. The render-path diagnostic loggers
+        //   in `PulseTerminalAdapter` (category `ssh.render`) remain
+        //   in place to catch any future recurrence under this or a
+        //   different chrome style.
         //
         // The iOS scene wiring (future slice) inherits the same
         // `.toolbar` declaration on the view body and renders it via
@@ -104,7 +112,7 @@ struct SSHTerminalScene: Scene {
             sceneContent(for: deviceID)
         }
         .windowResizability(.contentSize)
-        .windowToolbarStyle(.unifiedCompact(showsTitle: true))
+        .windowToolbarStyle(.unified(showsTitle: true))
     }
     #else
     var body: some Scene {

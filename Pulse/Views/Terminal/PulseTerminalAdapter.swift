@@ -26,11 +26,37 @@
 import SwiftUI
 import SwiftTerm
 import NIOConcurrencyHelpers
+import OSLog
 
 #if os(macOS)
 import AppKit
 #else
 import UIKit
+#endif
+
+#if DEBUG
+/// Render-path tracing for the click-to-update class of regressions.
+/// Three sites emit on this category: `drainPendingFeed` (bytes
+/// arriving at the surface drain), `makeNSView`/`makeUIView` (a
+/// fresh `TerminalView` constructed — identity churn signal), and
+/// `updateNSView`/`updateUIView` (existing view reconciled — the
+/// healthy steady-state signal). Capture with:
+///
+///   log stream --predicate 'subsystem == "pulse" AND category == "ssh.render"'
+///
+/// Three signatures pick the fix shape:
+///
+/// - drained + no update + click forces update → display-scheduling
+///   regression; investigate `setNeedsDisplay` propagation under the
+///   active window-toolbar style.
+/// - makeNSView fires repeatedly during a connected session →
+///   identity churn from `body` re-evaluation; stabilise the toolbar
+///   item identity or break `status` reads out of toolbar closures.
+/// - drained does not fire → MainActor hop deferred; investigate
+///   run-loop modes.
+///
+/// Release builds compile this out entirely.
+private let renderLogger = Logger(subsystem: "pulse", category: "ssh.render")
 #endif
 
 // MARK: - PulseTerminalSurface
@@ -189,6 +215,10 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
     private func drainPendingFeed() {
         let snapshot = consumePendingBytes()
         guard !snapshot.isEmpty else { return }
+        #if DEBUG
+        let hasView = view != nil
+        renderLogger.debug("drained \(snapshot.count) bytes (view attached: \(hasView))")
+        #endif
         view?.feed(byteArray: ArraySlice(snapshot))
     }
 
@@ -425,6 +455,9 @@ extension PulseTerminalAdapter: NSViewRepresentable {
     typealias NSViewType = PlatformTerminalView
 
     func makeNSView(context: Context) -> PlatformTerminalView {
+        #if DEBUG
+        renderLogger.debug("constructed new TerminalView (macOS)")
+        #endif
         let view = PlatformTerminalView(frame: .zero, font: Self.makeTerminalFont(size: fontSize))
         view.terminalDelegate = context.coordinator
         surface.view = view
@@ -432,6 +465,9 @@ extension PulseTerminalAdapter: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: PlatformTerminalView, context: Context) {
+        #if DEBUG
+        renderLogger.debug("updated existing TerminalView (macOS)")
+        #endif
         // Apply the operator's preferred font size on every SwiftUI
         // re-render. `nsView.font =` rebuilds `FontSet`, runs
         // `resetFont()`, and recomputes cell dimensions — the next
@@ -459,6 +495,9 @@ extension PulseTerminalAdapter: UIViewRepresentable {
     typealias UIViewType = PlatformTerminalView
 
     func makeUIView(context: Context) -> PlatformTerminalView {
+        #if DEBUG
+        renderLogger.debug("constructed new TerminalView (iOS)")
+        #endif
         let view = PlatformTerminalView(frame: .zero, font: Self.makeTerminalFont(size: fontSize))
         view.terminalDelegate = context.coordinator
         surface.view = view
@@ -486,6 +525,9 @@ extension PulseTerminalAdapter: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PlatformTerminalView, context: Context) {
+        #if DEBUG
+        renderLogger.debug("updated existing TerminalView (iOS)")
+        #endif
         // See `updateNSView` for the apply-then-resize rationale; the
         // shape mirrors the macOS path exactly because both platform
         // views expose the same `font` setter contract.
