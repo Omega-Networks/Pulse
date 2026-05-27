@@ -295,7 +295,15 @@ struct SSHTerminalView: View {
     private var connectionHost: String? {
         switch connection {
         case .device:
-            return device?.primaryIP
+            // `primaryIPAddress` strips the CIDR mask that NetBox's
+            // IPAM attaches to addresses (`172.17.255.1/32`,
+            // `2001:db8::1/64`). NIOSSH's `Channel.connect(host:port:)`
+            // resolves the host string literally; passing the CIDR
+            // form lands as "Connect timeout (10 s)" with no further
+            // diagnosis. Display sites keep reading `primaryIP`
+            // directly so the CIDR remains visible where operators
+            // expect to see it.
+            return device?.primaryIPAddress
         case .adHoc(let host, _, _, _):
             return host
         }
@@ -805,7 +813,14 @@ struct SSHTerminalView: View {
                 status = .failed("Device \(id) not found in the local store.")
                 return
             }
-            guard let host = device.primaryIP, !host.isEmpty else {
+            // `primaryIPAddress` strips the CIDR mask from NetBox's
+            // IPAM-stored address (`172.17.255.1/32` → `172.17.255.1`)
+            // so NIOSSH can resolve the host. The empty-string guard
+            // catches a present-but-blank `primaryIP` from a NetBox
+            // row mid-edit; the strip produces an empty string when
+            // `primaryIP == "/32"` or similar malformed data, and the
+            // !isEmpty check below catches both shapes uniformly.
+            guard let host = device.primaryIPAddress, !host.isEmpty else {
                 status = .failed("Device has no primary IP configured in NetBox.")
                 return
             }

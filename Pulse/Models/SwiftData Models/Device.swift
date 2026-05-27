@@ -95,8 +95,35 @@ final class Device {
     var localY: Double = 0
     
     // MARK: - Computed Properties
-     
-     // --- NEW HELPER PROPERTY ---
+
+    /// The bare IP address from `primaryIP`, with any trailing CIDR
+    /// prefix stripped. NetBox's IPAM stores addresses in CIDR form
+    /// (e.g., `172.17.255.1/32` for a host address, `2001:db8::1/64`
+    /// for IPv6), but consumers that pass the value to network APIs
+    /// — the SSH client, future web companion, future ping/traceroute —
+    /// need the bare address, not the CIDR string.
+    ///
+    /// The split is on the first `/` only. IPv4 and IPv6 CIDR
+    /// representations both place the prefix length after a single
+    /// slash; no IP address text contains a literal `/` for any
+    /// other reason. Returns nil when `primaryIP` is nil; returns an
+    /// empty string when `primaryIP` is empty (caller-side guards
+    /// already handle the empty case via `!isEmpty`).
+    ///
+    /// Display sites (Device Detail panes, the device row metadata)
+    /// keep reading `primaryIP` directly — the CIDR carries subnet
+    /// context that NetBox-fluent operators expect to see in
+    /// informational labels. Only the network-layer call sites
+    /// route through `primaryIPAddress`.
+    var primaryIPAddress: String? {
+        guard let primaryIP else { return nil }
+        if let slash = primaryIP.firstIndex(of: "/") {
+            return String(primaryIP[..<slash])
+        }
+        return primaryIP
+    }
+
+    // --- NEW HELPER PROPERTY ---
      var supportsCameraStream: Bool {
          return deviceRole?.id == 11 || deviceRole?.id == 35 // Camera or Edge Node
      }

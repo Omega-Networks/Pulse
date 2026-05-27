@@ -405,4 +405,93 @@ final class SSHConnectFormTests: XCTestCase {
         XCTAssertNil(device.defaultUsername, "defaultUsername must be nil after clear.")
         XCTAssertNil(device.defaultCredentialID, "defaultCredentialID must be nil after clear.")
     }
+
+    // MARK: - Device.primaryIPAddress (CIDR strip)
+    //
+    // The strip's correctness is the wire-shape contract the SSH
+    // connect path depends on: NIOSSH's `Channel.connect(host:port:)`
+    // resolves the host literally and fails opaquely ("Connect
+    // timeout (10 s)") if handed a CIDR-shaped string. Tests live in
+    // this file because the SSH connect path is the consumer; a
+    // dedicated `DevicePrimaryIPAddressTests.swift` would need
+    // pbxproj surgery for one property and the existing test target
+    // already imports `@testable import Pulse` plus `Device`.
+
+    /// IPv4 host address `1.1.1.1/32` strips to `1.1.1.1`. The
+    /// canonical NetBox shape for a device's primary management IP.
+    @MainActor
+    func testPrimaryIPAddressStripsIPv4Host32() {
+        let device = Device(id: 42)
+        device.primaryIP = "1.1.1.1/32"
+        XCTAssertEqual(device.primaryIPAddress, "1.1.1.1")
+    }
+
+    /// IPv4 subnet address `192.0.2.10/24` strips to `192.0.2.10`.
+    /// NetBox can carry non-/32 prefixes when the operator records
+    /// the address within its subnet context rather than as a host;
+    /// the strip behaviour is the same regardless of prefix length.
+    @MainActor
+    func testPrimaryIPAddressStripsIPv4Subnet24() {
+        let device = Device(id: 42)
+        device.primaryIP = "192.0.2.10/24"
+        XCTAssertEqual(device.primaryIPAddress, "192.0.2.10")
+    }
+
+    /// IPv6 host address `2001:db8::1/128` strips to `2001:db8::1`.
+    /// The strip operates on the first `/`, which IPv6 CIDR notation
+    /// uses for the prefix length; no IPv6 address text contains a
+    /// literal `/` for any other reason.
+    @MainActor
+    func testPrimaryIPAddressStripsIPv6() {
+        let device = Device(id: 42)
+        device.primaryIP = "2001:db8::1/128"
+        XCTAssertEqual(device.primaryIPAddress, "2001:db8::1")
+    }
+
+    /// An address without a CIDR prefix returns unchanged. Defence
+    /// in depth against a future NetBox export shape change or an
+    /// operator-edited row that happens to omit the mask; the strip
+    /// must not mutate the value when there's nothing to strip.
+    @MainActor
+    func testPrimaryIPAddressPassesThroughWhenNoSlash() {
+        let device = Device(id: 42)
+        device.primaryIP = "10.0.0.1"
+        XCTAssertEqual(device.primaryIPAddress, "10.0.0.1")
+    }
+
+    /// nil primaryIP returns nil. Callers gate on the optional
+    /// (`guard let host = device.primaryIPAddress, !host.isEmpty
+    /// else { ... }`); a regression that returned an empty string
+    /// instead of nil would bypass the guard and feed an empty host
+    /// to NIOSSH.
+    @MainActor
+    func testPrimaryIPAddressReturnsNilWhenSourceIsNil() {
+        let device = Device(id: 42)
+        device.primaryIP = nil
+        XCTAssertNil(device.primaryIPAddress)
+    }
+
+    /// Empty primaryIP returns empty (the prefix before the absent
+    /// slash is the empty string). The caller's `!isEmpty` guard
+    /// catches this; we test the contract here so the caller-side
+    /// guard remains the gate of record rather than implicit on
+    /// strip behaviour.
+    @MainActor
+    func testPrimaryIPAddressReturnsEmptyWhenSourceIsEmpty() {
+        let device = Device(id: 42)
+        device.primaryIP = ""
+        XCTAssertEqual(device.primaryIPAddress, "")
+    }
+
+    /// Malformed `/32` (mask-only, no address) strips to empty.
+    /// Matches the empty-source contract above; combined with the
+    /// caller's `!isEmpty` guard this routes to the
+    /// "no primary IP configured" failure path rather than to a
+    /// NIOSSH connect attempt against an empty host.
+    @MainActor
+    func testPrimaryIPAddressStripsToEmptyForMaskOnlyInput() {
+        let device = Device(id: 42)
+        device.primaryIP = "/32"
+        XCTAssertEqual(device.primaryIPAddress, "")
+    }
 }
