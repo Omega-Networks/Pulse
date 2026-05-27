@@ -80,6 +80,11 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
     private struct State {
         var sendHandler: (@Sendable (ArraySlice<UInt8>) -> Void)?
         var resizeHandler: (@Sendable (Int, Int) -> Void)?
+        /// Fired when SwiftTerm reports a server-initiated bell (BEL,
+        /// `0x07`, traditionally `^G`) via `TerminalViewDelegate.bell`.
+        /// The operator view sets this to dispatch the audible and / or
+        /// visual response per the operator's `@AppStorage` preferences.
+        var bellHandler: (@Sendable () -> Void)?
         var lastCols: Int = 0
         var lastRows: Int = 0
         /// Inbound bytes that arrived between hops. All mutation flows
@@ -117,6 +122,16 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
     var resizeHandler: (@Sendable (Int, Int) -> Void)? {
         get { state.withLockedValue { $0.resizeHandler } }
         set { state.withLockedValue { $0.resizeHandler = newValue } }
+    }
+
+    /// Operator view sets this to dispatch the audible and / or visual
+    /// bell response. Routed through the surface so the SwiftTerm
+    /// adapter never reaches back into the SwiftUI view hierarchy for
+    /// preference reads; the view owns the `@AppStorage` bindings and
+    /// captures them into the closure at wiring time.
+    var bellHandler: (@Sendable () -> Void)? {
+        get { state.withLockedValue { $0.bellHandler } }
+        set { state.withLockedValue { $0.bellHandler = newValue } }
     }
 
     /// Feed bytes from the server into the terminal. Called from the
@@ -252,6 +267,17 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
         handler?(data)
     }
 
+    /// Invoked by the adapter's `TerminalViewDelegate.bell` conformance.
+    /// Reads the configured handler under the lock and invokes it
+    /// outside the lock so a slow handler does not block subsequent
+    /// surface mutations. No-handler is a clean no-op (operator-view
+    /// teardown can race a server-initiated bell; the bell is dropped
+    /// rather than crashing).
+    func fireBell() {
+        let handler = state.withLockedValue { $0.bellHandler }
+        handler?()
+    }
+
     /// Invoked by the adapter's `updateNSView` / `updateUIView`
     /// lifecycle and by `TerminalViewDelegate.sizeChanged` (the latter
     /// fires when SwiftTerm reflows in response to a DECCOLM-style
@@ -332,12 +358,64 @@ struct PulseTerminalAdapter {
     /// SwiftUI lifetime.
     let surface: PulseTerminalSurface
 
+    /// Operator's preferred terminal font size, persisted globally so
+    /// it composes across reconnects and across device targets — font
+    /// preferences are a personal-environment setting (matches
+    /// Terminal.app, iTerm, Ghostty) rather than per-credential or
+    /// per-device. SwiftUI invalidates the adapter on UserDefaults
+    /// changes for this key, which routes through `updateNSView` /
+    /// `updateUIView` to apply the new font.
+    @AppStorage("pulse.terminal.fontSize") private var fontSize: Double = PulseTerminalAdapter.defaultFontSize
+
     /// The platform `TerminalView` type SwiftTerm ships under
     /// `Sources/SwiftTerm/Mac/MacTerminalView.swift` (NSView) and
     /// `Sources/SwiftTerm/iOS/iOSTerminalView.swift` (UIView). Both
     /// export the same `TerminalView` symbol; the typealias keeps
     /// call sites platform-agnostic.
     typealias PlatformTerminalView = SwiftTerm.TerminalView
+
+    // MARK: Font-size bounds
+
+    /// Lower bound on the operator's preferred font size. Below 9 pt
+    /// the cell glyphs lose anti-aliasing fidelity on high-DPI
+    /// displays and box-drawing characters break under SwiftTerm's
+    /// integer cell metrics.
+    static let minFontSize: Double = 9.0
+
+    /// Upper bound on the operator's preferred font size. Above 24 pt
+    /// the terminal grid drops below 30 columns on a stock 720-pt
+    /// minimum window, which corrupts most real shell output.
+    static let maxFontSize: Double = 24.0
+
+    /// Default font size, matching SwiftTerm's `FontSet.defaultFont`
+    /// on iOS (12 pt monospaced system font) and within 0.5 pt of
+    /// `NSFont.systemFontSize` (13 pt) on macOS. Pinning to 12 pt
+    /// makes the cross-platform render identical and is the size
+    /// operators most often pick anyway.
+    static let defaultFontSize: Double = 12.0
+
+    /// Clamps an operator-supplied (or stored) font size into the
+    /// supported range. Applied on read and on write so a stale
+    /// UserDefaults value outside the bound (manual override, future
+    /// change) still produces a sane render.
+    static func clampFontSize(_ value: Double) -> Double {
+        min(max(value, minFontSize), maxFontSize)
+    }
+
+    /// Constructs the monospaced terminal font at the clamped size.
+    /// Mirrors `SwiftTerm.FontSet.defaultFont`'s implementation
+    /// (`monospacedSystemFont(ofSize:weight:)`) so the operator-set
+    /// size composes with SwiftTerm's bold / italic derivation
+    /// without a font-name mismatch.
+    #if os(macOS)
+    static func makeTerminalFont(size: Double) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: CGFloat(clampFontSize(size)), weight: .regular)
+    }
+    #else
+    static func makeTerminalFont(size: Double) -> UIFont {
+        UIFont.monospacedSystemFont(ofSize: CGFloat(clampFontSize(size)), weight: .regular)
+    }
+    #endif
 }
 
 #if os(macOS)
@@ -347,13 +425,24 @@ extension PulseTerminalAdapter: NSViewRepresentable {
     typealias NSViewType = PlatformTerminalView
 
     func makeNSView(context: Context) -> PlatformTerminalView {
-        let view = PlatformTerminalView(frame: .zero, font: nil)
+        let view = PlatformTerminalView(frame: .zero, font: Self.makeTerminalFont(size: fontSize))
         view.terminalDelegate = context.coordinator
         surface.view = view
         return view
     }
 
     func updateNSView(_ nsView: PlatformTerminalView, context: Context) {
+        // Apply the operator's preferred font size on every SwiftUI
+        // re-render. `nsView.font =` rebuilds `FontSet`, runs
+        // `resetFont()`, and recomputes cell dimensions — the next
+        // layout pass triggers our existing resize-dedupe in
+        // `notifyResize`. The 0.5 pt epsilon avoids reassigning when
+        // the value is already current (which would cost the
+        // bold/italic font-derivation work unnecessarily).
+        let targetSize = Self.clampFontSize(fontSize)
+        if abs(nsView.font.pointSize - CGFloat(targetSize)) > 0.5 {
+            nsView.font = Self.makeTerminalFont(size: targetSize)
+        }
         let terminal = nsView.getTerminal()
         surface.notifyResize(cols: terminal.cols, rows: terminal.rows)
     }
@@ -370,13 +459,40 @@ extension PulseTerminalAdapter: UIViewRepresentable {
     typealias UIViewType = PlatformTerminalView
 
     func makeUIView(context: Context) -> PlatformTerminalView {
-        let view = PlatformTerminalView(frame: .zero, font: nil)
+        let view = PlatformTerminalView(frame: .zero, font: Self.makeTerminalFont(size: fontSize))
         view.terminalDelegate = context.coordinator
         surface.view = view
+        // Pinch-to-zoom font size. Coordinator owns the gesture state
+        // (current font size at pinch begin) and writes the clamped
+        // result directly to UserDefaults — the @AppStorage binding
+        // here observes the same key and re-invokes updateUIView to
+        // apply the new font.
+        //
+        // **Simultaneous recognition with SwiftTerm's pan.** UIKit's
+        // default gesture arbitration does not recognise gestures
+        // simultaneously: the first to transition to `.began` claims
+        // the touches. If SwiftTerm's one-finger scroll pan starts on
+        // finger-1-down and the operator brings finger-2-down to
+        // pinch, pan can latch the touches before pinch ever sees the
+        // second contact. The Coordinator's
+        // `UIGestureRecognizerDelegate` conformance returns `true`
+        // from `shouldRecognizeSimultaneouslyWith` so pinch and pan
+        // coexist while a pinch is in progress, and the operator can
+        // initiate pinch even while scrolled mid-buffer.
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
+        pinch.delegate = context.coordinator
+        view.addGestureRecognizer(pinch)
         return view
     }
 
     func updateUIView(_ uiView: PlatformTerminalView, context: Context) {
+        // See `updateNSView` for the apply-then-resize rationale; the
+        // shape mirrors the macOS path exactly because both platform
+        // views expose the same `font` setter contract.
+        let targetSize = Self.clampFontSize(fontSize)
+        if abs(uiView.font.pointSize - CGFloat(targetSize)) > 0.5 {
+            uiView.font = Self.makeTerminalFont(size: targetSize)
+        }
         let terminal = uiView.getTerminal()
         surface.notifyResize(cols: terminal.cols, rows: terminal.rows)
     }
@@ -393,11 +509,13 @@ extension PulseTerminalAdapter: UIViewRepresentable {
 extension PulseTerminalAdapter {
 
     /// Conforms to SwiftTerm's `TerminalViewDelegate`. The protocol
-    /// has 10 required methods covering UI-level events. Only two are
-    /// load-bearing for Pulse: `send` (operator keystrokes → SSH) and
-    /// `sizeChanged` (server-driven reflow → SSH resize). The rest
-    /// are stubbed empty or forward to the system; `bell` and
-    /// `iTermContent` use SwiftTerm's default implementations.
+    /// has 10 required methods covering UI-level events. Load-bearing
+    /// for Pulse: `send` (operator keystrokes → SSH, with scroll-snap),
+    /// `sizeChanged` (server-driven reflow → SSH resize), and `bell`
+    /// (server BEL → operator-configurable audible / visual response
+    /// via `PulseTerminalSurface.bellHandler`). The rest are stubbed
+    /// empty or forward to the system; `iTermContent` uses SwiftTerm's
+    /// default implementation.
     final class Coordinator: NSObject, TerminalViewDelegate {
 
         let surface: PulseTerminalSurface
@@ -411,7 +529,21 @@ extension PulseTerminalAdapter {
         /// to the surface, which invokes the configured `sendHandler`.
         /// The data parameter is `ArraySlice<UInt8>` end to end, so
         /// the forward is zero-copy.
+        ///
+        /// **Scroll-to-bottom-on-input.** Standard terminal-emulator UX:
+        /// when the operator types while scrolled back in scrollback,
+        /// snap the viewport to the latest line before the keystroke
+        /// renders. `scrollPosition` is 1.0 at the latest line and < 1.0
+        /// in scrollback; `scroll(toPosition: 1.0)` is the SwiftTerm
+        /// path that updates `displayBuffer.yDisp` and triggers the
+        /// platform-view redraw. The comparison is cheap (single Double
+        /// load + compare); the scroll call is a no-op when already at
+        /// bottom. Runs on the main thread (delegate dispatch from
+        /// `TerminalView`) so direct view access is safe.
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
+            if source.scrollPosition < 1.0 {
+                source.scroll(toPosition: 1.0)
+            }
             surface.forwardKeystrokes(data)
         }
 
@@ -449,6 +581,46 @@ extension PulseTerminalAdapter {
             // false.
         }
 
+        /// Server emitted BEL (`0x07`). Forwarded to the surface, which
+        /// invokes the operator view's `bellHandler` closure (audible
+        /// beep, visual flash, or both per the operator's `@AppStorage`
+        /// preferences). The default `TerminalViewDelegate` extension
+        /// is silent; without this override `^G` from the server would
+        /// produce no observable signal.
+        func bell(source: TerminalView) {
+            surface.fireBell()
+        }
+
+        #if !os(macOS)
+        /// Anchors the font size at pinch-begin so subsequent
+        /// `gesture.scale` reports compose against a stable baseline
+        /// (UIKit's `scale` is "from start of gesture", not "since
+        /// last update", so without an anchor the size would drift
+        /// quadratically across a long pinch).
+        private var pinchAnchorSize: Double = PulseTerminalAdapter.defaultFontSize
+
+        /// iOS pinch-to-zoom handler. Maps the gesture scale onto the
+        /// clamped font-size range and writes through the shared
+        /// `pulse.terminal.fontSize` `@AppStorage` key. The adapter
+        /// struct's binding observes the change and re-invokes
+        /// `updateUIView`, which applies the new font via the same
+        /// path Cmd-+/-/0 takes on macOS.
+        @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+            let defaults = UserDefaults.standard
+            switch gesture.state {
+            case .began:
+                let stored = defaults.object(forKey: "pulse.terminal.fontSize") as? Double ?? PulseTerminalAdapter.defaultFontSize
+                pinchAnchorSize = PulseTerminalAdapter.clampFontSize(stored)
+            case .changed:
+                let candidate = pinchAnchorSize * Double(gesture.scale)
+                let clamped = PulseTerminalAdapter.clampFontSize(candidate)
+                defaults.set(clamped, forKey: "pulse.terminal.fontSize")
+            default:
+                break
+            }
+        }
+        #endif
+
         func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
             // Operator clicked a link in the terminal output. Hand
             // off to the system URL handler. Mirrors the default
@@ -464,3 +636,25 @@ extension PulseTerminalAdapter {
         }
     }
 }
+
+#if !os(macOS)
+extension PulseTerminalAdapter.Coordinator: UIGestureRecognizerDelegate {
+
+    /// Allow the pinch-to-zoom recognizer to compose with SwiftTerm's
+    /// existing pan / tap recognizers. Without this, UIKit's default
+    /// arbitration lets the first recognizer to reach `.began` claim
+    /// the touches — and SwiftTerm's pan starts on the first finger
+    /// down, so a pinch initiated while scrolled mid-buffer would be
+    /// silently absorbed by the pan recognizer. Returning `true`
+    /// universally is safe here because the only Pulse-attached
+    /// recognizer is the pinch; any other recognizer in the call is
+    /// SwiftTerm's own, and SwiftTerm's UI vocabulary does not
+    /// conflict with two-finger pinch.
+    public func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        return true
+    }
+}
+#endif

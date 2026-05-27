@@ -161,6 +161,141 @@ final class PulseTerminalAdapterTests: XCTestCase {
         XCTAssertEqual(surface.pendingByteCount, 1)
     }
 
+    /// Bell forwarding. The contract: each `fireBell()` call invokes
+    /// the registered `bellHandler` exactly once. A future change that
+    /// buffered, coalesced, or rate-limited bells without surfacing
+    /// that fact would break operator expectations (an `^G`-per-line
+    /// log tail should produce a beep per line, not one beep per
+    /// burst). The audible / visual response is the operator view's
+    /// concern; the surface's job is to fire the closure faithfully.
+    func testFireBellInvokesHandlerExactlyOnce() {
+        let surface = PulseTerminalSurface()
+        let counter = CallCounter()
+        surface.bellHandler = { counter.increment() }
+
+        surface.fireBell()
+        surface.fireBell()
+        surface.fireBell()
+
+        XCTAssertEqual(counter.value, 3)
+    }
+
+    /// Operator-view teardown can race a server-initiated bell — the
+    /// SwiftTerm coordinator can fire `bell` after `bellHandler` has
+    /// been cleared (e.g. during view dismissal). The contract: a
+    /// nil-handler bell is a clean no-op rather than a crash.
+    func testFireBellWithoutHandlerIsNoop() {
+        let surface = PulseTerminalSurface()
+        // No handler set. Three calls; if the surface crashed on a
+        // nil bell handler it would not return.
+        surface.fireBell()
+        surface.fireBell()
+        surface.fireBell()
+        XCTAssertNil(surface.bellHandler)
+    }
+
+    /// Audible bell rate-limit. A server sending BEL in a tight loop
+    /// (`yes $'\a' | head -n 100`, a runaway script, or a malicious
+    /// payload) would otherwise queue one `NSSound.beep()` per event
+    /// — operator-disrupting at best, weaponisable against an open-
+    /// plan ops room at worst. The 250 ms gate caps audible bells at
+    /// ~4 Hz, faster than a human can distinguish individual beeps
+    /// but slow enough to remain recognisable as a bell rather than
+    /// a continuous tone. Pinned here because the gate is the
+    /// structural enforcement; losing it would silently re-introduce
+    /// the bell-storm hazard, which is the kind of regression that
+    /// only surfaces in lab and looks like "the bell is just loud".
+    @MainActor
+    func testAudibleBellGateDropsRepeatedRequestsWithinWindow() {
+        let controller = TerminalBellController()
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+
+        // Five rapid-fire bell requests inside the gate window. The
+        // gate is 250 ms; spacing here is 50 ms (all well inside the
+        // window). Only the first should fire.
+        controller.requestAudibleBell(now: t0)
+        controller.requestAudibleBell(now: t0.addingTimeInterval(0.05))
+        controller.requestAudibleBell(now: t0.addingTimeInterval(0.10))
+        controller.requestAudibleBell(now: t0.addingTimeInterval(0.15))
+        controller.requestAudibleBell(now: t0.addingTimeInterval(0.20))
+        XCTAssertEqual(controller.audibleBellFireCount, 1)
+
+        // First request outside the window. The gate resets so this
+        // one fires, then a follow-up inside the new window drops.
+        controller.requestAudibleBell(now: t0.addingTimeInterval(0.30))
+        XCTAssertEqual(controller.audibleBellFireCount, 2)
+        controller.requestAudibleBell(now: t0.addingTimeInterval(0.40))
+        XCTAssertEqual(controller.audibleBellFireCount, 2)
+
+        // Far outside the window. Fires again. Pins that the gate is
+        // a sliding 250 ms window from the *last fire*, not a fixed
+        // global clock that would lock out an operator who connected
+        // mid-storm.
+        controller.requestAudibleBell(now: t0.addingTimeInterval(10.0))
+        XCTAssertEqual(controller.audibleBellFireCount, 3)
+    }
+
+    /// Recording-status indicator lifecycle. The contract: when the
+    /// active credential's `recordSessions` flag is on, the badge
+    /// appears at session-open and clears at `signalExit`. The third
+    /// `addExitHandler` registration is the seam that enforces this;
+    /// `registerRecordingLifecycle` factors it out of the lifecycle
+    /// wrapper so the bool-flip contract is testable here rather
+    /// than only via an end-to-end SwiftUI run.
+    ///
+    /// The test exercises both the inline `onChange(true)` (after
+    /// registration) and the deferred `onChange(false)` (via the
+    /// MainActor Task hop on signalExit). Mirrors the SSHSession
+    /// late-attach immediate-fire shape: the stub registrar captures
+    /// the handler, lets the registration return, then fires it
+    /// manually with a representative `ExitCause`.
+    @MainActor
+    func testRegisterRecordingLifecycleFlipsOnRegistrationAndExit() async {
+        let collector = StateCollector()
+        let registrar = ExitHandlerRegistrar()
+
+        await SSHTerminalView.registerRecordingLifecycle(
+            register: { handler in await registrar.attach(handler) },
+            onChange: { newValue in collector.append(newValue) }
+        )
+
+        // After registration, the indicator should be on (inline
+        // `onChange(true)` from the helper). The exit handler has
+        // not fired yet.
+        XCTAssertEqual(collector.snapshot(), [true])
+        XCTAssertNotNil(registrar.capturedHandler)
+
+        // Fire the exit handler the way `SSHSession.signalExit`
+        // would: synchronously, with the recorded cause. The helper
+        // hops the false-flip through a MainActor Task; await the
+        // task scheduler so the deferred call lands before assertion.
+        registrar.fire(.channelError(reason: "lab"))
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertEqual(collector.snapshot(), [true, false])
+    }
+
+    /// Font-size clamp. Operators stuck with a stale UserDefaults
+    /// value outside the supported range (manual override, a future
+    /// bound change, an imported settings dump) still get a sane
+    /// terminal: the read path clamps to `[minFontSize, maxFontSize]`
+    /// so the rendered size never falls outside the validated range.
+    /// Pinned here because the clamp is the structural enforcement of
+    /// the documented bound — losing it would silently let a stored
+    /// `0.0` or `9999.0` reach SwiftTerm's font-size machinery.
+    func testFontSizeClampBoundsValuesIntoSupportedRange() {
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(-5.0), PulseTerminalAdapter.minFontSize)
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(0.0), PulseTerminalAdapter.minFontSize)
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(PulseTerminalAdapter.minFontSize - 0.1), PulseTerminalAdapter.minFontSize)
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(PulseTerminalAdapter.minFontSize), PulseTerminalAdapter.minFontSize)
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(12.0), 12.0)
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(PulseTerminalAdapter.maxFontSize), PulseTerminalAdapter.maxFontSize)
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(PulseTerminalAdapter.maxFontSize + 0.1), PulseTerminalAdapter.maxFontSize)
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(9999.0), PulseTerminalAdapter.maxFontSize)
+        XCTAssertEqual(PulseTerminalAdapter.clampFontSize(.infinity), PulseTerminalAdapter.maxFontSize)
+    }
+
     // MARK: - Test helpers
 
     /// Lock-protected byte-list collector. `sendHandler` is a
@@ -195,6 +330,53 @@ final class PulseTerminalAdapterTests: XCTestCase {
         func snapshot() -> [Size] {
             lock.lock(); defer { lock.unlock() }
             return sizes
+        }
+    }
+
+    private final class CallCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func increment() {
+            lock.lock(); defer { lock.unlock() }
+            count += 1
+        }
+        var value: Int {
+            lock.lock(); defer { lock.unlock() }
+            return count
+        }
+    }
+
+    /// Captures the recording-lifecycle onChange invocations in
+    /// arrival order. The helper invokes onChange from MainActor
+    /// (the inline true-flip) and from a deferred MainActor Task
+    /// (the false-flip from the captured exit handler); both paths
+    /// converge on this collector via the @MainActor isolation
+    /// shared with the test.
+    @MainActor
+    private final class StateCollector {
+        private var values: [Bool] = []
+        func append(_ value: Bool) { values.append(value) }
+        func snapshot() -> [Bool] { values }
+    }
+
+    /// Stub for the `RecordingLifecycleRegistrar` shape used by
+    /// `registerRecordingLifecycle`. Captures the registered handler
+    /// so the test can fire it manually with a representative
+    /// `ExitCause`, exercising the same path `SSHSession.signalExit`
+    /// would take in production. `@unchecked Sendable` because the
+    /// registrar is invoked from a `@Sendable` async function-type
+    /// parameter; the @MainActor isolation around the test keeps the
+    /// usage single-threaded.
+    @MainActor
+    private final class ExitHandlerRegistrar {
+        var capturedHandler: ((ExitCause) -> Void)?
+
+        func attach(_ handler: @escaping @Sendable (ExitCause) -> Void) async {
+            capturedHandler = handler
+        }
+
+        func fire(_ cause: ExitCause) {
+            capturedHandler?(cause)
         }
     }
 }

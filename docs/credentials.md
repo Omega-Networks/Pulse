@@ -145,7 +145,9 @@ The classifier didn't recognise it. Two likely reasons: a corrupted paste (line 
 
 The SSH terminal opens from any device row's context menu, "Open SSH Terminal". The item is disabled when the device has no `primaryIP` recorded in NetBox; populate that field in NetBox first.
 
-When you open the terminal, Pulse picks the credential to use from the device's "Default credential" setting (Settings → Devices → … → SSH); if none is set, the terminal's top-bar picker defaults to the first credential in your list and you can change it before connecting. The connecting view runs the full handshake: TCP connect, host-key check, user-auth, channel open, PTY request, shell.
+When you open the terminal, Pulse presents an inline connect form before any handshake runs. The form shows the connection target (host:port), a Username field, a Credential picker, and a small biometric hint that tells you how many Touch ID prompts the upcoming connection will fire. The Connect button stays disabled until you've supplied a non-empty username and picked a credential explicitly — there's no "first credential in your list" silent default, because picking the wrong-tier credential against a sensitive device is the kind of mistake the form exists to catch. After a failed connection the same form re-appears with the failure reason as a banner above it; fix the field that was wrong and click Connect again, no need to close the window.
+
+If the device row has both a default username and a default credential set, and the credential still exists in your local store, the form is bypassed and the connection auto-fires on window open — preserving the "double-click and go" muscle memory for fully-configured devices. After any failure the form always shows, regardless of defaults, so you can think about what went wrong before retrying. The form runs the full handshake on Connect: TCP connect, host-key check, user-auth, channel open, PTY request, shell.
 
 The first SSH connection of an app session triggers two biometric prompts back-to-back. The first signs the user-auth handshake against the Secure Enclave credential; the second unwraps the session-recording wrapping key if recording is enabled on the credential. Subsequent connections during the same app session re-trigger the signing prompt (per ADR §1, there is no per-session cache) but reuse the already-unwrapped recording key.
 
@@ -156,6 +158,32 @@ While the terminal is open, every keystroke flows directly to the SSH session an
 **Closing the terminal closes the connection.** When you close the window, Pulse cancels the connection task, which tears down the SSH session, finalises the recording if one was running (the `.meta` sidecar gets `closed_at` and `chain_head_hash`), and shuts down the SwiftNIO event loop. There is no idle-disconnect timer; the connection lives until you close it or the server hangs up.
 
 For lab testing, the Debug menu's "Open SSH Test Window" surface offers a device picker that routes through the same context-menu gesture. Register a device with `primaryIP = 127.0.0.1` once and the debug surface gives you a one-click path to a loopback terminal against a `Remote Login`-enabled dev Mac.
+
+## Terminal preferences
+
+A small set of operator preferences live as global `@AppStorage` keys. Defaults are sensible and Pulse ships without a Settings UI surface for them; operators who need to change them can override via `defaults write nz.net.omega.pulse <key> <value>` while Pulse is not running. A future Settings → SSH "Terminal preferences" sub-pane will surface the toggles without migrating storage.
+
+**Bell behaviour.** When the server emits BEL (`^G`, `0x07`), Pulse fires an audible beep and a brief visual flash on the terminal area by default. Both axes are independently toggleable:
+
+- `pulse.terminal.bell.audible` — Bool, defaults `true`. Audible beep on `^G`. macOS uses `NSSound.beep` (respects your Sound preferences and system volume); iOS uses a warning haptic in lieu of audio because most ops happen on devices in silent mode. Audible bells are rate-limited to ~4 Hz (a 250 ms sliding window between fires) so a server sending `\a` in a tight loop produces a recognisable beep cadence rather than a continuous tone or a queue of beep calls.
+- `pulse.terminal.bell.visual` — Bool, defaults `true`. Brief 120 ms white overlay at 18 % opacity. Long enough to register peripherally without obscuring contents; repeated bells from a runaway script hold the flash and fade cleanly once the bell storm subsides.
+
+The closure that handles the bell reads both keys from `UserDefaults` at fire time (not at session-connect time), so toggling either preference mid-session takes effect on the next bell without a reconnect.
+
+**Font size.** Pulse pins the terminal font to a single global size for consistency across reconnects and across device targets — font preference is a personal-environment setting, not a per-device one (matches Terminal.app, iTerm, Ghostty).
+
+- `pulse.terminal.fontSize` — Double, defaults `12.0`, clamped to the range `[9.0, 24.0]`. The clamp applies on read and on write so a stale UserDefaults value outside the bound still produces a sane render.
+
+Adjust the size at runtime:
+
+- **macOS:** Cmd-+ or Cmd-= grows the font by one point, Cmd-- shrinks by one point, Cmd-0 returns to the 12-point default. The shortcuts live on invisible buttons inside the terminal view and are active whenever the window is frontmost.
+- **iOS:** Pinch on the terminal area. Pinch composes with SwiftTerm's existing one-finger scroll gesture because pinch requires two fingers.
+
+**Scroll-to-bottom-on-input.** When you type while scrolled back in scrollback, Pulse snaps the viewport to the latest line *before* the keystroke renders. This is the standard terminal-emulator UX (Terminal.app, iTerm, tmux, screen all behave the same way); no preference exists because off-behaviour for this gesture would silently lose the operator's correlation between what they typed and what they see on screen.
+
+**Recording badge.** When you connect with a credential whose `recordSessions` flag is on, an SF Symbol `record.circle.fill` icon plus the word "Recording" appears in the status bar between the connection-status dot and the title. The badge is red but uses a distinct symbol shape so it cannot be mistaken for the red `.failed` status indicator. The badge clears automatically when the session ends (clean disconnect, server hang-up, window close).
+
+The badge tracks credential intent + session state. If the recording stack fails mid-session (encryption error, disk full, internal queue overflow), the writer transitions to a terminal stop and emits `session.recording.failed` in the audit log; the session continues but the badge stays on until the session itself ends. The audit log is the source of truth on whether bytes are actually being written; the badge is the operator-facing intent signal.
 
 ## Host-key mismatch
 
@@ -185,6 +213,22 @@ The sheet has a **90-second decision timeout**. If you walk away or get distract
 The full reject-reason vocabulary is documented in the ADR (`docs/architecture/0001-ssh-terminal-and-web-foundations.md` §7, "Reject-reason vocabulary").
 
 **The trust store is the source of truth.** The sheet only gathers your decision; the `SSHHostKeyDelegate` mutates `KnownHost` and emits the audit event. The UI never writes to the trust store directly. This means a future "Forget all hosts" gesture, or an automated policy that revokes certain hosts on alert, can run through the same delegate code path.
+
+**Lab procedure.** A repeatable end-to-end walk to verify the mismatch flow on a fresh build. Done on an Apple Silicon Mac with Remote Login enabled and a credential targeting the loopback dev Mac (`primaryIP = 127.0.0.1`).
+
+1. Fresh build of the current branch. Backup the dev Mac's sshd host keys: `sudo cp /etc/ssh/ssh_host_* /tmp/ssh-keys-backup/`.
+2. Open Pulse. Connect once via the device row context menu to populate the `KnownHost` row (TOFU pin). Confirm `host.pinned` lands in `log show --predicate 'subsystem == "pulse" AND category == "ssh.session"' --last 1m`.
+3. Disconnect. Rotate the sshd host keys on the dev Mac: `sudo /usr/bin/ssh-keygen -A` followed by `sudo /usr/sbin/launchctl kickstart -k system/com.openssh.sshd`.
+4. Reconnect from Pulse. The mismatch sheet appears displaying the stored fingerprint, the new fingerprint, and three actions.
+5. Walk each action in a fresh connection attempt (restart the connect-and-disconnect cycle for each):
+   - **Accept.** Click Accept. Confirm `host.mismatch.accepted` (warning level) lands in the audit log *before* any commit-related event. Confirm the next reconnection succeeds silently against the new pin (no sheet). To force the `.commit_failed` path, temporarily revoke write access to the SwiftData store (e.g. `chmod -w` on the container path) before clicking Accept; confirm both `host.mismatch.accepted` and `host.mismatch.accepted.commit_failed` (error) land, with leading-token-disjoint names (a substring rule on the intent does not match the failure line).
+   - **Reject.** Click Reject. Confirm `host.mismatch.rejected` (warning) with no `reason` field. Confirm the stored `KnownHost` row is unchanged (next reconnect surfaces the sheet again).
+   - **Forget.** Click Forget. Confirm `host.mismatch.forgotten` (warning) and that the `KnownHost` row is deleted (next reconnect TOFUs fresh and emits `host.pinned`).
+   - **90-second decision timeout.** Open the sheet and walk away without clicking. After 90 seconds, confirm `host.mismatch.rejected reason="decision_timeout"` lands and the sheet self-dismisses.
+   - **Cancellation.** Open the sheet and close the parent window via Cmd-W. Confirm `host.mismatch.rejected reason="cancelled"` lands *immediately* (not at the 90-second mark) and the sheet clears.
+6. Restore the original sshd host keys: `sudo cp /tmp/ssh-keys-backup/ssh_host_* /etc/ssh/ && sudo /usr/sbin/launchctl kickstart -k system/com.openssh.sshd`. Reconnect from Pulse and either Accept or Forget to clear the now-stale pin.
+
+If every action lands the expected events at the expected level with the expected token names, the mismatch flow is intact. Any deviation — especially `host.mismatch.accepted` landing *after* a `.commit_failed` event, or `cancelled` taking the full 90 seconds — is a Slice 5 regression to investigate before shipping.
 
 ## Session recording
 
@@ -219,7 +263,32 @@ Operators who need long-term audit archives outside the device should use the fu
 
 Filter the full set with `log show --predicate 'subsystem == "pulse" AND category BEGINSWITH "ssh"'`. Session bytes and key material are never carried in audit signal — only identifiers and outcomes.
 
-## iCloud sync
+**Lab procedure.** An end-to-end round-trip to verify the recording stack on a fresh build. Done on an Apple Silicon Mac with Touch ID enabled, Remote Login enabled, and a credential targeting the loopback dev Mac.
+
+1. In Settings → SSH, right-click a credential and toggle **Record sessions** on. Confirm `credential.recording.enabled` lands in `log show --predicate 'subsystem == "pulse" AND category == "ssh.credentials"' --last 1m`.
+2. Open the terminal against the dev Mac via the device row context menu. Expect two biometric prompts back-to-back per the "Connecting to a device" section — the first signs the SSH user-auth handshake, the second unwraps the recording wrapping key.
+3. With the terminal connected, confirm the recording badge (red `record.circle.fill` SF Symbol + "Recording" caption) appears in the status bar.
+4. Run a short interactive session that exercises the readline path: `ls`, `echo "lab-marker-$(date +%s)"`, type a sentence and use Backspace plus arrow keys to edit it before pressing Return.
+5. Close the terminal window. Confirm `session.recording.closed` lands with `recordCount`, `chainHeadHash`, and `durationMs`. Confirm the badge clears (visible in the status bar's `.disconnected` state).
+6. Inspect the file output:
+   ```
+   ls -la ~/Library/Application\ Support/Pulse/Sessions/dev-<device-id>/
+   ```
+   Confirm exactly one `.pulselog` plus one `.meta` per session, naming `<timestamp>_<sessionUUID>.{pulselog,meta}`. The `.meta` is JSON; open it and confirm `chain_head_hash`, `record_count`, `device_id`, `credential_id`, `opened_at`, `closed_at`, and `exit_cause` populate.
+7. Replay via the Debug menu's **Replay session…** action. Pick the just-finished `.meta`. Confirm:
+   - Touch ID / device passcode prompt fires before the first plaintext renders.
+   - `session.recording.replayUnwrapped` lands in `log show ... --category == "ssh.recording"`.
+   - The `lab-marker-…` line is visible in the replay output, in the same position it appeared during the live session.
+8. Tamper with the chain mid-file (test environment only):
+   ```
+   printf 'X' | dd of=~/Library/Application\ Support/Pulse/Sessions/dev-<id>/<timestamp>_<uuid>.pulselog bs=1 count=1 seek=200 conv=notrunc
+   ```
+   Replay the same `.meta` again. Confirm `session.recording.replayChainBroken brokenAtSeq=<N>` lands and that plaintext stops at sequence `<N>` rather than continuing past the break.
+9. (Cleanup) Toggle **Record sessions** off on the credential when finished. Confirm `credential.recording.disabled`.
+
+If every step matches expectations, the recording stack is intact end to end. Any deviation — particularly step 7's plaintext mismatch, or step 8 surfacing plaintext past the tamper point — is a Slice 4 regression to investigate before shipping.
+
+## No iCloud sync
 
 Nothing in Pulse's SSH credential model is syncable. Both tiers are `ThisDeviceOnly`. The `kSecAttrSynchronizable` flag is explicitly set to `false` on Secure Enclave keys (defence-in-depth — the default for the data-protection keychain is already non-syncing, but Pulse sets it explicitly so a future code change can't quietly opt in). Legacy keys use `AfterFirstUnlockThisDeviceOnly`, which is also non-syncing.
 
