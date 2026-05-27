@@ -86,7 +86,13 @@ struct DeviceRow: View {
 
             Button(action: {
                 if let device = device.first {
-                    openWindow(value: device.id)
+                    // Explicit `id: "ssh-terminal"` disambiguates this
+                    // call from Site View's `WindowGroup(for: Int64.self)`
+                    // — both scenes are keyed on Int64-valued ids, and
+                    // without the id this call routes by registration
+                    // order rather than by intent. See `SSHTerminalScene`
+                    // doc-comment for the full rationale.
+                    openWindow(id: "ssh-terminal", value: device.id)
                 }
             }) {
                 Label("Open SSH Terminal", systemImage: "terminal.fill")

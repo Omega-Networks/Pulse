@@ -302,7 +302,12 @@ struct SiteGraphView: View {
                         .background()
                         .onTapGesture {
                             if isInPopover {
-                                openWindow(value: siteId)
+                                // Explicit `id: "site-view"` so this
+                                // routes to the Site View scene even
+                                // though Site.ID and Device.ID both
+                                // resolve to Int64; see SSHTerminalScene
+                                // doc-comment for the routing rationale.
+                                openWindow(id: "site-view", value: siteId)
                             }
                             selectedDevice = nil
                         }

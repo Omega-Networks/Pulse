@@ -103,7 +103,11 @@ struct AnnotationView: View {
             //TODO: Add button to close sheet
             Button {
                 DispatchQueue.main.async {
-                    openWindow(value: site.id)
+                    // Explicit `id: "site-view"` so this routes to the
+                    // Site View scene even though Site.ID and Device.ID
+                    // both resolve to Int64; see SSHTerminalScene
+                    // doc-comment for the routing rationale.
+                    openWindow(id: "site-view", value: site.id)
                 }
             } label: {
                 Label("Open Topology View", systemImage: "network")

@@ -44,9 +44,12 @@ import UIKit
 ///
 /// Single-window-per-device is enforced by SwiftUI's
 /// `WindowGroup(for: Device.ID.self)` semantics for the
-/// device-backed path, not by this view: `openWindow(value: device.id)`
-/// activates the existing window for the same `Device.ID` rather than
-/// creating a duplicate. The ad-hoc path (driven from `DebugSSHWindow`)
+/// device-backed path, not by this view:
+/// `openWindow(id: "ssh-terminal", value: device.id)` activates the
+/// existing window for the same `Device.ID` rather than creating a
+/// duplicate. The explicit `id:` argument is required for routing
+/// disambiguation; see `SSHTerminalScene` for the rationale.
+/// The ad-hoc path (driven from `DebugSSHWindow`)
 /// is one connection at a time per debug window because the debug
 /// window itself is a singleton scene.
 ///
