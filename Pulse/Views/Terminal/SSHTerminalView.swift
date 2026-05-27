@@ -181,13 +181,14 @@ struct SSHTerminalView: View {
             // and a "Idle" pill would mis-signal "something failed".
             ToolbarItem(id: "status-pill", placement: .navigation) {
                 if status != .idle {
+                    let copy = Self.statusPillCopy(for: status)
                     HStack(spacing: 6) {
                         statusIndicator
-                        Text(statusPillCopy)
+                        Text(copy)
                             .font(.caption.weight(.medium))
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Connection status: \(statusPillCopy)")
+                    .accessibilityLabel("Connection status: \(copy)")
                 }
             }
             // Recording badge. Promoted from the in-view status bar
@@ -467,14 +468,30 @@ struct SSHTerminalView: View {
         .padding(.vertical, 8)
     }
 
+    /// Shape of the toolbar's context-sensitive primary action.
+    /// Pure value type so the status → action mapping is testable
+    /// without rendering the toolbar; `primaryActionButton` reads
+    /// `primaryActionShape(for:)` and renders the matching button.
+    enum PrimaryActionShape: Equatable, Sendable {
+        case disconnect
+        case reconnect
+    }
+
     /// One-word status copy for the toolbar status pill. Pinned in
     /// the ADR's Slice 8a routing-disambiguation note because
     /// operator-facing copy is part of the window contract: silent
     /// edits to these strings would land in a release without
-    /// review. The `.idle` case is unreachable here because the
-    /// toolbar item hides the pill at `.idle`; included for
-    /// exhaustiveness.
-    private var statusPillCopy: String {
+    /// review. Exposed as a `static func` over `ConnectionStatus`
+    /// (rather than an instance computed property reading `self.status`)
+    /// so the mapping is testable as a pure function without
+    /// constructing the view; matches the test-seam pattern used by
+    /// `autoFireAttempt` and `applyDeviceDefaultsIfRequested` in
+    /// Slices 7 and 8.
+    ///
+    /// `.idle` is mapped to "Idle" for exhaustiveness even though
+    /// the toolbar hides the pill in that state; the contract is
+    /// pinned for the full enum surface.
+    static func statusPillCopy(for status: ConnectionStatus) -> String {
         switch status {
         case .idle:         return "Idle"
         case .connecting:   return "Connecting"
@@ -484,21 +501,40 @@ struct SSHTerminalView: View {
         }
     }
 
+    /// Primary toolbar action for the given connection status, or
+    /// nil when no primary action applies (`.idle`, `.connecting`).
+    /// Pure mapping so the toolbar-action presence contract is
+    /// testable; matches `statusPillCopy(for:)`'s rationale.
+    ///
+    /// - `.connected` → `.disconnect` (dismisses the window;
+    ///   `.task` cancels, deferred `client.close()` runs).
+    /// - `.disconnected`, `.failed` → `.reconnect` (re-fires
+    ///   `runConnectionLifecycle` via `submitConnectionAttempt`).
+    /// - `.idle`, `.connecting` → nil (no action yet).
+    static func primaryActionShape(for status: ConnectionStatus) -> PrimaryActionShape? {
+        switch status {
+        case .connected:                    return .disconnect
+        case .disconnected, .failed:        return .reconnect
+        case .idle, .connecting:            return nil
+        }
+    }
+
     /// Context-sensitive toolbar primary action. The button's label
-    /// and action both depend on the live `status`; placement is
-    /// pinned by an explicit `ToolbarItem(id:)` so SwiftUI's
-    /// toolbar diffing animates the label change rather than
-    /// reflowing surrounding items.
+    /// and action both depend on the live `status` via
+    /// `primaryActionShape(for:)`; placement is pinned by an
+    /// explicit `ToolbarItem(id:)` so SwiftUI's toolbar diffing
+    /// animates the label change rather than reflowing surrounding
+    /// items.
     @ViewBuilder
     private var primaryActionButton: some View {
-        switch status {
-        case .connected:
+        switch Self.primaryActionShape(for: status) {
+        case .disconnect:
             Button("Disconnect") { dismiss() }
                 .help("Close this window and tear down the SSH session.")
-        case .disconnected, .failed:
+        case .reconnect:
             Button("Reconnect") { submitConnectionAttempt() }
                 .help("Re-fire the connection lifecycle using the form's captured username and credential.")
-        case .idle, .connecting:
+        case .none:
             EmptyView()
         }
     }

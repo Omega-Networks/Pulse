@@ -494,4 +494,79 @@ final class SSHConnectFormTests: XCTestCase {
         device.primaryIP = "/32"
         XCTAssertEqual(device.primaryIPAddress, "")
     }
+
+    // MARK: - Toolbar contract (statusPillCopy + primaryActionShape)
+    //
+    // The toolbar status pill's one-word copy and the primary-action
+    // button's presence are operator-facing contracts pinned in the
+    // ADR's Slice 8a routing-disambiguation note. A silent string
+    // change to the pill copy, or a status-to-action mapping
+    // regression that hid the Disconnect / Reconnect button at the
+    // wrong moment, would land in a release without review. These
+    // tests pin both contracts as pure functions over the
+    // `ConnectionStatus` enum.
+
+    /// `.idle` maps to "Idle" for exhaustiveness even though the
+    /// toolbar hides the pill in that state. The mapping is pinned
+    /// for the full enum surface so a future maintainer who decides
+    /// to surface the pill in `.idle` doesn't have to re-derive the
+    /// copy.
+    func testStatusPillCopyIdle() {
+        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .idle), "Idle")
+    }
+
+    func testStatusPillCopyConnecting() {
+        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .connecting), "Connecting")
+    }
+
+    func testStatusPillCopyConnected() {
+        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .connected), "Connected")
+    }
+
+    func testStatusPillCopyDisconnected() {
+        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .disconnected("cause")), "Disconnected")
+    }
+
+    func testStatusPillCopyFailed() {
+        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .failed("reason")), "Failed")
+    }
+
+    /// `.idle` and `.connecting` produce no primary action — the
+    /// toolbar shows neither Disconnect nor Reconnect at these
+    /// states. Pre-connect actions live in the in-view form; the
+    /// in-flight handshake is visualised by the status pill turning
+    /// yellow, no action button.
+    func testPrimaryActionShapeIdleIsNil() {
+        XCTAssertNil(SSHTerminalView.primaryActionShape(for: .idle))
+    }
+
+    func testPrimaryActionShapeConnectingIsNil() {
+        XCTAssertNil(SSHTerminalView.primaryActionShape(for: .connecting))
+    }
+
+    /// `.connected` maps to `.disconnect`. The action's behaviour
+    /// (calls `dismiss()`, drives `.task` cancellation, fires the
+    /// deferred `client.close()`) is wired in `primaryActionButton`;
+    /// the mapping pinned here is the "which action is showing"
+    /// contract.
+    func testPrimaryActionShapeConnectedIsDisconnect() {
+        XCTAssertEqual(SSHTerminalView.primaryActionShape(for: .connected), .disconnect)
+    }
+
+    /// `.disconnected` maps to `.reconnect`. Operator can re-fire
+    /// the lifecycle from the captured form values without
+    /// returning to the form.
+    func testPrimaryActionShapeDisconnectedIsReconnect() {
+        XCTAssertEqual(SSHTerminalView.primaryActionShape(for: .disconnected("cause")), .reconnect)
+    }
+
+    /// `.failed` also maps to `.reconnect`. Same retry path; the
+    /// in-view form re-renders with the error banner above so the
+    /// operator can fix the username or credential and click
+    /// Reconnect in the toolbar, OR Connect on the form. Two paths
+    /// to the same re-fire (toolbar uses captured values; form
+    /// re-binds them); deliberate complements.
+    func testPrimaryActionShapeFailedIsReconnect() {
+        XCTAssertEqual(SSHTerminalView.primaryActionShape(for: .failed("reason")), .reconnect)
+    }
 }
