@@ -165,6 +165,71 @@ struct SSHTerminalView: View {
         }
         .frame(minWidth: 720, minHeight: 420)
         .background(fontSizeShortcuts)
+        // Window title tracks the live device name. `connectionTitle`
+        // resolves to `device?.name ?? "Device <id>"` for the device
+        // path or `username@host:port` for ad-hoc; either way the
+        // title bar reflects the operator's mental model of the
+        // session target. Without this modifier the window inherits
+        // the WindowGroup's static "SSH Terminal" string or, worse,
+        // falls back to "Unknown" under certain restoration paths.
+        .navigationTitle(connectionTitle)
+        .toolbar {
+            // Status pill. The colored dot from `statusIndicator`
+            // plus a one-word `statusPillCopy` (mapped at the bottom
+            // of this view). Hidden when `.idle` because the in-view
+            // connect form is the primary affordance at that state
+            // and a "Idle" pill would mis-signal "something failed".
+            ToolbarItem(id: "status-pill", placement: .navigation) {
+                if status != .idle {
+                    HStack(spacing: 6) {
+                        statusIndicator
+                        Text(statusPillCopy)
+                            .font(.caption.weight(.medium))
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Connection status: \(statusPillCopy)")
+                }
+            }
+            // Recording badge. Promoted from the in-view status bar
+            // into the toolbar where session-state indicators
+            // conventionally live (matches Terminal.app, iTerm). The
+            // `isRecording && status == .connected` conjunction
+            // collapses the brief window between `signalExit` firing
+            // the recording-flip task and the lifecycle setting
+            // `status = .disconnected(...)` where both states would
+            // otherwise coexist; same guard as the original in-view
+            // placement.
+            ToolbarItem(id: "recording-badge", placement: .primaryAction) {
+                if isRecording && status == .connected {
+                    recordingBadge
+                }
+            }
+            // Primary action. Context-sensitive:
+            //
+            //   .connected         → "Disconnect" (dismisses window;
+            //                        `.task` cancels, deferred
+            //                        `client.close()` runs, the SSH
+            //                        session tears down)
+            //   .disconnected      → "Reconnect" (re-fires lifecycle
+            //                        from captured form values via
+            //                        `submitConnectionAttempt`)
+            //   .failed            → "Reconnect" (same)
+            //   .idle / .connecting → hidden
+            //
+            // The `.disconnected` state already renders an in-view
+            // "Close" button at `terminalArea`'s .disconnected branch.
+            // Toolbar "Reconnect" + in-view "Close" are deliberate
+            // complements: toolbar offers session restart against the
+            // captured form values; in-view offers window-close.
+            // Removing either is a behavioural regression. The
+            // Reconnect path re-uses `submitConnectionAttempt` which
+            // mints a fresh nonce and the previous lifecycle's
+            // `defer { client.close() }` already nil'd `sshClient`,
+            // so the new attempt builds a fresh client cleanly.
+            ToolbarItem(id: "primary-action", placement: .primaryAction) {
+                primaryActionButton
+            }
+        }
         // First-render setup. Pre-fill the form from device defaults
         // (if present) and synthesise an auto-fire attempt when the
         // device has both defaults set and the credential exists in
@@ -371,21 +436,16 @@ struct SSHTerminalView: View {
 
     // MARK: View sections
 
+    /// In-view status bar. Carries the device name and the long-form
+    /// status description ("Connecting to 192.0.2.1:22…", "Disconnected:
+    /// channelInactive", etc.) that the space-constrained toolbar
+    /// status pill cannot. The colored status dot and the recording
+    /// badge live in the window toolbar — the toolbar is the single
+    /// source for those indicators, and surfacing them twice would
+    /// duplicate without adding value. The in-view bar therefore
+    /// collapses to a two-line label.
     private var statusBar: some View {
         HStack(spacing: 12) {
-            statusIndicator
-            // The badge is gated on both `isRecording` and the live
-            // connection state so the disconnect transition does not
-            // briefly render a "Recording" badge alongside the
-            // disconnected status text. Without the `.connected`
-            // guard there is one render pass between `signalExit`
-            // firing the recording-flip task and the lifecycle
-            // setting `status = .disconnected(...)` where both states
-            // coexist; the guard collapses that window without
-            // requiring synchronisation with the exit-handler queue.
-            if isRecording && status == .connected {
-                recordingBadge
-            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(connectionTitle)
                     .font(.headline)
@@ -397,6 +457,42 @@ struct SSHTerminalView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// One-word status copy for the toolbar status pill. Pinned in
+    /// the ADR's Slice 8a routing-disambiguation note because
+    /// operator-facing copy is part of the window contract: silent
+    /// edits to these strings would land in a release without
+    /// review. The `.idle` case is unreachable here because the
+    /// toolbar item hides the pill at `.idle`; included for
+    /// exhaustiveness.
+    private var statusPillCopy: String {
+        switch status {
+        case .idle:         return "Idle"
+        case .connecting:   return "Connecting"
+        case .connected:    return "Connected"
+        case .disconnected: return "Disconnected"
+        case .failed:       return "Failed"
+        }
+    }
+
+    /// Context-sensitive toolbar primary action. The button's label
+    /// and action both depend on the live `status`; placement is
+    /// pinned by an explicit `ToolbarItem(id:)` so SwiftUI's
+    /// toolbar diffing animates the label change rather than
+    /// reflowing surrounding items.
+    @ViewBuilder
+    private var primaryActionButton: some View {
+        switch status {
+        case .connected:
+            Button("Disconnect") { dismiss() }
+                .help("Close this window and tear down the SSH session.")
+        case .disconnected, .failed:
+            Button("Reconnect") { submitConnectionAttempt() }
+                .help("Re-fire the connection lifecycle using the form's captured username and credential.")
+        case .idle, .connecting:
+            EmptyView()
+        }
     }
 
     /// Hidden keyboard-shortcut harness for macOS Cmd-+ / Cmd-= /
@@ -429,11 +525,14 @@ struct SSHTerminalView: View {
     #endif
 
     /// Visible while the credential's `recordSessions` flag is on and
-    /// the session is connected. The SF Symbol `record.circle.fill` is
-    /// a distinct shape from the connection-status dot's plain circle,
-    /// so the badge cannot be mistaken for the red `.failed` status
-    /// indicator even at small statusBar sizes. Bound off by a third
-    /// exit handler registered against `SSHSession.addExitHandler` in
+    /// the session is connected. Lives in the window toolbar (see the
+    /// `recording-badge` ToolbarItem on `body`), not the in-view
+    /// status bar: the toolbar is where session-state indicators
+    /// conventionally appear in terminal apps (Terminal.app, iTerm).
+    /// The SF Symbol `record.circle.fill` is a distinct shape from the
+    /// status pill's plain circle so the badge cannot be mistaken for
+    /// the red `.failed` status indicator. Bound off by a third exit
+    /// handler registered against `SSHSession.addExitHandler` in
     /// `runConnectionLifecycle`; the byte pump's consumer API stays
     /// unwidened.
     private var recordingBadge: some View {

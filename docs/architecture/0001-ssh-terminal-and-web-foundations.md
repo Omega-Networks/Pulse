@@ -384,6 +384,41 @@ Explicit deletions from Slice 8 scope (recorded so a future slice does not re-de
 - Screen-recording prevention (queued separately).
 - The cosmetic `recording-badge && status == .connected` gating. Cosmetic; the existing conjunction guard is sufficient.
 
+## Slice 8a routing-disambiguation note
+
+Slice 8a (proper terminal window) surfaced a routing collision worth recording so future scenes do not re-derive the trap: `Device.ID` and `Site.ID` both resolve to `Int64` (the default `Identifiable.ID` for `@Model` classes whose `id: Int64`), and SwiftUI's `WindowGroup(for:)` keys on the Swift type rather than the textual declaration. Two `WindowGroup(for: Int64.self)` registrations collide, and `openWindow(value: someInt64)` matches by **registration order**, not by intent — Site View registered before SSHTerminalScene in `PulseApp.body`, so device-targeted `openWindow(value: device.id)` calls from `DeviceRow` silently mis-routed into Site View with the device's id as a stale "siteId" that resolved to no Site row. The window rendered Site View's chrome around an empty content slot; the title bar fell back to "Unknown".
+
+The fix is symmetric: every `WindowGroup(for: Int64.self)` scene gets an explicit `id:`, and every `openWindow` call site passes the matching `id:`. SwiftUI's `openWindow(id:value:)` targets the named scene exactly, regardless of value-type collisions. SSHTerminalScene gets `id: "ssh-terminal"`; the Site View scene at `PulseApp.swift:171` gets `id: "site-view"`. Three call sites updated: `DeviceRow.swift:89`, `SiteGraphView.swift:305`, `AnnotationView.swift:106`.
+
+Asymmetric (only SSH gets an id) was considered and rejected: it trades a routing-order bug for a registration-order fragility, where any future scene addition silently re-routes the un-id'd calls. The cost of the symmetric fix is three extra single-line edits; the benefit is that registration order in `PulseApp.body` becomes irrelevant to correctness.
+
+**Window chrome contract (macOS).** `SSHTerminalScene` chains `.windowResizability(.contentSize)` (the existing `.frame(minWidth: 720, minHeight: 420)` on `SSHTerminalView` becomes the enforced window minimum; 720x420 is deliberately oversized vs the 80x24 cell grid at default font to give the recording-state toolbar item breathing room) and `.windowToolbarStyle(.unifiedCompact(showsTitle: true))` (title sits inline with toolbar items, matching Terminal.app and iTerm). Both modifiers are macOS-only; iOS scene wiring (deferred) inherits the `.toolbar` declaration on the view body.
+
+**Operator-facing window contract** (pinned here because the toolbar copy is part of the contract):
+
+| `ConnectionStatus` | Status pill copy | Toolbar primary action |
+|---|---|---|
+| `.idle` | (pill hidden) | (button hidden) |
+| `.connecting` | Connecting | (button hidden) |
+| `.connected` | Connected | Disconnect |
+| `.disconnected` | Disconnected | Reconnect |
+| `.failed` | Failed | Reconnect |
+
+Each toolbar item carries an explicit `ToolbarItem(id:)` (`status-pill`, `recording-badge`, `primary-action`) so SwiftUI's toolbar diffing animates the label changes (Disconnect → Reconnect on disconnect) rather than reflowing surrounding items. The toolbar Reconnect button and the in-view Close button at `.disconnected` are **deliberate complements**: toolbar offers session restart against the captured form values via `submitConnectionAttempt` (which mints a fresh nonce; the previous lifecycle's `defer { client.close() }` already nil'd `sshClient`, so the new attempt builds a fresh client cleanly), in-view offers window-close. Removing either is a behavioural regression.
+
+The recording badge moves out of the in-view status bar into the window toolbar where session-state indicators conventionally live (matches Terminal.app, iTerm). The in-view status bar shrinks to the device name plus the long-form status description ("Connecting to 192.0.2.1:22…") that the space-constrained toolbar pill cannot carry; the colored status dot lives in the toolbar pill, not the in-view bar.
+
+**Structural gates** (positive shape, fail loudly when a new call site forgets the id):
+
+```bash
+grep -rn 'openWindow.*device\.id' Pulse | grep -v 'id: "ssh-terminal"'
+grep -rn 'openWindow.*site\.id\|openWindow.*siteId' Pulse | grep -v 'id: "site-view"'
+```
+
+Both must return empty (modulo doc-comment text).
+
+**Slice 8b: nominal-struct wrapper for window routing.** The right structural follow-up: wrap `Device.ID` and `Site.ID` in distinct nominal struct types (`DeviceWindowTarget { let id: Device.ID }`, `SiteWindowTarget { let id: Site.ID }`) so the WindowGroup value type is unambiguous and a future `WindowGroup(for: Int64.self)` addition becomes a compile error rather than a silent mis-route. Cost: ~5 call-site updates, 2 small struct types, one-time state-restoration reset (the WindowGroup value type changes; SwiftUI's restoration storage from the prior build no longer decodes). Benefit: collision becomes a compile error rather than a discipline gate. Deferred to a follow-up slice; the symmetric `id:` fix in Slice 8a is sufficient for today's bug and for ordering changes in `PulseApp.body`.
+
 ## Forward-looking implementation discipline
 
 The SSH foundations implementation surfaced three structural cascades that were, in retrospect, knowable from public-API inspection before the plan was locked. The rolling pause-decide-resume discipline contained each cascade to one extra commit instead of multiple review rounds, but the cleaner cost reduction is earlier verification.

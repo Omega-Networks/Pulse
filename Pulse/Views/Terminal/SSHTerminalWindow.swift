@@ -60,23 +60,57 @@ struct SSHTerminalScene: Scene {
 
     let modelContainer: ModelContainer
 
-    var body: some Scene {
-        // The scene shape is identical on macOS and iOS; the platform
-        // difference is whether anything currently routes into it. On
-        // iOS the device-row gesture that calls
-        // `openWindow(id:value:)` arrives in a future slice; the scene
-        // registration itself is platform-agnostic.
-        WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self) { $deviceID in
-            if let id = deviceID {
-                SSHTerminalView(connection: .device(id))
-                    .modelContainer(modelContainer)
-            } else {
-                // SwiftUI can instantiate the scene with a nil value
-                // during restoration. Show an empty placeholder rather
-                // than crashing on a missing identity.
-                Text("No device selected.")
-                    .padding()
-            }
+    /// Scene-body content closure, factored out so the `#if os(macOS)`
+    /// branches below stay focused on the modifier chain and the body
+    /// itself is declared once.
+    @ViewBuilder
+    private func sceneContent(for deviceID: Device.ID?) -> some View {
+        if let id = deviceID {
+            SSHTerminalView(connection: .device(id))
+                .modelContainer(modelContainer)
+        } else {
+            // SwiftUI can instantiate the scene with a nil value
+            // during restoration. Show an empty placeholder rather
+            // than crashing on a missing identity.
+            Text("No device selected.")
+                .padding()
         }
     }
+
+    #if os(macOS)
+    var body: some Scene {
+        // Terminal-shaped window chrome. Two macOS-only modifiers
+        // chained on the WindowGroup:
+        //
+        // - `.windowResizability(.contentSize)` makes the
+        //   `SSHTerminalView`'s existing `.frame(minWidth: 720,
+        //   minHeight: 420)` the window's enforced minimum. The
+        //   720x420 floor is deliberately oversized vs the 80x24 cell
+        //   grid (which is closer to 580x360 at the default font
+        //   size); the surplus gives the recording-state toolbar item
+        //   room to render without the title eliding.
+        //
+        // - `.windowToolbarStyle(.unifiedCompact(showsTitle: true))`
+        //   collapses the title bar and toolbar into a single compact
+        //   row, matching Terminal.app and iTerm's chrome conventions.
+        //   The toolbar items declared on `SSHTerminalView.body`
+        //   (status pill, recording badge, primary action) render in
+        //   this row.
+        //
+        // The iOS scene wiring (future slice) inherits the same
+        // `.toolbar` declaration on the view body and renders it via
+        // the platform-default toolbar surface.
+        WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self) { $deviceID in
+            sceneContent(for: deviceID)
+        }
+        .windowResizability(.contentSize)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: true))
+    }
+    #else
+    var body: some Scene {
+        WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self) { $deviceID in
+            sceneContent(for: deviceID)
+        }
+    }
+    #endif
 }
