@@ -95,6 +95,7 @@
 		A11CAFE000000000000011F /* HostKeyMismatchSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000120 /* HostKeyMismatchSheet.swift */; };
 		A11CAFE0000000000000121 /* HostKeyMismatchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000122 /* HostKeyMismatchCoordinator.swift */; };
 		A11CAFE000000000000012F /* SSHConnectForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000130 /* SSHConnectForm.swift */; };
+		A11CAFE0000000000000131 /* TerminalBellController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000132 /* TerminalBellController.swift */; };
 		A11CAFE0000000000000123 /* SSHCredentialTier+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */; };
 		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
 		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
@@ -288,6 +289,7 @@
 		A11CAFE0000000000000120 /* HostKeyMismatchSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyMismatchSheet.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000122 /* HostKeyMismatchCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyMismatchCoordinator.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000130 /* SSHConnectForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnectForm.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000132 /* TerminalBellController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalBellController.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SSHCredentialTier+Extensions.swift"; sourceTree = "<group>"; };
 		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
 		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
@@ -775,6 +777,7 @@
 				A11CAFE0000000000000120 /* HostKeyMismatchSheet.swift */,
 				A11CAFE0000000000000122 /* HostKeyMismatchCoordinator.swift */,
 				A11CAFE0000000000000130 /* SSHConnectForm.swift */,
+				A11CAFE0000000000000132 /* TerminalBellController.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -1041,6 +1044,7 @@
 				A11CAFE000000000000011F /* HostKeyMismatchSheet.swift in Sources */,
 				A11CAFE0000000000000121 /* HostKeyMismatchCoordinator.swift in Sources */,
 				A11CAFE000000000000012F /* SSHConnectForm.swift in Sources */,
+				A11CAFE0000000000000131 /* TerminalBellController.swift in Sources */,
 				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
 				A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */,
 				A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */,

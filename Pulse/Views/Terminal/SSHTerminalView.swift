@@ -159,8 +159,7 @@ struct SSHTerminalView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            statusBar
-            Divider()
+            connectionEndpointStrip
             terminalArea
         }
         .frame(minWidth: 720, minHeight: 420)
@@ -173,64 +172,7 @@ struct SSHTerminalView: View {
         // the WindowGroup's static "SSH Terminal" string or, worse,
         // falls back to "Unknown" under certain restoration paths.
         .navigationTitle(connectionTitle)
-        .toolbar {
-            // Status pill. The colored dot from `statusIndicator`
-            // plus a one-word `statusPillCopy` (mapped at the bottom
-            // of this view). Hidden when `.idle` because the in-view
-            // connect form is the primary affordance at that state
-            // and a "Idle" pill would mis-signal "something failed".
-            ToolbarItem(id: "status-pill", placement: .navigation) {
-                if status != .idle {
-                    let copy = Self.statusPillCopy(for: status)
-                    HStack(spacing: 6) {
-                        statusIndicator
-                        Text(copy)
-                            .font(.caption.weight(.medium))
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Connection status: \(copy)")
-                }
-            }
-            // Recording badge. Promoted from the in-view status bar
-            // into the toolbar where session-state indicators
-            // conventionally live (matches Terminal.app, iTerm). The
-            // `isRecording && status == .connected` conjunction
-            // collapses the brief window between `signalExit` firing
-            // the recording-flip task and the lifecycle setting
-            // `status = .disconnected(...)` where both states would
-            // otherwise coexist; same guard as the original in-view
-            // placement.
-            ToolbarItem(id: "recording-badge", placement: .primaryAction) {
-                if isRecording && status == .connected {
-                    recordingBadge
-                }
-            }
-            // Primary action. Context-sensitive:
-            //
-            //   .connected         → "Disconnect" (dismisses window;
-            //                        `.task` cancels, deferred
-            //                        `client.close()` runs, the SSH
-            //                        session tears down)
-            //   .disconnected      → "Reconnect" (re-fires lifecycle
-            //                        from captured form values via
-            //                        `submitConnectionAttempt`)
-            //   .failed            → "Reconnect" (same)
-            //   .idle / .connecting → hidden
-            //
-            // The `.disconnected` state already renders an in-view
-            // "Close" button at `terminalArea`'s .disconnected branch.
-            // Toolbar "Reconnect" + in-view "Close" are deliberate
-            // complements: toolbar offers session restart against the
-            // captured form values; in-view offers window-close.
-            // Removing either is a behavioural regression. The
-            // Reconnect path re-uses `submitConnectionAttempt` which
-            // mints a fresh nonce and the previous lifecycle's
-            // `defer { client.close() }` already nil'd `sshClient`,
-            // so the new attempt builds a fresh client cleanly.
-            ToolbarItem(id: "primary-action", placement: .primaryAction) {
-                primaryActionButton
-            }
-        }
+        .toolbar { sshTerminalToolbar }
         // First-render setup. Pre-fill the form from device defaults
         // (if present) and synthesise an auto-fire attempt when the
         // device has both defaults set and the credential exists in
@@ -445,27 +387,48 @@ struct SSHTerminalView: View {
 
     // MARK: View sections
 
-    /// In-view status bar. Carries the device name and the long-form
-    /// status description ("Connecting to 192.0.2.1:22…", "Disconnected:
-    /// channelInactive", etc.) that the space-constrained toolbar
-    /// status pill cannot. The colored status dot and the recording
-    /// badge live in the window toolbar — the toolbar is the single
-    /// source for those indicators, and surfacing them twice would
-    /// duplicate without adding value. The in-view bar therefore
-    /// collapses to a two-line label.
-    private var statusBar: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(connectionTitle)
-                    .font(.headline)
-                Text(statusDescription)
-                    .font(.caption)
+    /// Connection-endpoint indicator. Single-line monospaced caption
+    /// that shows the resolved `host:port` at `.connected`, empty
+    /// elsewhere. Replaces the prior in-view status bar which
+    /// duplicated the device name (already in the toolbar
+    /// navigationTitle) and the status word (already in the toolbar
+    /// status pill).
+    ///
+    /// **Why a single-line endpoint strip remains.** The toolbar
+    /// promotes the device name and the status word, but the host
+    /// itself is not surfaced anywhere in the toolbar. Removing the
+    /// in-view bar entirely would lose the operator-visible host
+    /// string, which is the "where am I typing" check that closes
+    /// two session-pinning threats:
+    ///
+    /// - Mistaken-target keystrokes. Two terminals open to
+    ///   similarly-named devices (template-deployed NetBox sites
+    ///   produce names like `OMG-0001-01-SR01` and
+    ///   `OMG-0002-01-SR01`); operator Cmd-Tabs and types a
+    ///   destructive command into the wrong shell. The host string
+    ///   is the structural defence; the device name alone is not
+    ///   sufficient under naming-collision conditions.
+    /// - Mid-session re-IP. A NetBox sync mutates `Device.primaryIP`
+    ///   while the session is connected; the endpoint strip shows
+    ///   the actual connected host (resolved at connect time),
+    ///   giving the operator visible evidence the row and the
+    ///   session have diverged.
+    ///
+    /// The accessibility label spells out the endpoint so VoiceOver
+    /// readers get the same session-pinning signal.
+    @ViewBuilder
+    private var connectionEndpointStrip: some View {
+        if status == .connected, let host = connectionHost {
+            HStack {
+                Text("\(host):\(connectionPort)")
+                    .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .accessibilityLabel("Connected endpoint: \(host) port \(connectionPort)")
+                Spacer()
             }
-            Spacer()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     /// Shape of the toolbar's context-sensitive primary action.
@@ -536,6 +499,56 @@ struct SSHTerminalView: View {
                 .help("Re-fire the connection lifecycle using the form's captured username and credential.")
         case .none:
             EmptyView()
+        }
+    }
+
+    // MARK: - Toolbar
+
+    /// Window toolbar content. Extracted from `body`'s inline
+    /// `.toolbar { ... }` block so the body shrinks to a clean
+    /// composition and the toolbar's identity is named — the three
+    /// explicit `ToolbarItem(id:)` declarations match SwiftUI's
+    /// diffing requirements for stable item identity across status
+    /// transitions.
+    ///
+    /// Items, in placement order:
+    /// - `status-pill` (.navigation): colored dot from
+    ///   `statusIndicator` plus one-word `Self.statusPillCopy(for:)`.
+    ///   Hidden at `.idle` (the in-view connect form is the primary
+    ///   affordance there and an "Idle" pill would mis-signal
+    ///   failure).
+    /// - `recording-badge` (.primaryAction): the existing
+    ///   `recordingBadge` view. Gated on `isRecording && status ==
+    ///   .connected` to collapse the brief one-render-pass window
+    ///   between `signalExit` firing the recording-flip task and
+    ///   the lifecycle's `.disconnected` transition.
+    /// - `primary-action` (.primaryAction): context-sensitive
+    ///   Disconnect / Reconnect button via `primaryActionButton`,
+    ///   driven by `Self.primaryActionShape(for:)`. The
+    ///   `.disconnected` branch keeps its in-view "Close" button as
+    ///   a deliberate complement (toolbar offers session restart,
+    ///   in-view offers window-close).
+    @ToolbarContentBuilder
+    private var sshTerminalToolbar: some ToolbarContent {
+        ToolbarItem(id: "status-pill", placement: .navigation) {
+            if status != .idle {
+                let copy = Self.statusPillCopy(for: status)
+                HStack(spacing: 6) {
+                    statusIndicator
+                    Text(copy)
+                        .font(.caption.weight(.medium))
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Connection status: \(copy)")
+            }
+        }
+        ToolbarItem(id: "recording-badge", placement: .primaryAction) {
+            if isRecording && status == .connected {
+                recordingBadge
+            }
+        }
+        ToolbarItem(id: "primary-action", placement: .primaryAction) {
+            primaryActionButton
         }
     }
 
@@ -1205,99 +1218,6 @@ struct SSHTerminalView: View {
     }
 }
 
-// MARK: - Bell helpers
-
-/// Fires the platform-correct audible bell. macOS uses `NSSound.beep`
-/// which respects the operator's Sound preferences (alert sound,
-/// system volume) so the bell composes with macOS-wide audio settings.
-/// iOS uses a warning haptic instead of audio because most ops happen
-/// on devices in silent mode; the haptic is registered as "warning"
-/// rather than "notification" so it does not also trigger the iOS
-/// notification sound the latter would normally pair with.
-@MainActor
-func fireAudibleBell() {
-    #if os(macOS)
-    NSSound.beep()
-    #else
-    let generator = UINotificationFeedbackGenerator()
-    generator.notificationOccurred(.warning)
-    #endif
-}
-
-/// Drives both the audible bell rate-limit and the visual-bell flash
-/// overlay for `SSHTerminalView.terminalArea`. Lives in a reference
-/// type so the @Sendable bell closure captures the controller rather
-/// than the View struct's @State; @State capture across @Sendable
-/// closure boundaries is fragile in Swift 6 strict concurrency, and a
-/// tiny @MainActor class is simpler than fighting the type system.
-///
-/// **Why both responsibilities here.** The visual flash gets natural
-/// coalescing for free via `resetTask?.cancel()` — overlapping bells
-/// hold the overlay at full opacity until the storm subsides, then
-/// fade cleanly. The audible path needs its own gate because
-/// `NSSound.beep()` and `UINotificationFeedbackGenerator` queue per
-/// call with no built-in coalesce, so a server sending `\a` in a loop
-/// would produce one beep per event — operator-disrupting at best,
-/// weaponisable against an open-plan ops room at worst. The 250 ms
-/// gate caps the audible rate at ~4 Hz, which is faster than a human
-/// can distinguish individual beeps anyway but slow enough to remain
-/// recognisable as a bell rather than a continuous tone.
-///
-/// File-scope (no `private`) so `@testable import Pulse` reaches the
-/// type — the rate-limit gate is a property the slice exists to
-/// deliver and tests pay rent on confirming it holds.
-@MainActor
-final class TerminalBellController: ObservableObject {
-
-    /// Minimum gap between audible bell firings. Set on the type so
-    /// tests can reference the same constant rather than hard-coding
-    /// the duration, and any future tuning lands in one place.
-    static let audibleBellGate: TimeInterval = 0.25
-
-    @Published var isFlashing = false
-
-    private var resetTask: Task<Void, Never>?
-
-    /// Timestamp of the last audible bell that made it past the gate.
-    /// `nil` until the first request. Bells within `audibleBellGate`
-    /// of this value are dropped silently.
-    private var lastAudibleAt: Date?
-
-    /// Test seam. Counts every audible bell that actually fired
-    /// through the gate (i.e. was *not* rate-limited). Tests assert
-    /// the gate by triggering N bells inside the window and checking
-    /// this value equals 1.
-    private(set) var audibleBellFireCount: Int = 0
-
-    /// Audible bell request. Drops the request silently when the
-    /// previous audible fired within `audibleBellGate`. Otherwise
-    /// records the time, increments the test-observable counter, and
-    /// invokes the platform helper. The `now:` parameter is the
-    /// inject-the-clock test seam; production callers leave it at the
-    /// default.
-    func requestAudibleBell(now: Date = Date()) {
-        if let last = lastAudibleAt, now.timeIntervalSince(last) < Self.audibleBellGate {
-            return
-        }
-        lastAudibleAt = now
-        audibleBellFireCount += 1
-        fireAudibleBell()
-    }
-
-    /// 120 ms visual flash beat. Long enough to register peripherally;
-    /// short enough not to obscure terminal contents on a server
-    /// emitting repeated bells (e.g. a runaway script). Repeated calls
-    /// cancel the in-flight reset task so the overlay holds at full
-    /// opacity until the bell storm subsides, then fades cleanly. No
-    /// rate gate is needed here because the cancel-and-reschedule
-    /// pattern coalesces visually for free.
-    func trigger() {
-        isFlashing = true
-        resetTask?.cancel()
-        resetTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(120))
-            guard !Task.isCancelled else { return }
-            self?.isFlashing = false
-        }
-    }
-}
+// `TerminalBellController` and `fireAudibleBell()` live in
+// `TerminalBellController.swift` per the Omega Swift convention of
+// one type per file for non-view types.
