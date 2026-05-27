@@ -84,11 +84,37 @@ struct SSHConnectForm: View {
     /// `.failed`. Nil at `.idle` (first attempt).
     let errorMessage: String?
 
+    /// Whether the form is rendering against a device-backed
+    /// connection. Drives visibility of the "Save as default"
+    /// checkbox and the "Clear saved defaults" button — both are
+    /// per-Device persistence gestures that have no meaning for
+    /// ad-hoc connections.
+    let isDeviceMode: Bool
+
+    /// Whether the underlying Device row has either of its two
+    /// default fields populated. Drives visibility of the "Clear
+    /// saved defaults" button: hidden when there's nothing to clear,
+    /// so the button disappears once the operator acts on it.
+    let hasSavedDefaults: Bool
+
     @Binding var username: String
     @Binding var selectedCredentialID: UUID?
 
+    /// Operator's "Save as default" gesture. Only rendered in device
+    /// mode. Captured into the next `ConnectionAttempt` at Connect-
+    /// click; the lifecycle persists `Device.defaultUsername` and
+    /// `Device.defaultCredentialID` only on `status = .connected`.
+    @Binding var saveAsDefault: Bool
+
     let onConnect: () -> Void
     let onCancel: () -> Void
+
+    /// Tapped when the operator clicks "Clear saved defaults". The
+    /// parent owns the SwiftData write because the form is decoupled
+    /// from `ModelContext`. Nil for ad-hoc surfaces; the form hides
+    /// the button when the closure is nil or `hasSavedDefaults` is
+    /// false.
+    let onClearDefaults: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -129,6 +155,19 @@ struct SSHConnectForm: View {
                 biometricHint
             }
 
+            // "Save as default" gesture. Device mode only — ad-hoc
+            // connections never persist to a SwiftData row, so the
+            // checkbox would mis-signal the affordance. Operators
+            // tick the box, connect successfully, and the next open
+            // of this device row auto-fires.
+            if isDeviceMode {
+                Toggle("Save as default for this device", isOn: $saveAsDefault)
+                    #if os(macOS)
+                    .toggleStyle(.checkbox)
+                    #endif
+                    .help("Persist this username and credential as the device's defaults on a successful connect. Subsequent opens will auto-connect without showing this form.")
+            }
+
             HStack(spacing: 12) {
                 Button("Close", action: onCancel)
                     .keyboardShortcut(.cancelAction)
@@ -140,6 +179,22 @@ struct SSHConnectForm: View {
                         credentialID: selectedCredentialID,
                         primaryIP: primaryIP
                     ))
+            }
+
+            // "Clear saved defaults" affordance. Rendered only in
+            // device mode, only when something is saved, and only
+            // when the parent supplied a handler. Tiny text button
+            // below the primary action row so it does not compete
+            // with Connect for the operator's eye; the affordance is
+            // an undo gesture, not a primary action.
+            if isDeviceMode, hasSavedDefaults, let onClearDefaults {
+                HStack {
+                    Spacer()
+                    Button("Clear saved defaults", action: onClearDefaults)
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(24)

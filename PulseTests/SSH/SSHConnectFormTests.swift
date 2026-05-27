@@ -265,8 +265,144 @@ final class SSHConnectFormTests: XCTestCase {
     /// attempt would not retrigger the lifecycle.
     func testConnectionAttemptIdentityIncludesNonce() {
         let credentialID = UUID()
-        let a = SSHTerminalView.ConnectionAttempt(nonce: UUID(), username: "admin", credentialID: credentialID)
-        let b = SSHTerminalView.ConnectionAttempt(nonce: UUID(), username: "admin", credentialID: credentialID)
+        let a = SSHTerminalView.ConnectionAttempt(nonce: UUID(), username: "admin", credentialID: credentialID, saveAsDefault: false)
+        let b = SSHTerminalView.ConnectionAttempt(nonce: UUID(), username: "admin", credentialID: credentialID, saveAsDefault: false)
         XCTAssertNotEqual(a, b, "Two attempts with the same payload but different nonces must compare unequal so .task(id:) re-fires.")
+    }
+
+    /// Two attempts with identical username + credentialID + nonce but
+    /// different `saveAsDefault` flags are NOT equal. The lifecycle is
+    /// driven by `.task(id: connectionAttempt)`; if `saveAsDefault`
+    /// didn't participate in identity, an operator who connected once
+    /// without ticking the box, then opened the form again to retry
+    /// with the box ticked, would see no re-fire (the other fields
+    /// already match). Including `saveAsDefault` in `Hashable` keeps
+    /// the checkbox state observable to the lifecycle.
+    func testConnectionAttemptIdentityIncludesSaveAsDefault() {
+        let nonce = UUID()
+        let credentialID = UUID()
+        let optedOut = SSHTerminalView.ConnectionAttempt(nonce: nonce, username: "admin", credentialID: credentialID, saveAsDefault: false)
+        let optedIn = SSHTerminalView.ConnectionAttempt(nonce: nonce, username: "admin", credentialID: credentialID, saveAsDefault: true)
+        XCTAssertNotEqual(optedOut, optedIn, "Toggling saveAsDefault between attempts must invalidate identity so .task(id:) re-fires.")
+    }
+
+    // MARK: - autoFireAttempt persistence opt-out contract
+
+    /// Auto-fired device-mode attempts must carry `saveAsDefault:
+    /// false`. The no-silent-persistence contract: defaults
+    /// persistence is exclusively an explicit operator gesture via
+    /// the form checkbox, never a side-effect of an auto-fire path.
+    /// A regression here would silently re-persist defaults on every
+    /// successful auto-fire — exactly the "shared/jumphost credential
+    /// stomps another operator's defaults" failure mode the explicit
+    /// opt-in posture exists to prevent.
+    func testAutoFireDeviceModeNeverOptsIntoSaveAsDefault() {
+        let credentialID = UUID()
+        let attempt = SSHTerminalView.autoFireAttempt(
+            connection: .device(42),
+            deviceDefaultUsername: "admin",
+            deviceDefaultCredentialID: credentialID,
+            knownCredentialIDs: [credentialID]
+        )
+        XCTAssertNotNil(attempt)
+        XCTAssertFalse(attempt?.saveAsDefault ?? true, "Auto-fired device-mode attempt must opt out of persistence.")
+    }
+
+    /// Auto-fired ad-hoc-mode attempts also opt out. Ad-hoc surfaces
+    /// don't write to a Device row anyway (no `device` to persist
+    /// to), but the contract is stated on the attempt itself so it
+    /// holds uniformly across modes.
+    func testAutoFireAdHocModeNeverOptsIntoSaveAsDefault() {
+        let attempt = SSHTerminalView.autoFireAttempt(
+            connection: .adHoc(host: "127.0.0.1", port: 22, username: "root", credentialID: UUID()),
+            deviceDefaultUsername: nil,
+            deviceDefaultCredentialID: nil,
+            knownCredentialIDs: []
+        )
+        XCTAssertNotNil(attempt)
+        XCTAssertFalse(attempt?.saveAsDefault ?? true, "Auto-fired ad-hoc attempt must opt out of persistence.")
+    }
+
+    // MARK: - applyDeviceDefaultsIfRequested
+
+    /// Opt-out attempt → no write. The contract that makes "failed
+    /// attempts persist nothing" meaningful: the lifecycle reaches
+    /// the persistence call site **only** after `status = .connected`,
+    /// and even then the helper writes only when the attempt opted
+    /// in. Setting `saveAsDefault: false` and asserting both Device
+    /// fields stay nil pins the gate on the simulated "failed
+    /// attempt would have persisted" path: a regression that wrote
+    /// unconditionally would silently turn every connect into a
+    /// defaults stomp.
+    @MainActor
+    func testApplyDeviceDefaultsIfRequestedSkipsWriteWhenOptedOut() {
+        let device = Device(id: 42)
+        XCTAssertNil(device.defaultUsername)
+        XCTAssertNil(device.defaultCredentialID)
+        let credentialID = UUID()
+        let attempt = SSHTerminalView.ConnectionAttempt(
+            nonce: UUID(),
+            username: "admin",
+            credentialID: credentialID,
+            saveAsDefault: false
+        )
+        let wrote = SSHTerminalView.applyDeviceDefaultsIfRequested(attempt: attempt, device: device)
+        XCTAssertFalse(wrote, "Opt-out attempt must not write.")
+        XCTAssertNil(device.defaultUsername, "defaultUsername must remain nil after opt-out attempt.")
+        XCTAssertNil(device.defaultCredentialID, "defaultCredentialID must remain nil after opt-out attempt.")
+    }
+
+    /// Opt-in attempt → both fields written from the attempt's
+    /// snapshot. The happy path that closes the "every device row
+    /// sees the form on every connect" failure mode this slice exists
+    /// to fix.
+    @MainActor
+    func testApplyDeviceDefaultsIfRequestedWritesBothFieldsWhenOptedIn() {
+        let device = Device(id: 42)
+        let credentialID = UUID()
+        let attempt = SSHTerminalView.ConnectionAttempt(
+            nonce: UUID(),
+            username: "admin",
+            credentialID: credentialID,
+            saveAsDefault: true
+        )
+        let wrote = SSHTerminalView.applyDeviceDefaultsIfRequested(attempt: attempt, device: device)
+        XCTAssertTrue(wrote)
+        XCTAssertEqual(device.defaultUsername, "admin")
+        XCTAssertEqual(device.defaultCredentialID, credentialID)
+    }
+
+    /// Opt-in but no device (ad-hoc connection) → no write. Defence
+    /// in depth: ad-hoc surfaces never render the checkbox so the
+    /// flag should never arrive as `true` from that path, but the
+    /// helper holds the contract regardless of the caller's
+    /// hygiene.
+    @MainActor
+    func testApplyDeviceDefaultsIfRequestedSkipsWriteForNilDevice() {
+        let attempt = SSHTerminalView.ConnectionAttempt(
+            nonce: UUID(),
+            username: "admin",
+            credentialID: UUID(),
+            saveAsDefault: true
+        )
+        let wrote = SSHTerminalView.applyDeviceDefaultsIfRequested(attempt: attempt, device: nil)
+        XCTAssertFalse(wrote, "Nil device must produce no write even when the attempt opted in.")
+    }
+
+    // MARK: - clearDeviceDefaults
+
+    /// Clear-defaults nils both fields in one gesture. A
+    /// half-cleared row (one field nil, the other still set) is its
+    /// own footgun — the next open would either show the form with
+    /// one field pre-filled (confusing) or auto-fire with stale
+    /// half-state. Symmetry is the property the test pins.
+    @MainActor
+    func testClearDeviceDefaultsNilsBothFieldsAtomically() {
+        let device = Device(id: 42)
+        device.defaultUsername = "admin"
+        device.defaultCredentialID = UUID()
+        SSHTerminalView.clearDeviceDefaults(device: device)
+        XCTAssertNil(device.defaultUsername, "defaultUsername must be nil after clear.")
+        XCTAssertNil(device.defaultCredentialID, "defaultCredentialID must be nil after clear.")
     }
 }

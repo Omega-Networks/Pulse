@@ -103,6 +103,16 @@ struct SSHTerminalView: View {
     /// "Pick a credential" placeholder is showing.
     @State private var formCredentialID: UUID?
 
+    /// Operator's "Save as default" gesture. Bound into
+    /// `SSHConnectForm`'s checkbox. Captured into the next
+    /// `ConnectionAttempt` at Connect-click time; the lifecycle
+    /// persists `Device.defaultUsername` and `Device.defaultCredentialID`
+    /// only after `status = .connected`, so a failed attempt with the
+    /// box ticked persists nothing. Defaults to false: persistence is
+    /// always an explicit operator gesture, never a silent side-effect
+    /// of a successful connect.
+    @State private var formSaveAsDefault: Bool = false
+
     @StateObject private var surface = PulseTerminalSurface()
     @StateObject private var mismatchCoordinator = HostKeyMismatchCoordinator()
     @StateObject private var bellController = TerminalBellController()
@@ -258,11 +268,20 @@ struct SSHTerminalView: View {
     /// `.task(id: connectionAttempt)` modifier keys on Hashable
     /// equality, and changing only `nonce` is enough to invalidate).
     /// Hashable + Equatable because SwiftUI's `.task(id:)` requires
-    /// `Equatable` and we synthesise hashing from the three fields.
+    /// `Equatable` and we synthesise hashing from the four fields.
+    ///
+    /// `saveAsDefault` participates in identity: two attempts with
+    /// identical username + credentialID but different `saveAsDefault`
+    /// values compare unequal, so toggling the form's checkbox
+    /// between retries re-fires the lifecycle even when the operator
+    /// did not change the other fields. Auto-fire-on-appear always
+    /// produces `saveAsDefault: false`; persistence is exclusively an
+    /// explicit operator gesture via the form checkbox.
     struct ConnectionAttempt: Hashable, Sendable {
         let nonce: UUID
         let username: String
         let credentialID: UUID
+        let saveAsDefault: Bool
     }
 
     /// Returns an attempt to auto-fire on first appear, or nil if the
@@ -275,6 +294,11 @@ struct SSHTerminalView: View {
     ///   was last edited).
     /// - For `.adHoc`, the upstream debug surface already gathered
     ///   username + credential explicitly; auto-fire with those.
+    ///
+    /// Auto-fired attempts always carry `saveAsDefault: false`. The
+    /// no-silent-persistence contract: defaults persistence is
+    /// exclusively an explicit operator gesture via the form
+    /// checkbox, never a side-effect of an auto-fire path.
     ///
     /// Takes the device's two default fields plus a set of known
     /// credential IDs rather than a `Device` pointer + `[SSHCredential]`
@@ -298,10 +322,20 @@ struct SSHTerminalView: View {
                   let credentialID = deviceDefaultCredentialID,
                   knownCredentialIDs.contains(credentialID)
             else { return nil }
-            return ConnectionAttempt(nonce: UUID(), username: trimmed, credentialID: credentialID)
+            return ConnectionAttempt(
+                nonce: UUID(),
+                username: trimmed,
+                credentialID: credentialID,
+                saveAsDefault: false
+            )
 
         case .adHoc(_, _, let username, let credentialID):
-            return ConnectionAttempt(nonce: UUID(), username: username, credentialID: credentialID)
+            return ConnectionAttempt(
+                nonce: UUID(),
+                username: username,
+                credentialID: credentialID,
+                saveAsDefault: false
+            )
         }
     }
 
@@ -560,16 +594,62 @@ struct SSHTerminalView: View {
                     initialUsername: formUsername,
                     credentials: credentials,
                     errorMessage: errorMessage,
+                    isDeviceMode: isDeviceMode,
+                    hasSavedDefaults: hasSavedDeviceDefaults,
                     username: $formUsername,
                     selectedCredentialID: $formCredentialID,
+                    saveAsDefault: $formSaveAsDefault,
                     onConnect: submitConnectionAttempt,
-                    onCancel: { dismiss() }
+                    onCancel: { dismiss() },
+                    onClearDefaults: clearDeviceDefaultsFromForm
                 )
                 Spacer(minLength: 0)
             }
             .padding(.vertical, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Whether the current `connection` is a device-backed connection.
+    /// The "Save as default" checkbox and the "Clear saved defaults"
+    /// button only render in device mode; ad-hoc connections never
+    /// persist to a SwiftData row.
+    private var isDeviceMode: Bool {
+        switch connection {
+        case .device: return true
+        case .adHoc: return false
+        }
+    }
+
+    /// Whether the device row carries either default field populated.
+    /// Drives visibility of the form's "Clear saved defaults" button:
+    /// the button only renders when there is something to clear, and
+    /// hides itself once both fields are nil.
+    private var hasSavedDeviceDefaults: Bool {
+        guard let device else { return false }
+        return device.defaultUsername != nil || device.defaultCredentialID != nil
+    }
+
+    /// Handler for the form's "Clear saved defaults" button. Nils
+    /// both Device default fields in one transaction, saves the
+    /// context, and resets the form's two pre-fill bindings so the
+    /// next render shows the empty form rather than the just-cleared
+    /// values. The "Save as default" checkbox is also reset to
+    /// false: clearing is a deliberate "no defaults" gesture and
+    /// keeping the box ticked would silently re-persist on the next
+    /// successful connect, defeating the point.
+    private func clearDeviceDefaultsFromForm() {
+        guard let device else { return }
+        Self.clearDeviceDefaults(device: device)
+        do {
+            try modelContext.save()
+            logger.info("Cleared device defaults for device id \(device.id, privacy: .public)")
+        } catch {
+            logger.error("Failed to save context after clearing device defaults: \(String(describing: error), privacy: .public)")
+        }
+        formUsername = ""
+        formCredentialID = nil
+        formSaveAsDefault = false
     }
 
     /// Synthesises a fresh `ConnectionAttempt` from the form's
@@ -588,7 +668,8 @@ struct SSHTerminalView: View {
         connectionAttempt = ConnectionAttempt(
             nonce: UUID(),
             username: formUsername.trimmingCharacters(in: .whitespacesAndNewlines),
-            credentialID: credentialID
+            credentialID: credentialID,
+            saveAsDefault: formSaveAsDefault
         )
     }
 
@@ -744,6 +825,24 @@ struct SSHTerminalView: View {
 
         status = .connected
 
+        // Persist the operator's "Save as default" gesture iff the
+        // attempt opted in and we are in device mode. Positioned
+        // **after** `status = .connected` so a failed handshake never
+        // persists incorrect defaults — the .failed paths above all
+        // return without reaching this site. Persistence failure does
+        // not fail the connection: the operator's session continues,
+        // and the audit log carries the save error for diagnosis.
+        await MainActor.run {
+            if Self.applyDeviceDefaultsIfRequested(attempt: attempt, device: device) {
+                do {
+                    try modelContext.save()
+                    logger.info("Saved device defaults (username + credential) for device id \(resolvedDeviceID.map(String.init) ?? "ad-hoc", privacy: .public)")
+                } catch {
+                    logger.error("Failed to save device defaults: \(String(describing: error), privacy: .public)")
+                }
+            }
+        }
+
         // Give SwiftUI a chance to complete its first layout pass for
         // the freshly-mounted PulseTerminalAdapter before we read the
         // terminal grid geometry below. Task.yield() requeues this
@@ -883,6 +982,63 @@ struct SSHTerminalView: View {
             Task { @MainActor in onChange(false) }
         }
         onChange(true)
+    }
+
+    // MARK: Device-defaults persistence helpers
+
+    /// Applies the operator's "Save as default" gesture to the device
+    /// row, iff `attempt.saveAsDefault` is true and the call site
+    /// supplied a device (ad-hoc connections pass nil and never
+    /// persist). Returns whether a write occurred so callers can
+    /// decide whether to `modelContext.save()`.
+    ///
+    /// Extracted as a pure static helper so the no-silent-persistence
+    /// contract is testable without driving the full SSH lifecycle:
+    /// `applyDeviceDefaultsIfRequested(attempt: <saveAsDefault: false>,
+    /// device: someDevice)` returns false and leaves the device
+    /// untouched. The lifecycle calls this **after**
+    /// `status = .connected`, so a failed handshake never reaches the
+    /// call site — the testable contract is "given an opt-out
+    /// attempt, do not write" plus the structural property "the call
+    /// site lives only on the .connected branch".
+    ///
+    /// Marked `@MainActor` because SwiftData mutations on a
+    /// `@MainActor`-isolated `ModelContext` must run on the main
+    /// actor.
+    @MainActor
+    static func applyDeviceDefaultsIfRequested(
+        attempt: ConnectionAttempt,
+        device: Device?
+    ) -> Bool {
+        guard attempt.saveAsDefault, let device else { return false }
+        device.defaultUsername = attempt.username
+        device.defaultCredentialID = attempt.credentialID
+        return true
+    }
+
+    /// Nils both Device default fields atomically. The "Clear saved
+    /// defaults" gesture must be symmetric — a half-cleared row (one
+    /// field nil, the other still set) is its own footgun, because
+    /// the next open would either show the form with one field
+    /// pre-filled (confusing) or auto-fire with a stale half-state
+    /// (the `autoFireAttempt` gate catches the obvious shapes but the
+    /// guard is not load-bearing).
+    ///
+    /// Pulled into a static helper so the symmetry property is
+    /// pinned by a direct test against a synthetic Device, without
+    /// rendering the form or driving the model context.
+    ///
+    /// Known asymmetry with the third writer: the credential-delete
+    /// cleanup in `SSHCredentialsSettings.deleteCredential` (around
+    /// line 400 of that file) nils only `defaultCredentialID`; it
+    /// leaves `defaultUsername` set. A follow-up slice will align
+    /// that cleanup with this helper. Until then the form's
+    /// "Clear saved defaults" button is the operator's escape hatch
+    /// for the half-cleared state.
+    @MainActor
+    static func clearDeviceDefaults(device: Device) {
+        device.defaultUsername = nil
+        device.defaultCredentialID = nil
     }
 
     // MARK: Connection status

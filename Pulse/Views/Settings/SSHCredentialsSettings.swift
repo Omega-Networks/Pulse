@@ -392,6 +392,16 @@ struct SSHCredentialsSettings: View {
             // Secret is gone. Remove the row and clear any Device pointers in the
             // same transaction. Explicit save so the cleanup is durable even if
             // SwiftData's autosave hasn't fired yet.
+            //
+            // Known asymmetry: this cleanup nils `defaultCredentialID` only;
+            // `defaultUsername` is left set. A device with `defaultUsername =
+            // "admin"` and `defaultCredentialID = nil` falls back to the form on
+            // next open (the auto-fire gate at `SSHTerminalView.autoFireAttempt`
+            // requires both fields), so the half-cleared state is recoverable —
+            // but the form's "Clear saved defaults" button is the operator's
+            // escape hatch for the leftover username. A follow-up slice will
+            // nil both fields here for symmetry with
+            // `SSHTerminalView.clearDeviceDefaults`.
             await MainActor.run {
                 modelContext.delete(cred)
                 let devices = (try? modelContext.fetch(
