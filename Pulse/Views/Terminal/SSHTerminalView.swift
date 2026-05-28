@@ -504,30 +504,11 @@ struct SSHTerminalView: View {
 
     // MARK: - Toolbar
 
-    /// Window toolbar content. Extracted from `body`'s inline
-    /// `.toolbar { ... }` block so the body shrinks to a clean
-    /// composition and the toolbar's identity is named — the three
-    /// explicit `ToolbarItem(id:)` declarations match SwiftUI's
-    /// diffing requirements for stable item identity across status
-    /// transitions.
-    ///
-    /// Items, in placement order:
-    /// - `status-pill` (.navigation): colored dot from
-    ///   `statusIndicator` plus one-word `Self.statusPillCopy(for:)`.
-    ///   Hidden at `.idle` (the in-view connect form is the primary
-    ///   affordance there and an "Idle" pill would mis-signal
-    ///   failure).
-    /// - `recording-badge` (.primaryAction): the existing
-    ///   `recordingBadge` view. Gated on `isRecording && status ==
-    ///   .connected` to collapse the brief one-render-pass window
-    ///   between `signalExit` firing the recording-flip task and
-    ///   the lifecycle's `.disconnected` transition.
-    /// - `primary-action` (.primaryAction): context-sensitive
-    ///   Disconnect / Reconnect button via `primaryActionButton`,
-    ///   driven by `Self.primaryActionShape(for:)`. The
-    ///   `.disconnected` branch keeps its in-view "Close" button as
-    ///   a deliberate complement (toolbar offers session restart,
-    ///   in-view offers window-close).
+    /// Window toolbar. Passive indicators (status pill, recording
+    /// badge) opt out of the shared Liquid Glass background via
+    /// `.sharedBackgroundVisibility(.hidden)` so they don't read as
+    /// interactive controls; the primary action keeps its default
+    /// glass.
     @ToolbarContentBuilder
     private var sshTerminalToolbar: some ToolbarContent {
         ToolbarItem(id: "status-pill", placement: .navigation) {
@@ -542,11 +523,15 @@ struct SSHTerminalView: View {
                 .accessibilityLabel("Connection status: \(copy)")
             }
         }
+        .sharedBackgroundVisibility(.hidden)
+
         ToolbarItem(id: "recording-badge", placement: .primaryAction) {
             if isRecording && status == .connected {
                 recordingBadge
             }
         }
+        .sharedBackgroundVisibility(.hidden)
+
         ToolbarItem(id: "primary-action", placement: .primaryAction) {
             primaryActionButton
         }
