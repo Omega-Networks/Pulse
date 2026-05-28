@@ -89,7 +89,14 @@ struct DeviceView: View {
     @State private var showPopover = false
     
     @State private var isTapped: Bool = false
-    
+
+    /// Environment handle for opening the SSH terminal window via
+    /// the device-node context menu. Declared on `DeviceView`
+    /// directly because the environment value does not propagate
+    /// from `SiteGraphView`'s `@Environment(\.openWindow)` into the
+    /// closure scope of a child view's `.contextMenu` button.
+    @Environment(\.openWindow) private var openWindow
+
     /**
      Initializes a new DeviceView with the specified device and bindings.
      
@@ -164,10 +171,10 @@ struct DeviceView: View {
             }
             .onHover { isHovering in
                 self.isHovering = isHovering
-                
+
                 // Cancel any existing timer
                 hoverTimer?.invalidate()
-                
+
                 if isHovering {
                     // Create new timer for 1 second delay
                     hoverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
@@ -184,9 +191,25 @@ struct DeviceView: View {
             .onTapGesture {
                 self.selectedDevice = device
             }
-            
+
             // Device Labels
             deviceLabels
+        }
+        .contextMenu {
+            // Explicit `id: "ssh-terminal"` disambiguates this call
+            // from Site View's `WindowGroup(for: Int64.self)` — both
+            // scenes are keyed on Int64-valued ids, and without the
+            // id this call routes by registration order rather than
+            // by intent. See `SSHTerminalScene` doc-comment for the
+            // full rationale. Mirrors `DeviceRow.swift`'s sidebar
+            // context menu so the operator's SSH gesture is the same
+            // whether they right-click in the list or in the graph.
+            Button {
+                openWindow(id: "ssh-terminal", value: device.id)
+            } label: {
+                Label("Open SSH Terminal", systemImage: "terminal.fill")
+            }
+            .disabled(device.primaryIP?.isEmpty != false)
         }
     }
     
