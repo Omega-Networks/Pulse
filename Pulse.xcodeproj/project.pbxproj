@@ -122,6 +122,8 @@
 		C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = C923355E2FC3EAF9003BAF42 /* NIOSSH */; };
 		A11CAFE000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000D1 /* SwiftTerm */; };
 		A11CAFE000000000000000C0 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000C1 /* NIOSSH */; };
+		A11CAFE0000000000000203 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000201 /* NIOCore */; };
+		A11CAFE0000000000000204 /* NIOConcurrencyHelpers in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000202 /* NIOConcurrencyHelpers */; };
 		C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = C93291702FC30A3900624995 /* NIOTransportServices */; };
 		C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */; };
 		C96191622ACA552F000198DB /* PulseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191612ACA552F000198DB /* PulseApp.swift */; };
@@ -393,6 +395,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A11CAFE000000000000000C0 /* NIOSSH in Frameworks */,
+				A11CAFE0000000000000203 /* NIOCore in Frameworks */,
+				A11CAFE0000000000000204 /* NIOConcurrencyHelpers in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -916,6 +920,8 @@
 			name = PulseTests;
 			packageProductDependencies = (
 				A11CAFE000000000000000C1 /* NIOSSH */,
+				A11CAFE0000000000000201 /* NIOCore */,
+				A11CAFE0000000000000202 /* NIOConcurrencyHelpers */,
 			);
 			productName = PulseTests;
 			productReference = C96191712ACA5530000198DB /* PulseTests.xctest */;
@@ -975,6 +981,7 @@
 				C932916F2FC30A3900624995 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */,
 				C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
 				A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */,
 			);
 			productRefGroup = C961915F2ACA552F000198DB /* Products */;
 			projectDirPath = "";
@@ -1609,6 +1616,14 @@
 				minimumVersion = 0.13.0;
 			};
 		};
+		A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.100.0;
+			};
+		};
 		C932916F2FC30A3900624995 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/apple/swift-nio-transport-services";
@@ -1647,6 +1662,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
+		};
+		A11CAFE0000000000000201 /* NIOCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOCore;
+		};
+		A11CAFE0000000000000202 /* NIOConcurrencyHelpers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOConcurrencyHelpers;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
