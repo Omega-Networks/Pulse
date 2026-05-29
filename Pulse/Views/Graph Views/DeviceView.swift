@@ -196,20 +196,22 @@ struct DeviceView: View {
             deviceLabels
         }
         .contextMenu {
-            // Explicit `id: "ssh-terminal"` disambiguates this call
-            // from Site View's `WindowGroup(for: Int64.self)` — both
-            // scenes are keyed on Int64-valued ids, and without the
-            // id this call routes by registration order rather than
-            // by intent. See `SSHTerminalScene` doc-comment for the
-            // full rationale. Mirrors `DeviceRow.swift`'s sidebar
-            // context menu so the operator's SSH gesture is the same
-            // whether they right-click in the list or in the graph.
-            Button {
-                openWindow(id: "ssh-terminal", value: device.id)
-            } label: {
-                Label("Open SSH Terminal", systemImage: "terminal.fill")
+            // Only surface the menu when the device has a routable
+            // primary IP. Without one the SSH terminal cannot
+            // connect, and surfacing the gesture greyed-out is
+            // noise. SwiftUI suppresses the right-click menu
+            // entirely when the builder produces no content. Future
+            // UI (Open Web UI, Copy IP, etc.) extends this block
+            // when there's an operator ask. Explicit `id:
+            // "ssh-terminal"` for the routing disambiguation; see
+            // `SSHTerminalScene` doc-comment.
+            if let primaryIP = device.primaryIP, !primaryIP.isEmpty {
+                Button {
+                    openWindow(id: "ssh-terminal", value: device.id)
+                } label: {
+                    Label("Open SSH Terminal", systemImage: "terminal.fill")
+                }
             }
-            .disabled(device.primaryIP?.isEmpty != false)
         }
     }
     
