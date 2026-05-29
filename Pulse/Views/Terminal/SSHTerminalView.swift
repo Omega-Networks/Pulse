@@ -1178,14 +1178,9 @@ struct SSHTerminalView: View {
     /// Pulled into a static helper so the symmetry property is
     /// pinned by a direct test against a synthetic Device, without
     /// rendering the form or driving the model context.
-    ///
-    /// Known asymmetry with the third writer: the credential-delete
-    /// cleanup in `SSHCredentialsSettings.deleteCredential` (around
-    /// line 400 of that file) nils only `defaultCredentialID`; it
-    /// leaves `defaultUsername` set. A follow-up slice will align
-    /// that cleanup with this helper. Until then the form's
-    /// "Clear saved defaults" button is the operator's escape hatch
-    /// for the half-cleared state.
+    /// `SSHCredentialsSettings.deleteCredential` mirrors this
+    /// symmetry — credential deletion nils both default fields on
+    /// every device that pointed at the dying credential.
     @MainActor
     static func clearDeviceDefaults(device: Device) {
         device.defaultUsername = nil
