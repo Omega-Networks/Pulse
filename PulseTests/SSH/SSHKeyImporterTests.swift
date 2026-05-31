@@ -59,7 +59,7 @@ final class SSHKeyImporterTests: XCTestCase {
     /// Traditional `BEGIN EC PRIVATE KEY` PEMs don't expose the curve in the armor,
     /// only in the SEC1 ASN.1 payload (which the importer doesn't decode). The
     /// classifier must surface `.ecdsaUnknownCurve` rather than incorrectly claiming
-    /// P-256. Regression guard for the round-1 fix in commit `4dfe844`.
+    /// P-256. Regression guard for the EC-curve-detection fix.
     func testTraditionalECPEMSurfacesUnknownCurve() throws {
         let result = try SSHKeyImporter.validate(fixtureTraditionalECDSAP256)
         XCTAssertEqual(result.pemKind, .ecPrivate)

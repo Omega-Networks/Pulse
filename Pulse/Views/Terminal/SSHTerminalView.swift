@@ -441,15 +441,14 @@ struct SSHTerminalView: View {
     }
 
     /// One-word status copy for the toolbar status pill. Pinned in
-    /// the ADR's Slice 8a routing-disambiguation note because
+    /// the ADR's routing-disambiguation note because
     /// operator-facing copy is part of the window contract: silent
     /// edits to these strings would land in a release without
     /// review. Exposed as a `static func` over `ConnectionStatus`
     /// (rather than an instance computed property reading `self.status`)
     /// so the mapping is testable as a pure function without
     /// constructing the view; matches the test-seam pattern used by
-    /// `autoFireAttempt` and `applyDeviceDefaultsIfRequested` in
-    /// Slices 7 and 8.
+    /// `autoFireAttempt` and `applyDeviceDefaultsIfRequested`.
     ///
     /// `.idle` is mapped to "Idle" for exhaustiveness even though
     /// the toolbar hides the pill in that state; the contract is

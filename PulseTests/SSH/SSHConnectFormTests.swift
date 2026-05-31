@@ -499,7 +499,7 @@ final class SSHConnectFormTests: XCTestCase {
     //
     // The toolbar status pill's one-word copy and the primary-action
     // button's presence are operator-facing contracts pinned in the
-    // ADR's Slice 8a routing-disambiguation note. A silent string
+    // ADR's routing-disambiguation note. A silent string
     // change to the pill copy, or a status-to-action mapping
     // regression that hid the Disconnect / Reconnect button at the
     // wrong moment, would land in a release without review. These

@@ -230,7 +230,7 @@ The full reject-reason vocabulary is documented in the ADR (`docs/architecture/0
    - **Cancellation.** Open the sheet and close the parent window via Cmd-W. Confirm `host.mismatch.rejected reason="cancelled"` lands *immediately* (not at the 90-second mark) and the sheet clears.
 6. Restore the original sshd host keys: `sudo cp /tmp/ssh-keys-backup/ssh_host_* /etc/ssh/ && sudo /usr/sbin/launchctl kickstart -k system/com.openssh.sshd`. Reconnect from Pulse and either Accept or Forget to clear the now-stale pin.
 
-If every action lands the expected events at the expected level with the expected token names, the mismatch flow is intact. Any deviation — especially `host.mismatch.accepted` landing *after* a `.commit_failed` event, or `cancelled` taking the full 90 seconds — is a Slice 5 regression to investigate before shipping.
+If every action lands the expected events at the expected level with the expected token names, the mismatch flow is intact. Any deviation — especially `host.mismatch.accepted` landing *after* a `.commit_failed` event, or `cancelled` taking the full 90 seconds — is a regression to investigate before shipping.
 
 ## Session recording
 
@@ -288,7 +288,7 @@ Filter the full set with `log show --predicate 'subsystem == "pulse" AND categor
    Replay the same `.meta` again. Confirm `session.recording.replayChainBroken brokenAtSeq=<N>` lands and that plaintext stops at sequence `<N>` rather than continuing past the break.
 9. (Cleanup) Toggle **Record sessions** off on the credential when finished. Confirm `credential.recording.disabled`.
 
-If every step matches expectations, the recording stack is intact end to end. Any deviation — particularly step 7's plaintext mismatch, or step 8 surfacing plaintext past the tamper point — is a Slice 4 regression to investigate before shipping.
+If every step matches expectations, the recording stack is intact end to end. Any deviation — particularly step 7's plaintext mismatch, or step 8 surfacing plaintext past the tamper point — is a regression to investigate before shipping.
 
 ## No iCloud sync
 
