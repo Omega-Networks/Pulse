@@ -113,11 +113,6 @@ enum SSHKeyImporter {
         /// prohibition. `remediation` tells the operator how to re-export
         /// without the passphrase.
         case encryptedPortableKeyNotSupportedInV1(remediation: String)
-        /// PKCS#8 ASN.1 payload didn't parse far enough to reach the
-        /// AlgorithmIdentifier OID; treated like a truncation. Thrown by
-        /// `pkcs8RSAInnerPKCS1`, which still runs at validate-time so the
-        /// front-door reject can fire for PKCS#8 RSA inputs.
-        case truncatedASN1
         /// `derivePublicKey(from:)` can't recover the public key from the
         /// imported PEM without information that isn't present at import time
         /// (e.g., the passphrase for an encrypted private half, or a public
@@ -144,8 +139,6 @@ enum SSHKeyImporter {
                 return "The PEM body isn't valid base64."
             case .truncatedOpenSSHKey:
                 return "OpenSSH-format key is truncated: the ‘openssh-key-v1’ payload is incomplete."
-            case .truncatedASN1:
-                return "ASN.1 payload is truncated or malformed."
             case .publicKeyDerivationDeferred:
                 return "Public key can't be derived from this PEM at import time; it will be filled in on first use."
             case .publicKeyDerivationNotSupported(let reason):
@@ -256,7 +249,7 @@ enum SSHKeyImporter {
             // `pemRepresentation` initializers handle the curve detection at
             // signing time in the auth delegate.
             isEncrypted = false
-            if try pkcs8RSAInnerPKCS1(payload) != nil {
+            if pkcs8PayloadIsRSA(payload) {
                 throw ImporterError.unsupportedAlgorithmInV1(
                     name: "RSA",
                     remediation: rsaRemediation
@@ -422,35 +415,23 @@ enum SSHKeyImporter {
     ///         privateKey        OCTET STRING
     ///         ...
     ///     }
-    /// rsaEncryption OID is 1.2.840.113549.1.1.1, DER-encoded
-    /// `06 09 2A 86 48 86 F7 0D 01 01 01`.
-    private static func pkcs8RSAInnerPKCS1(_ payload: Data) throws -> Data? {
-        let bytes = [UInt8](payload)
-        var cursor = 0
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x30) // outer SEQUENCE
-        _ = try readASN1Length(bytes, cursor: &cursor)
-        // version INTEGER
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x02)
-        let versionLen = try readASN1Length(bytes, cursor: &cursor)
-        cursor += versionLen
-        // AlgorithmIdentifier SEQUENCE
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x30)
-        let algIDLen = try readASN1Length(bytes, cursor: &cursor)
-        let algIDEnd = cursor + algIDLen
-        guard algIDEnd <= bytes.count else { throw ImporterError.truncatedASN1 }
-        // OID
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x06)
-        let oidLen = try readASN1Length(bytes, cursor: &cursor)
-        guard cursor + oidLen <= bytes.count else { throw ImporterError.truncatedASN1 }
-        let oid = Array(bytes[cursor..<(cursor + oidLen)])
-        cursor = algIDEnd // skip past parameters
-        let rsaEncryptionOID: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
-        guard oid == rsaEncryptionOID else { return nil }
-        // OCTET STRING containing the PKCS#1 RSAPrivateKey
-        try expectASN1Tag(bytes, cursor: &cursor, tag: 0x04)
-        let octetLen = try readASN1Length(bytes, cursor: &cursor)
-        guard cursor + octetLen <= bytes.count else { throw ImporterError.truncatedASN1 }
-        return Data(bytes[cursor..<(cursor + octetLen)])
+    /// Detects an RSA PKCS#8 payload by substring-searching for the
+    /// rsaEncryption OID byte sequence — DER-encoded as
+    /// `2A 86 48 86 F7 0D 01 01 01` (OID 1.2.840.113549.1.1.1).
+    /// Replaces a 28-line ASN.1 walk; same security guarantee for the
+    /// front-door reject path with no DER parsing surface to maintain.
+    ///
+    /// The OID is distinctive enough that false matches on random key
+    /// material (ECDSA scalar, Ed25519 seed, RSA modulus when it
+    /// somehow leaks past the reject) are astronomically rare: ~1/2^72
+    /// per 9-byte window, vs an actual rsaEncryption OID which is
+    /// guaranteed to appear in any PKCS#8 RSA AlgorithmIdentifier.
+    /// Over-rejecting on a vanishingly-improbable false match is the
+    /// safe-direction outcome — encrypted-PEM imports of RSA are
+    /// already deferred per ADR §1.
+    private static func pkcs8PayloadIsRSA(_ payload: Data) -> Bool {
+        let rsaOID: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
+        return payload.firstRange(of: rsaOID) != nil
     }
 
     // MARK: - OpenSSH new-format private-key decoder
@@ -716,37 +697,6 @@ enum SSHKeyImporter {
         _ = try readSSHString(from: payload, cursor: &cursor) // kdfoptions
         _ = try readUInt32(from: payload, cursor: &cursor)    // number of keys
         return try readSSHString(from: payload, cursor: &cursor)
-    }
-
-    // MARK: - ASN.1 primitives
-
-    private static func expectASN1Tag(_ data: [UInt8], cursor: inout Int, tag: UInt8) throws {
-        guard cursor < data.count, data[cursor] == tag else {
-            throw ImporterError.truncatedASN1
-        }
-        cursor += 1
-    }
-
-    private static func readASN1Length(_ data: [UInt8], cursor: inout Int) throws -> Int {
-        guard cursor < data.count else { throw ImporterError.truncatedASN1 }
-        let first = data[cursor]
-        cursor += 1
-        if first < 0x80 {
-            return Int(first)
-        }
-        let countBytes = Int(first & 0x7F)
-        // 0x80 is an indefinite-length form, illegal in DER for the constructions
-        // we parse. 9+ length bytes would imply >= 2^64 bytes of payload, which
-        // we'll never see and refuse to allocate for.
-        guard countBytes >= 1, countBytes <= 8, cursor + countBytes <= data.count else {
-            throw ImporterError.truncatedASN1
-        }
-        var length = 0
-        for i in 0..<countBytes {
-            length = (length << 8) | Int(data[cursor + i])
-        }
-        cursor += countBytes
-        return length
     }
 
     // MARK: - SSH wire format helpers
