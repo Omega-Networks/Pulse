@@ -220,7 +220,19 @@ actor SSHSession {
     func close() async {
         guard !closed else { return }
         closed = true
+        // Drop the output handler so the session stops retaining the
+        // operator's terminal surface (the `feed` closure captures it).
+        // signalExit clears the exit handlers on its latch; clearing
+        // output here closes the SSHSession -> PulseTerminalSurface edge on
+        // teardown so the surface can deinit. ADR Verification row 10.
+        handlers.withLockedValue { $0.output = nil }
         _ = try? await childChannel.close().get()
+    }
+
+    deinit {
+        // ADR Verification row 10: observable deinit line confirms the
+        // session actor is released on teardown.
+        logger.notice("SSHSession deinit")
     }
 
     // MARK: Nonisolated hot path (called from the EventLoop)

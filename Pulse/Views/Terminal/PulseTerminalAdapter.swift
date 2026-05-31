@@ -132,7 +132,19 @@ final class PulseTerminalSurface: ObservableObject, @unchecked Sendable {
     /// on the hot path; the discipline is enforced at the call sites.
     nonisolated(unsafe) fileprivate weak var view: PulseTerminalAdapter.PlatformTerminalView?
 
+    /// Lifecycle logger. Always-on (the file-scoped `renderLogger` is
+    /// DEBUG-only), so the deinit line is observable in any build per ADR
+    /// Verification row 10.
+    private let logger = Logger(subsystem: "pulse", category: "ssh.terminal")
+
     init() {}
+
+    deinit {
+        // ADR Verification row 10: observable deinit line confirms the
+        // terminal surface (captured by the SSHSession output handler) is
+        // released on window close.
+        logger.notice("PulseTerminalSurface deinit")
+    }
 
     /// Operator view sets this to `{ bytes in await session.write(bytes) }`
     /// or equivalent. `@Sendable` because keystrokes flow into

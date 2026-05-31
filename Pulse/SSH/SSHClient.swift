@@ -422,4 +422,11 @@ actor SSHClient {
         eventLoopGroup = nil
         sessionLogWriter = nil
     }
+
+    deinit {
+        // ADR Verification row 10: an observable deinit line confirms the
+        // client actor is released on window close, not held by a stray
+        // closure. Filter with `category BEGINSWITH "ssh"`.
+        sessionLogger.notice("SSHClient deinit")
+    }
 }

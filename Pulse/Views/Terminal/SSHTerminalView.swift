@@ -904,6 +904,15 @@ struct SSHTerminalView: View {
             // teardown and the recording writer's finalisation.
             Task { await client.close() }
             sshClient = nil
+            // Break the operator-surface retain edges: these closures
+            // capture `session`. SSHSession.close() clears its own output
+            // handler (which captures `surface`); clearing these closes the
+            // surface -> session direction so both can deinit. Safe on the
+            // connect-failure path too (handlers are still nil there). ADR
+            // Verification row 10 (no retain cycles).
+            surface.sendHandler = nil
+            surface.resizeHandler = nil
+            surface.bellHandler = nil
         }
 
         let session: SSHSession

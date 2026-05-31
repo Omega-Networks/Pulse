@@ -859,6 +859,12 @@ actor SessionLogWriter {
     nonisolated func currentPendingState() -> PendingState {
         pendingState.withLockedValue { $0 }
     }
+
+    deinit {
+        // ADR Verification row 10: observable deinit line confirms the
+        // recording writer actor is released after the session finalises.
+        Self.logger.notice("SessionLogWriter deinit")
+    }
 }
 
 // MARK: - Test seam
