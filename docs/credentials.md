@@ -155,7 +155,7 @@ The first SSH connection of an app session triggers two biometric prompts back-t
 
 Each open invocation activates an existing terminal window for the same device when one is already on screen (SwiftUI's per-value `WindowGroup` semantics). One terminal per device matches the operator mental model and avoids the "did I leave one open?" footgun. If you need a second session against the same device, close the first window first.
 
-While the terminal is open, every keystroke flows directly to the SSH session and every byte from the server renders into SwiftTerm. The status bar at the top of the window reflects the connection state (Idle, Connecting, Connected, Disconnected, Failed) with a colour-coded indicator: green Connected is the steady state, yellow Connecting is the handshake in flight, red Failed is a connection error, neutral Disconnected is a clean teardown.
+While the terminal is open, every keystroke flows directly to the SSH session and every byte from the server renders into SwiftTerm. The window toolbar carries a status pill: a colour-coded dot plus a one-word label tracking the connection state. Connecting is yellow (handshake in flight), Connected is green (the steady state), Disconnected is neutral (a clean teardown), Failed is red (a connection error). The pill is hidden in the Idle state before the first attempt. Next to it, a context-sensitive primary action button reads **Disconnect** while connected (closes the window and tears down the session) and **Reconnect** once disconnected or failed (re-fires the connection against the username and credential the form captured; the in-view Close button is its deliberate complement). When connected, an in-view endpoint strip below the toolbar shows the live `host:port` target in monospace, so you can confirm where your keystrokes are going before you type.
 
 **Closing the terminal closes the connection.** When you close the window, Pulse cancels the connection task, which tears down the SSH session, finalises the recording if one was running (the `.meta` sidecar gets `closed_at` and `chain_head_hash`), and shuts down the SwiftNIO event loop. There is no idle-disconnect timer; the connection lives until you close it or the server hangs up.
 
@@ -183,7 +183,7 @@ Adjust the size at runtime:
 
 **Scroll-to-bottom-on-input.** When you type while scrolled back in scrollback, Pulse snaps the viewport to the latest line *before* the keystroke renders. This is the standard terminal-emulator UX (Terminal.app, iTerm, tmux, screen all behave the same way); no preference exists because off-behaviour for this gesture would silently lose the operator's correlation between what they typed and what they see on screen.
 
-**Recording badge.** When you connect with a credential whose `recordSessions` flag is on, an SF Symbol `record.circle.fill` icon plus the word "Recording" appears in the status bar between the connection-status dot and the title. The badge is red but uses a distinct symbol shape so it cannot be mistaken for the red `.failed` status indicator. The badge clears automatically when the session ends (clean disconnect, server hang-up, window close).
+**Recording badge.** When you connect with a credential whose `recordSessions` flag is on, an SF Symbol `record.circle.fill` icon plus the word "Recording" appears in the window toolbar, where session-state indicators conventionally live (matching Terminal.app and iTerm). The badge is red but uses a distinct symbol shape so it cannot be mistaken for the red `.failed` status dot in the pill. The badge clears automatically when the session ends (clean disconnect, server hang-up, window close).
 
 The badge tracks credential intent + session state. If the recording stack fails mid-session (encryption error, disk full, internal queue overflow), the writer transitions to a terminal stop and emits `session.recording.failed` in the audit log; the session continues but the badge stays on until the session itself ends. The audit log is the source of truth on whether bytes are actually being written; the badge is the operator-facing intent signal.
 
@@ -269,9 +269,9 @@ Filter the full set with `log show --predicate 'subsystem == "pulse" AND categor
 
 1. In Settings → SSH, right-click a credential and toggle **Record sessions** on. Confirm `credential.recording.enabled` lands in `log show --predicate 'subsystem == "pulse" AND category == "ssh.credentials"' --last 1m`.
 2. Open the terminal against the dev Mac via the device row context menu. Expect two biometric prompts back-to-back per the "Connecting to a device" section — the first signs the SSH user-auth handshake, the second unwraps the recording wrapping key.
-3. With the terminal connected, confirm the recording badge (red `record.circle.fill` SF Symbol + "Recording" caption) appears in the status bar.
+3. With the terminal connected, confirm the recording badge (red `record.circle.fill` SF Symbol + "Recording" caption) appears in the window toolbar.
 4. Run a short interactive session that exercises the readline path: `ls`, `echo "lab-marker-$(date +%s)"`, type a sentence and use Backspace plus arrow keys to edit it before pressing Return.
-5. Close the terminal window. Confirm `session.recording.closed` lands with `recordCount`, `chainHeadHash`, and `durationMs`. Confirm the badge clears (visible in the status bar's `.disconnected` state).
+5. Close the terminal window. Confirm `session.recording.closed` lands with `recordCount`, `chainHeadHash`, and `durationMs`. Confirm the badge clears (visible via the toolbar pill's Disconnected state).
 6. Inspect the file output:
    ```
    ls -la ~/Library/Application\ Support/Pulse/Sessions/dev-<device-id>/
