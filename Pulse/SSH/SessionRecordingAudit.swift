@@ -97,11 +97,6 @@ enum SessionRecordingAudit {
 
         case purged(count: Int, oldestPurgedDate: Date?)
         case purgeFailed(reason: String)
-
-        // MARK: Credential toggle (category: ssh.credentials)
-
-        case credentialRecordingEnabled(credentialID: UUID)
-        case credentialRecordingDisabled(credentialID: UUID)
     }
 
     /// Reason a recording transitioned mid-stream to the terminal stop
@@ -135,7 +130,6 @@ enum SessionRecordingAudit {
     // MARK: - Emit
 
     private static let recordingLogger = Logger(subsystem: "pulse", category: "ssh.recording")
-    private static let credentialsLogger = Logger(subsystem: "pulse", category: "ssh.credentials")
 
     /// Single entry point. Production callers use the convenience
     /// methods below; this is the bottleneck where `os_log` happens.
@@ -177,14 +171,6 @@ enum SessionRecordingAudit {
         case let .purgeFailed(reason):
             recordingLogger.error(
                 "session.recording.purgeFailed reason=\(reason, privacy: .public)"
-            )
-        case let .credentialRecordingEnabled(credentialID):
-            credentialsLogger.notice(
-                "credential.recording.enabled credentialID=\(credentialID.uuidString, privacy: .public)"
-            )
-        case let .credentialRecordingDisabled(credentialID):
-            credentialsLogger.notice(
-                "credential.recording.disabled credentialID=\(credentialID.uuidString, privacy: .public)"
             )
         }
     }
@@ -240,14 +226,6 @@ extension SessionRecordingAudit {
 
     static func purgeFailed(reason: String) {
         emit(.purgeFailed(reason: reason))
-    }
-
-    static func credentialRecordingEnabled(credentialID: UUID) {
-        emit(.credentialRecordingEnabled(credentialID: credentialID))
-    }
-
-    static func credentialRecordingDisabled(credentialID: UUID) {
-        emit(.credentialRecordingDisabled(credentialID: credentialID))
     }
 }
 

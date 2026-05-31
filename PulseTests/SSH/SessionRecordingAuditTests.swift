@@ -27,8 +27,8 @@ import XCTest
 @testable import Pulse
 
 /// Coverage for `SessionRecordingAudit` — the typed audit surface that
-/// every `session.recording.*` and `credential.recording.*` event now
-/// flows through. The DEBUG-only `TestObserver` lets us assert on the
+/// every `session.recording.*` event now flows through. The DEBUG-only
+/// `TestObserver` lets us assert on the
 /// signal stream structurally rather than scraping `os_log` output.
 ///
 /// The tests fall in two groups:
@@ -76,13 +76,11 @@ final class SessionRecordingAuditTests: XCTestCase {
         let oldDate = Date(timeIntervalSince1970: 1_700_000_000)
         SessionRecordingAudit.purged(count: 3, oldestPurgedDate: oldDate)
         SessionRecordingAudit.purgeFailed(reason: "walkFault")
-        SessionRecordingAudit.credentialRecordingEnabled(credentialID: credentialID)
-        SessionRecordingAudit.credentialRecordingDisabled(credentialID: credentialID)
 
         let events = capture.events
-        XCTAssertEqual(events.count, 10)
+        XCTAssertEqual(events.count, 8)
 
-        guard events.count == 10 else { return }
+        guard events.count == 8 else { return }
 
         XCTAssertEqual(events[0], .recordingOpened(
             sessionID: sessionID,
@@ -102,8 +100,6 @@ final class SessionRecordingAuditTests: XCTestCase {
         XCTAssertEqual(events[5], .replayChainBroken(sessionID: sessionID, brokenAtSeq: 5))
         XCTAssertEqual(events[6], .purged(count: 3, oldestPurgedDate: oldDate))
         XCTAssertEqual(events[7], .purgeFailed(reason: "walkFault"))
-        XCTAssertEqual(events[8], .credentialRecordingEnabled(credentialID: credentialID))
-        XCTAssertEqual(events[9], .credentialRecordingDisabled(credentialID: credentialID))
     }
 
     func testFailureReasonAuditStrings() {

@@ -76,13 +76,13 @@ struct SSHCredentialsSettings: View {
         .sheet(isPresented: $creatingSE) {
             CreateSecureEnclaveCredentialSheet { newCred in
                 modelContext.insert(newCred)
-                logger.info("Created SE credential \(newCred.id): \(newCred.label)")
+                CredentialAudit.created(credentialID: newCred.id, tier: newCred.tier)
             }
         }
         .sheet(isPresented: $importingLegacy) {
             ImportLegacyCredentialSheet { newCred in
                 modelContext.insert(newCred)
-                logger.info("Imported legacy credential \(newCred.id): \(newCred.label)")
+                CredentialAudit.imported(credentialID: newCred.id, tier: newCred.tier)
             }
         }
         .confirmationDialog(
@@ -206,9 +206,9 @@ struct SSHCredentialsSettings: View {
             return
         }
         if cred.recordSessions {
-            SessionRecordingAudit.credentialRecordingEnabled(credentialID: cred.id)
+            CredentialAudit.recordingEnabled(credentialID: cred.id)
         } else {
-            SessionRecordingAudit.credentialRecordingDisabled(credentialID: cred.id)
+            CredentialAudit.recordingDisabled(credentialID: cred.id)
         }
     }
 
@@ -412,7 +412,7 @@ struct SSHCredentialsSettings: View {
                     errorMessage = "Device pointer cleanup save failed: \(error). The secret and credential metadata are already gone. Re-open Settings to verify state."
                 }
             }
-            logger.info("Deleted credential \(id) (\(tier.rawValue))")
+            CredentialAudit.deleted(credentialID: id, tier: tier)
         }
     }
 
