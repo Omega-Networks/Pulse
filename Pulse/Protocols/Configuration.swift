@@ -64,14 +64,9 @@ final class Configuration: @unchecked Sendable {
         // SSH per-credential material (Keychain, keyed by SSHCredential.id)
         static let sshCredentialPrefix = "ssh-cred-"
         static let sshPrivateKeySuffix = "-privateKey"
-        static let sshPassphraseSuffix = "-passphrase"
 
         static func sshPrivateKeyKey(for credentialID: UUID) -> String {
             "\(sshCredentialPrefix)\(credentialID.uuidString)\(sshPrivateKeySuffix)"
-        }
-
-        static func sshPassphraseKey(for credentialID: UUID) -> String {
-            "\(sshCredentialPrefix)\(credentialID.uuidString)\(sshPassphraseSuffix)"
         }
     }
     
@@ -467,62 +462,28 @@ final class Configuration: @unchecked Sendable {
         return true
     }
 
-    /// Passphrase protecting a portable-tier private key. `nil` when no passphrase is set.
-    func sshPassphrase(for credentialID: UUID) -> String? {
-        guard let data = loadFromKeychain(key: Keys.sshPassphraseKey(for: credentialID)) else {
-            return nil
-        }
-        return String(data: data, encoding: .utf8)
-    }
-
-    /// Stores the passphrase for a portable-tier private key. Returns true on success.
+    /// Removes the private key PEM for a credential.
     ///
-    /// Convenience overload that routes to the `Data` form. See the
-    /// counterpart on `setSSHPrivateKeyPEM` for the zeroing rationale.
-    @discardableResult
-    func setSSHPassphrase(_ passphrase: String, for credentialID: UUID) -> Bool {
-        setSSHPassphrase(Data(passphrase.utf8), for: credentialID)
-    }
-
-    /// `Data`-typed overload. The import sheet carries the passphrase as
-    /// `Data` end-to-end and writes through this method so the plaintext is
-    /// never round-tripped through an unzeroable `String`.
-    @discardableResult
-    func setSSHPassphrase(_ passphraseData: Data, for credentialID: UUID) -> Bool {
-        guard !passphraseData.isEmpty else { return false }
-        let status = saveToKeychain(
-            key: Keys.sshPassphraseKey(for: credentialID),
-            data: passphraseData
-        )
-        if status != errSecSuccess {
-            logger.error("Failed to save SSH passphrase for \(credentialID): \(status)")
-            return false
-        }
-        return true
-    }
-
-    /// Removes both the private key PEM and the passphrase for a credential.
-    ///
-    /// Treats `errSecItemNotFound` as success so the caller doesn't need to know
-    /// whether the entry was present. Returns `true` only when *both* Keychain
-    /// deletions either removed an entry or confirmed none existed. Surfacing the
-    /// success bit lets `SSHCredentialsSettings` keep the SwiftData record around
-    /// for a retry when cleanup partially fails: an orphaned PEM with no associated
+    /// Treats `errSecItemNotFound` as success so the caller doesn't need to
+    /// know whether the entry was present. Surfacing the success bit lets
+    /// `SSHCredentialsSettings` keep the SwiftData record around for a retry
+    /// when cleanup partially fails: an orphaned PEM with no associated
     /// credential metadata is worse than an unremoved row.
     ///
-    /// Secure Enclave residency is handled separately by `SecureEnclaveKeyManager`.
+    /// Secure Enclave residency is handled separately by
+    /// `SecureEnclaveKeyManager`. Encrypted-PEM passphrase storage is
+    /// deferred per ADR §1 ("Future portable additions" — bcrypt-pbkdf /
+    /// PBKDF2 reachability via an Apple SDK is the gating concern). The
+    /// passphrase Keychain methods removed here are recoverable from
+    /// git-blame when that surface lands.
     @discardableResult
     func deleteSSHMaterial(for credentialID: UUID) -> Bool {
         let keyStatus = deleteFromKeychain(key: Keys.sshPrivateKeyKey(for: credentialID))
-        let passphraseStatus = deleteFromKeychain(key: Keys.sshPassphraseKey(for: credentialID))
         let keyOK = keyStatus == errSecSuccess || keyStatus == errSecItemNotFound
-        let passOK = passphraseStatus == errSecSuccess || passphraseStatus == errSecItemNotFound
-        if !(keyOK && passOK) {
-            logger.error(
-                "Failed to delete SSH material for \(credentialID): key=\(keyStatus) passphrase=\(passphraseStatus)"
-            )
+        if !keyOK {
+            logger.error("Failed to delete SSH material for \(credentialID): key=\(keyStatus)")
         }
-        return keyOK && passOK
+        return keyOK
     }
 
     // MARK: - Example Values (for UI placeholders only)

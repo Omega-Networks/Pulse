@@ -98,7 +98,7 @@ struct SSHCredentialsSettings: View {
             if cred.tier == .secureEnclave {
                 Text("This removes the Secure Enclave key. It cannot be recovered or re-issued. Generate a new credential and re-enrol the public key on every device that trusted this one.")
             } else {
-                Text("Removes the private key PEM and any passphrase from the Keychain. The legacy key is gone unless you have a backup.")
+                Text("Removes the private key PEM from the Keychain. The legacy key is gone unless you have a backup.")
             }
         }
         .alert("Couldn't update credentials", isPresented: errorAlertBinding) {
@@ -597,21 +597,20 @@ private struct ImportLegacyCredentialSheet: View {
     @State private var label: String = ""
     // Secret-material state is held as `Data` so the persistent buffer can be
     // explicitly zeroed on dismissal via `Data.resetBytes(in:)`. The
-    // `pemDisplay` / `passphraseDisplay` bindings below adapt these to the
-    // `Binding<String>` that SwiftUI's `TextEditor` and `SecureField` require.
+    // `pemDisplay` binding below adapts this to the `Binding<String>` that
+    // SwiftUI's `TextEditor` requires.
     //
     // **What this delivers:** the persistent plaintext window closes on
     // dismissal — once the sheet goes away there is no Pulse-owned plaintext
     // residue waiting for the garbage collector.
     //
     // **What this does not deliver:** zero-cost zeroing of every transient
-    // plaintext copy. SwiftUI's `TextField`/`SecureField` bind to `String`,
-    // and the underlying AppKit/UIKit text input maintains its own buffer we
-    // cannot reach. Each keystroke materialises a transient `String` via the
+    // plaintext copy. SwiftUI's `TextField` binds to `String`, and the
+    // underlying AppKit/UIKit text input maintains its own buffer we cannot
+    // reach. Each keystroke materialises a transient `String` via the
     // binding shim; those instances are dropped to the runtime allocator
     // without being zeroed. The improvement is bounded but real.
     @State private var pem: Data = Data()
-    @State private var passphrase: Data = Data()
     @State private var importedKey: SSHKeyImporter.ImportedSSHKey?
     @State private var errorMessage: String?
 
@@ -632,13 +631,10 @@ private struct ImportLegacyCredentialSheet: View {
         .padding(24)
         .frame(minWidth: 520, minHeight: 360)
         .onDisappear {
-            // Zero the persistent buffers regardless of whether the sheet
+            // Zero the persistent buffer regardless of whether the sheet
             // dismissed via Cancel, successful commit, or window close.
             if !pem.isEmpty {
                 pem.resetBytes(in: 0..<pem.count)
-            }
-            if !passphrase.isEmpty {
-                passphrase.resetBytes(in: 0..<passphrase.count)
             }
         }
     }
@@ -656,12 +652,6 @@ private struct ImportLegacyCredentialSheet: View {
         )
     }
 
-    private var passphraseDisplay: Binding<String> {
-        Binding(
-            get: { String(data: passphrase, encoding: .utf8) ?? "" },
-            set: { newValue in passphrase = Data(newValue.utf8) }
-        )
-    }
 
     // MARK: Step 1 (gated warning)
 
@@ -736,22 +726,10 @@ private struct ImportLegacyCredentialSheet: View {
                     )
             }
 
-            if let importedKey, importedKey.isEncrypted {
-                SecureField("Passphrase", text: passphraseDisplay)
-                    .textFieldStyle(.roundedBorder)
-            }
-
             if let importedKey {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Detected: \(importedKey.algorithm.displayName) (\(importedKey.pemKind.rawValue))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if importedKey.isEncrypted {
-                        Text("Key is encrypted. Passphrase required.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
+                Text("Detected: \(importedKey.algorithm.displayName) (\(importedKey.pemKind.rawValue))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if let errorMessage {
@@ -781,9 +759,8 @@ private struct ImportLegacyCredentialSheet: View {
     }
 
     private var canImport: Bool {
-        guard let importedKey else { return false }
+        guard importedKey != nil else { return false }
         guard !label.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        if importedKey.isEncrypted && passphrase.isEmpty { return false }
         return true
     }
 
@@ -804,20 +781,16 @@ private struct ImportLegacyCredentialSheet: View {
         guard let importedKey else { return }
         let credentialID = UUID()
         let trimmedLabel = label.trimmingCharacters(in: .whitespaces)
-        // Capture the Data-typed payloads up front so the Task body doesn't
+        // Capture the Data-typed payload up front so the Task body doesn't
         // capture `self`'s @State (which would extend the plaintext window
         // past the onDisappear zero).
         let pemData = importedKey.normalisedPEMData
-        let passphraseData = passphrase
         Task {
             let config = await Configuration.shared
             let ok = await config.setSSHPrivateKeyPEM(pemData, for: credentialID)
             guard ok else {
                 await MainActor.run { errorMessage = "Couldn't store the PEM in the Keychain." }
                 return
-            }
-            if importedKey.isEncrypted {
-                _ = await config.setSSHPassphrase(passphraseData, for: credentialID)
             }
 
             // Derive the OpenSSH wire-format public key from the imported PEM
