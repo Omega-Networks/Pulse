@@ -118,14 +118,12 @@ enum SecureEnclaveKeyManager {
     /// Derived from `Bundle.main.bundleIdentifier` rather than hardcoded so
     /// it tracks the operator's `BUNDLE_IDENTIFIER` xcconfig (which flows
     /// into `PRODUCT_BUNDLE_IDENTIFIER` in pbxproj and on into the bundle's
-    /// `CFBundleIdentifier` at build time). The fallback literal is the
-    /// Omega default; it covers test contexts where `Bundle.main` may not
-    /// resolve to a configured bundle, and any deployment that didn't
-    /// populate `Development.xcconfig` will end up under the fallback —
-    /// which is the right safety net rather than a crash.
+    /// `CFBundleIdentifier` at build time). Bundle-ID resolution routes
+    /// through `pulseBundleID()` so a misconfigured test or CI
+    /// environment fires a loud fault (and a DEBUG assertion) rather
+    /// than silently routing through the production literal.
     private static let keychainService: String = {
-        let bundleID = Bundle.main.bundleIdentifier ?? "nz.net.omega.pulse"
-        return "\(bundleID).ssh"
+        return "\(pulseBundleID()).ssh"
     }()
 
     /// OpenSSH algorithm identifier for SE-backed keys. Centralised so the wire-format

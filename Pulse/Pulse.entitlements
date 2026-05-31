@@ -2,6 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  App Sandbox + network capabilities. These mirror the Xcode build
+	  settings (ENABLE_APP_SANDBOX, ENABLE_OUTGOING_NETWORK_CONNECTIONS,
+	  ENABLE_INCOMING_NETWORK_CONNECTIONS, ENABLE_USER_SELECTED_FILES)
+	  but live in source so the contract is grep-visible at review time
+	  rather than buried in project.pbxproj.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+	<!--
+	  Shared keychain group so the Pulse app and any helper bundles can
+	  reach the operator's SSH credentials and session-recording keys.
+	-->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>

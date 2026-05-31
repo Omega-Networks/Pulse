@@ -132,14 +132,13 @@ enum SessionLogWrappingKey {
     /// service `.ssh` so the two key sets never collide in
     /// `SecItemCopyMatching` queries.
     ///
-    /// The fallback literal is the Omega default; it covers test
-    /// contexts where `Bundle.main` may not resolve to a configured
-    /// bundle. A fork that didn't populate `Development.xcconfig`
-    /// would land here too, which is the right safety net rather than
-    /// a crash.
+    /// Bundle-ID resolution routes through `pulseBundleID()` so a
+    /// misconfigured test or CI environment fires a loud fault (and a
+    /// DEBUG assertion) rather than silently routing through the
+    /// production literal. Production builds resolve through
+    /// `Bundle.main.bundleIdentifier` as before.
     static let keychainService: String = {
-        let bundleID = Bundle.main.bundleIdentifier ?? "nz.net.omega.pulse"
-        return "\(bundleID).ssh.logwrap"
+        return "\(pulseBundleID()).ssh.logwrap"
     }()
 
     /// Account string for the single per-device wrapping key. A literal

@@ -14,6 +14,7 @@
 		067FD0952ECC6A2F00146D44 /* ProjectionSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD08D2ECC6A2F00146D44 /* ProjectionSystem.swift */; };
 		067FD09C2ECC6D1600146D44 /* Array+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD09B2ECC6D1600146D44 /* Array+Extensions.swift */; };
 		067FD09E2ECC6D5500146D44 /* Logger+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD09D2ECC6D5500146D44 /* Logger+Extensions.swift */; };
+		A11CAFE0000000000000300 /* Bundle+PulseBundleID.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000301 /* Bundle+PulseBundleID.swift */; };
 		06D467DA2ECDC7310092553E /* SpatialClusteringProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06D467D82ECDC7310092553E /* SpatialClusteringProtocols.swift */; };
 		06D467DB2ECDC7310092553E /* SpatialClusteringSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06D467D92ECDC7310092553E /* SpatialClusteringSystem.swift */; };
 		06E9CC462EE03377008DE369 /* PowerSenseDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06E9CC452EE03377008DE369 /* PowerSenseDataService.swift */; };
@@ -209,6 +210,7 @@
 		067FD08D2ECC6A2F00146D44 /* ProjectionSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectionSystem.swift; sourceTree = "<group>"; };
 		067FD09B2ECC6D1600146D44 /* Array+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Array+Extensions.swift"; sourceTree = "<group>"; };
 		067FD09D2ECC6D5500146D44 /* Logger+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Logger+Extensions.swift"; sourceTree = "<group>"; };
+		A11CAFE0000000000000301 /* Bundle+PulseBundleID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bundle+PulseBundleID.swift"; sourceTree = "<group>"; };
 		06D467D82ECDC7310092553E /* SpatialClusteringProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringProtocols.swift; sourceTree = "<group>"; };
 		06D467D92ECDC7310092553E /* SpatialClusteringSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringSystem.swift; sourceTree = "<group>"; };
 		06E9CC452EE03377008DE369 /* PowerSenseDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDataService.swift; sourceTree = "<group>"; };
@@ -447,6 +449,7 @@
 				067FD09B2ECC6D1600146D44 /* Array+Extensions.swift */,
 				A11CAFE000000000000000F7 /* Data+Extensions.swift */,
 				A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */,
+				A11CAFE0000000000000301 /* Bundle+PulseBundleID.swift */,
 			);
 			path = Extensions;
 			sourceTree = "<group>";
@@ -1146,6 +1149,7 @@
 				41C7AA642ACE081A009DB9BD /* CableProperties.swift in Sources */,
 				C96191B22ACA57AD000198DB /* SiteGroup.swift in Sources */,
 				067FD09E2ECC6D5500146D44 /* Logger+Extensions.swift in Sources */,
+				A11CAFE0000000000000300 /* Bundle+PulseBundleID.swift in Sources */,
 				C962F8EE2E606BBE00B182AE /* AddSiteWindow.swift in Sources */,
 				C96191F92ACA5C44000198DB /* MapView.swift in Sources */,
 				C96191AE2ACA578C000198DB /* Region.swift in Sources */,

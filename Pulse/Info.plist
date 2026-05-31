@@ -2,9 +2,30 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  App Transport Security. NSAllowsLocalNetworking permits plain
+	  HTTP and self-signed TLS on the local network (the common
+	  internal-deployment shape for NetBox and Zabbix); external
+	  traffic still goes through standard ATS. Operators whose
+	  NetBox / Zabbix lives on a public IP with a non-trusted cert
+	  can add a per-domain exception via NSExceptionDomains here, e.g.:
+
+	      <key>NSExceptionDomains</key>
+	      <dict>
+	        <key>netbox.example.org</key>
+	        <dict>
+	          <key>NSExceptionAllowsInsecureHTTPLoads</key>
+	          <true/>
+	        </dict>
+	      </dict>
+
+	  Per-server explicit trust settings (strict / accept self-signed
+	  / allow insecure, per-endpoint, logged) is the right long-term
+	  direction; queued as a future slice.
+	-->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>UIBackgroundModes</key>
