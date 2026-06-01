@@ -42,13 +42,13 @@ Neither tier syncs to iCloud. Both are `ThisDeviceOnly`. A credential created on
 
 This is the section to read carefully.
 
-The access group on every Secure Enclave credential is `<TeamID>.<BundleID>`. For the Omega Networks distribution build of Pulse, that resolves to:
+The access group on every Secure Enclave credential is `<TeamID>.<BundleID>`. For example, a build signed under team `ABCDE12345` with bundle ID `nz.net.omega.pulse` resolves to:
 
 ```
-ADC5AJV3TU.nz.net.omega.pulse
+ABCDE12345.nz.net.omega.pulse
 ```
 
-Where `ADC5AJV3TU` is the Omega Networks Apple Developer team ID and `nz.net.omega.pulse` is the bundle identifier the app is signed under.
+Where `ABCDE12345` stands in for your Apple Developer team ID and `nz.net.omega.pulse` is the bundle identifier the app is signed under.
 
 The Enclave uses the access group as part of how it authorises Keychain reads: only an app signed by the same team, under the same bundle ID, can ask the Enclave for that key reference. Change either half of the tuple and existing SE credentials become unreachable.
 
@@ -89,7 +89,7 @@ In Debug builds of Pulse, right-clicking any credential row shows an **Inspect k
 
 ```
 Credential: Lab-1
-Access group: ADC5AJV3TU.nz.net.omega.pulse
+Access group: ABCDE12345.nz.net.omega.pulse
 Token ID: (CryptoKit SE.P256 — generic-password storage)
 Synchronizable: false
 Access control: biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly
