@@ -930,6 +930,11 @@ struct SSHTerminalView: View {
         // contract; the recording tap already sits in the channel
         // pipeline, so this consumer only sees server-to-operator
         // bytes after the tap has captured them.
+        //
+        // Bind `surface` to a local first so the @Sendable handler captures a
+        // Sendable value, not the @MainActor-isolated view property (mirrors
+        // the `let controller = bellController` capture below).
+        let surface = surface
         await session.setOutputHandler { bytes in
             surface.feed(bytes)
         }
