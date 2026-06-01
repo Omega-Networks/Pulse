@@ -52,14 +52,15 @@ actor SSHSession {
 
     /// SSH child channel, scoped to this session. Routed-through-EventLoop ops
     /// are safe because every NIOCore Channel operation dispatches to its
-    /// `channel.eventLoop`; the `@unchecked Sendable` contract is honoured by
-    /// never touching the channel from the actor's executor directly. Same
+    /// `channel.eventLoop`; the access discipline is honoured by never
+    /// touching the channel from the actor's executor directly. Same
     /// pattern as `SSHClient`.
     ///
     /// `internal` rather than `private` so the `requestExec` extension in
     /// `SSHClient.swift` can reach the channel without breaking the
-    /// nonisolated-access seam.
-    nonisolated(unsafe) let childChannel: Channel
+    /// nonisolated-access seam. A Sendable `let` in an actor is implicitly
+    /// nonisolated, so no `(unsafe)` is needed.
+    nonisolated let childChannel: Channel
 
     /// Handlers callable from the EventLoop. Backed by an NIO-style locked
     /// box so the inbound data handler can deliver bytes synchronously to

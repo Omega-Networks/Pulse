@@ -116,11 +116,6 @@ struct DeviceRow: View {
         }
     }
     
-    private func getDevice() -> Device? {
-        let descriptor = FetchDescriptor<Device>(predicate: #Predicate { $0.id == deviceId })
-        return try? modelContext.fetch(descriptor).first
-    }
-    
     //TODO: Resolve issue with deleting device causing app-wide crash
     private func deleteDevice(_ deviceId: Int64) async {
         do {
