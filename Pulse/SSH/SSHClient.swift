@@ -240,6 +240,12 @@ actor SSHClient {
             inboundChildChannelInitializer: nil
         )
         do {
+            // NIOSSHHandler is not Sendable (swift-nio-ssh marks the
+            // conformance unavailable, so `@preconcurrency import` cannot
+            // silence it). It was created just above and lives only on this
+            // channel's pipeline. The not-Sendable warning on this await is
+            // accepted, not worked around: the safe alternatives restructure
+            // the connection hot path for zero runtime benefit.
             try await openedChannel.pipeline.addHandler(sshHandler).get()
         } catch {
             try? await openedChannel.close().get()
@@ -330,6 +336,11 @@ actor SSHClient {
 
         // Look up the handler we just installed. The closure runs on the
         // parent's EventLoop.
+        // NIOSSHHandler is not Sendable (swift-nio-ssh annotation gap). We
+        // fetch it via the pipeline future only to open the child channel
+        // immediately below; it is not stored or shared across tasks. The
+        // not-Sendable warning on this await is accepted (see the addHandler
+        // note in `connect`).
         let sshHandler: NIOSSHHandler
         do {
             sshHandler = try await parent.pipeline.handler(type: NIOSSHHandler.self).get()
