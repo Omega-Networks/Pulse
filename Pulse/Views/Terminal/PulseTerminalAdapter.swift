@@ -570,7 +570,14 @@ extension PulseTerminalAdapter {
     /// via `PulseTerminalSurface.bellHandler`). The rest are stubbed
     /// empty or forward to the system; `iTermContent` uses SwiftTerm's
     /// default implementation.
-    final class Coordinator: NSObject, TerminalViewDelegate {
+    /// `@MainActor` because every `TerminalViewDelegate` callback is
+    /// dispatched on the main thread by `TerminalView`, and the methods touch
+    /// main-actor state (the SwiftTerm view, `NSWorkspace` / `UIApplication`,
+    /// UIKit gesture state). `@preconcurrency` on the conformance lets these
+    /// main-actor methods satisfy SwiftTerm's nonisolated (pre-concurrency)
+    /// protocol requirements without per-call `assumeIsolated` dances.
+    @MainActor
+    final class Coordinator: NSObject, @preconcurrency TerminalViewDelegate {
 
         let surface: PulseTerminalSurface
 
