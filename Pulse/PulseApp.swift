@@ -170,19 +170,18 @@ struct PulseApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        // Per-Site Site View. The `id: "site-view"` argument
-        // disambiguates this scene from the SSH terminal scene at the
-        // openWindow call sites: both scenes register
-        // `WindowGroup(for: Int64.self)` (since Site.ID and Device.ID
-        // both resolve to Int64 via @Model's default Identifiable
-        // conformance), and without the explicit id the routing
-        // matches by registration order, which silently mis-routes
-        // device-targeted openWindow calls into this scene. See the
-        // doc-comment on `SSHTerminalScene` for the full rationale.
-        WindowGroup("Site View", id: "site-view", for: Site.ID.self) { $siteId in
+        // Per-Site Site View, keyed on the nominal `SiteWindowTarget`
+        // value type (Slice 8b). `Site.ID` and `Device.ID` both resolve
+        // to `Int64`, so keying on the raw id let device-targeted
+        // openWindow calls mis-route here by registration order; the
+        // distinct target type makes that a compile error. The
+        // `id: "site-view"` string is retained as a state-restoration
+        // anchor. See the doc-comment on `SSHTerminalScene` for the
+        // full rationale.
+        WindowGroup("Site View", id: "site-view", for: SiteWindowTarget.self) { $target in
             if showContentView {
-                if let id = siteId {
-                    SiteView(siteId: id)
+                if let target {
+                    SiteView(siteId: target.siteID)
                         .modelContainer(modelContainer)
                 }
             }

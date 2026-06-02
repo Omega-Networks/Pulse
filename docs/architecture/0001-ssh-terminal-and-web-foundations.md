@@ -169,7 +169,7 @@ protocol PulseTransport {
 
 ### 9. UI surface — two windows, one Settings pane
 
-- `WindowGroup("SSH Terminal", for: Device.ID.self)` and `WindowGroup("Device Web", for: Device.ID.self)`, mirroring the existing `WindowGroup("Site View", for: Site.ID.self)` in `PulseApp.swift`. As-built: the SSH terminal scene ships id-addressed (`WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self)` in `SSHTerminalWindow.swift`, wired via `SSHTerminalScene` in `PulseApp.swift`) to avoid the `Device.ID` / `Site.ID` collision on `Int64`. See the Slice 8a routing-disambiguation note. As-built (Slice W2b): the Device Web window ships the same way, `WindowGroup("Device Web", id: "device-web", for: Device.ID.self)` in `DeviceWebWindow.swift` wired via `DeviceWebScene`, rendering a device's web UI with `WebView` / `WebPage`. See the Web companion Slice W2a and W2b amendments.
+- `WindowGroup("SSH Terminal", for: Device.ID.self)` and `WindowGroup("Device Web", for: Device.ID.self)`, mirroring the existing `WindowGroup("Site View", for: Site.ID.self)` in `PulseApp.swift`. As-built: the SSH terminal scene ships id-addressed (`WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self)` in `SSHTerminalWindow.swift`, wired via `SSHTerminalScene` in `PulseApp.swift`) to avoid the `Device.ID` / `Site.ID` collision on `Int64`. See the Slice 8a routing-disambiguation note (and the Slice 8b amendments summary for the nominal-struct hardening that turned the routing into a compile-time guarantee). As-built (Slice W2b): the Device Web window ships the same way, `WindowGroup("Device Web", id: "device-web", for: Device.ID.self)` in `DeviceWebWindow.swift` wired via `DeviceWebScene`, rendering a device's web UI with `WebView` / `WebPage`. See the Web companion Slice W2a and W2b amendments.
 - Entry points: `DeviceRow.contextMenu` and `DeviceView` popover. Open SSH Terminal is disabled when `device.primaryIP == nil`; Open Web UI is shown only when `WebServiceResolver.primaryTarget(for:)` resolves a NetBox-declared web service.
 - Settings → SSH:
   - **Credentials** — CRUD, SE-backed generation (default), PEM import (legacy, second screen).
@@ -421,7 +421,25 @@ grep -rn 'openWindow.*site\.id\|openWindow.*siteId' Pulse | grep -v 'id: "site-v
 
 Both must return empty (modulo doc-comment text).
 
-**Slice 8b: nominal-struct wrapper for window routing.** The right structural follow-up: wrap `Device.ID` and `Site.ID` in distinct nominal struct types (`DeviceWindowTarget { let id: Device.ID }`, `SiteWindowTarget { let id: Site.ID }`) so the WindowGroup value type is unambiguous and a future `WindowGroup(for: Int64.self)` addition becomes a compile error rather than a silent mis-route. Cost: ~5 call-site updates, 2 small struct types, one-time state-restoration reset (the WindowGroup value type changes; SwiftUI's restoration storage from the prior build no longer decodes). Benefit: collision becomes a compile error rather than a discipline gate. Deferred to a follow-up slice; the symmetric `id:` fix in Slice 8a is sufficient for today's bug and for ordering changes in `PulseApp.body`.
+## Slice 8b amendments summary
+
+Slice 8b closes the structural follow-up reserved by Slice 8a. `Device.ID` and `Site.ID` both resolve to `Int64`, so the two id-addressed `WindowGroup`s were distinguished only by their `id:` strings: a runtime discipline a future scene could silently break. This slice keys each scene on a distinct nominal value type so a misroute is a compile error. It hardens working code; Slice 8a already removed the live mis-route, so there is no behavioural bug here to fix. Three structural notes worth recording so future maintainers do not re-derive the trade-offs:
+
+- **§9 nominal window-routing value types.** `DeviceWindowTarget { let deviceID: Device.ID }` and `SiteWindowTarget { let siteID: Site.ID }` (both `Hashable & Codable`) replace the raw `Int64` `WindowGroup(for:)` value types. `WindowGroup(for:)` requires `Hashable & Codable`, which the structs satisfy exactly as `Int64` did; the win is that `openWindow(value: someDeviceTarget)` against the Site View scene no longer type-checks. Both structs live in `SSHTerminalWindow.swift` rather than their own files: they are routing envelopes for the app's two id-addressed scenes, not domain types, and co-locating avoids two new `.pbxproj` registrations for ten lines of code. *Alternative considered:* keep the Slice 8a `id:`-string discipline. Rejected because it is a review-time gate, not a compiler-enforced one; the nominal types make the next scene addition fail loudly at build time.
+- **§9 `id:` strings retained.** The `id: "ssh-terminal"` / `id: "site-view"` arguments stay even though the distinct value types now carry the routing guarantee. They remain the SwiftUI state-restoration identity and a second line of defence against a future `Int64`-keyed scene. Removing them would churn restoration storage for no structural gain.
+- **One-time state-restoration reset.** Changing the `WindowGroup` value type from `Int64` to the target structs means SwiftUI's persisted window state from a prior build no longer decodes; restored terminal and Site View windows are discarded once on the first launch after the upgrade and reopen fresh thereafter. This is operator-visible, so it is also called out in the release notes, not only here. The `Codable` round-trip is pinned by `testDeviceWindowTargetCodableRoundTrip` / `testSiteWindowTargetCodableRoundTrip` in `SSHConnectFormTests` so a future change that breaks the conformance, which would silently drop every restored window, trips a test instead.
+
+Structural gates (the Slice 8a `openWindow.*device\.id` call-site greps are superseded; the value type, not the call-site id, is now the guarantee). The first grep was deliberately chosen to fire: it returns the three real registrations before this slice and empty after, where the obvious `WindowGroup(for: Int64` grep would have matched only doc comments and passed vacuously both ways.
+
+```bash
+# No scene keys a WindowGroup on the raw model id; all three key on a target struct.
+grep -rEn 'WindowGroup\(".*for: (Device|Site)\.ID\.self\) \{' Pulse --include="*.swift"                       # empty
+grep -rEn 'WindowGroup\(".*for: (DeviceWindowTarget|SiteWindowTarget)\.self\) \{' Pulse --include="*.swift"   # 3
+# No openWindow call site passes a raw id (anchored to leading whitespace so doc comments cannot false-match).
+grep -rEn '^[[:space:]]*openWindow\(.*value: (device\.id|site\.id|siteId)' Pulse --include="*.swift"           # empty
+```
+
+The §4 and §9 §-body "as-built" pointers added in the docs-currency pass reconcile here: §9 points to the Slice 8a note for the id-addressed step and to this section for the nominal-struct hardening.
 
 ## Slice 8c note — chrome trim, decomposition, click-to-update fix
 

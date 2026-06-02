@@ -569,4 +569,41 @@ final class SSHConnectFormTests: XCTestCase {
     func testPrimaryActionShapeFailedIsReconnect() {
         XCTAssertEqual(SSHTerminalView.primaryActionShape(for: .failed("reason")), .reconnect)
     }
+
+    // MARK: - Window routing targets (Slice 8b)
+
+    /// `DeviceWindowTarget` must round-trip through `Codable`: SwiftUI
+    /// persists the `WindowGroup` value for state restoration, so a
+    /// silent encode/decode failure would drop restored terminal
+    /// windows. Pins the conformance the routing depends on.
+    func testDeviceWindowTargetCodableRoundTrip() throws {
+        let original = DeviceWindowTarget(deviceID: 4_815_162_342)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(DeviceWindowTarget.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.deviceID, 4_815_162_342)
+    }
+
+    /// `SiteWindowTarget` must round-trip through `Codable` for the same
+    /// state-restoration reason as `DeviceWindowTarget`.
+    func testSiteWindowTargetCodableRoundTrip() throws {
+        let original = SiteWindowTarget(siteID: 1_123_581_321)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SiteWindowTarget.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.siteID, 1_123_581_321)
+    }
+
+    /// The two targets are distinct nominal types even though both wrap
+    /// `Int64`: carrying the same raw id, they encode to different
+    /// payloads (keyed by `deviceID` vs `siteID`). That distinctness is
+    /// the structural property turning a routing mix-up into a compile
+    /// error rather than the prior `Int64` registration-order collision.
+    func testWindowTargetsAreDistinctlyKeyed() throws {
+        let deviceJSON = String(data: try JSONEncoder().encode(DeviceWindowTarget(deviceID: 7)), encoding: .utf8)
+        let siteJSON = String(data: try JSONEncoder().encode(SiteWindowTarget(siteID: 7)), encoding: .utf8)
+        XCTAssertEqual(deviceJSON, "{\"deviceID\":7}")
+        XCTAssertEqual(siteJSON, "{\"siteID\":7}")
+        XCTAssertNotEqual(deviceJSON, siteJSON)
+    }
 }

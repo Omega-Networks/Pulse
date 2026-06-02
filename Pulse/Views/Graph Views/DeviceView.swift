@@ -202,12 +202,13 @@ struct DeviceView: View {
             // noise. SwiftUI suppresses the right-click menu
             // entirely when the builder produces no content. Future
             // UI (Open Web UI, Copy IP, etc.) extends this block
-            // when there's an operator ask. Explicit `id:
-            // "ssh-terminal"` for the routing disambiguation; see
-            // `SSHTerminalScene` doc-comment.
+            // when there's an operator ask. The id is wrapped in
+            // `DeviceWindowTarget` so routing is by type (Slice 8b); the
+            // matching `id: "ssh-terminal"` is the restoration anchor.
+            // See `SSHTerminalScene` doc-comment.
             if let primaryIP = device.primaryIP, !primaryIP.isEmpty {
                 Button {
-                    openWindow(id: "ssh-terminal", value: device.id)
+                    openWindow(id: "ssh-terminal", value: DeviceWindowTarget(deviceID: device.id))
                 } label: {
                     Label("Open SSH Terminal", systemImage: "terminal.fill")
                 }
