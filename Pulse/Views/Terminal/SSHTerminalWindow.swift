@@ -26,27 +26,55 @@
 import SwiftUI
 import SwiftData
 
+/// Window-routing value type for the per-device SSH terminal scene.
+///
+/// `Device.ID` and `Site.ID` both resolve to `Int64` (the default
+/// `Identifiable.ID` for the two `@Model` classes whose `id: Int64`), so
+/// a bare `WindowGroup(for: Int64.self)` cannot tell a device-targeted
+/// window open from a site-targeted one. Wrapping each id in a distinct
+/// nominal type makes the two `WindowGroup` value types unambiguous: an
+/// `openWindow` aimed at the wrong scene is a compile error, not a
+/// routing-order accident.
+///
+/// `Codable` is load-bearing. SwiftUI persists the window's value for
+/// state restoration, so the conformance must stay explicit; if it is
+/// ever dropped, restored windows silently fail to decode.
+///
+/// The targets store the model's `Int64` NetBox id directly rather than
+/// the `Identifiable` associated type: `Site` is not explicitly
+/// `Identifiable`, so `Site.ID` is not usable as a stored-property type,
+/// and the `Int64` is exactly the value the `openWindow` call sites
+/// already hold.
+struct DeviceWindowTarget: Hashable, Codable {
+    let deviceID: Int64
+}
+
+/// Window-routing value type for the per-site Site View scene. See
+/// `DeviceWindowTarget` for why the id is wrapped in a nominal type.
+struct SiteWindowTarget: Hashable, Codable {
+    let siteID: Int64
+}
+
 /// Scene wrapper for the operator-facing SSH terminal. On macOS this
-/// exposes a per-`Device.ID` `WindowGroup`; SwiftUI's per-value
-/// `WindowGroup` semantics activate an existing window when the
-/// operator triggers `openWindow(id: "ssh-terminal", value: device.id)`
+/// exposes a per-`DeviceWindowTarget` `WindowGroup`; SwiftUI's per-value
+/// `WindowGroup` semantics activate an existing window when the operator
+/// triggers `openWindow(id: "ssh-terminal", value: DeviceWindowTarget(deviceID: device.id))`
 /// for a device that already has a terminal open, which is the desired
 /// single-terminal-per-device behaviour.
 ///
-/// **Why the `id: "ssh-terminal"` argument.** `Device.ID` and `Site.ID`
+/// **Why a nominal value type (Slice 8b).** `Device.ID` and `Site.ID`
 /// both resolve to `Int64` (the default `Identifiable.ID` for the two
-/// `@Model` classes whose `id: Int64`). SwiftUI's `WindowGroup(for:)`
-/// keys on the Swift type, not the textual declaration, so two
-/// `WindowGroup(for: Int64.self)` registrations collide and
-/// `openWindow(value: device.id)` matches by registration order rather
-/// than by intent. The explicit `id:` argument disambiguates the
-/// routing per the SwiftUI contract: `openWindow(id:value:)` targets
-/// exactly the named scene regardless of value-type collisions. The
-/// Site View scene carries a matching `id: "site-view"` for the same
-/// reason; both call sites pass the matching `id:`. A future slice may
-/// wrap the two ids in distinct nominal struct types
-/// (`DeviceWindowTarget`, `SiteWindowTarget`) so the disambiguation
-/// becomes a compile error rather than a string-id discipline gate.
+/// `@Model` classes whose `id: Int64`), so two
+/// `WindowGroup(for: Int64.self)` registrations would collide and a bare
+/// `openWindow(value: someInt64)` would match by registration order
+/// rather than by intent. Slice 8a fixed the runtime routing with an
+/// explicit `id:` string per scene; Slice 8b hardens that into a
+/// compile-time guarantee by keying each scene on a distinct nominal
+/// type (`DeviceWindowTarget` here, `SiteWindowTarget` for Site View).
+/// A misrouted `openWindow` is now a type error, not a registration-order
+/// accident. The `id:` strings are retained as state-restoration anchors
+/// and as a guard against a future `Int64`-keyed scene; every call site
+/// passes the matching `id:` and wraps its id in the matching target.
 ///
 /// On iOS the same view is buildable but no scene registers it here;
 /// iOS routing from a device row to the terminal is the concern of
@@ -64,9 +92,9 @@ struct SSHTerminalScene: Scene {
     /// branches below stay focused on the modifier chain and the body
     /// itself is declared once.
     @ViewBuilder
-    private func sceneContent(for deviceID: Device.ID?) -> some View {
-        if let id = deviceID {
-            SSHTerminalView(connection: .device(id))
+    private func sceneContent(for target: DeviceWindowTarget?) -> some View {
+        if let target {
+            SSHTerminalView(connection: .device(target.deviceID))
                 .modelContainer(modelContainer)
         } else {
             // SwiftUI can instantiate the scene with a nil value
@@ -108,16 +136,16 @@ struct SSHTerminalScene: Scene {
         // The iOS scene wiring (future slice) inherits the same
         // `.toolbar` declaration on the view body and renders it via
         // the platform-default toolbar surface.
-        WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self) { $deviceID in
-            sceneContent(for: deviceID)
+        WindowGroup("SSH Terminal", id: "ssh-terminal", for: DeviceWindowTarget.self) { $target in
+            sceneContent(for: target)
         }
         .windowResizability(.contentSize)
         .windowToolbarStyle(.unified(showsTitle: true))
     }
     #else
     var body: some Scene {
-        WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self) { $deviceID in
-            sceneContent(for: deviceID)
+        WindowGroup("SSH Terminal", id: "ssh-terminal", for: DeviceWindowTarget.self) { $target in
+            sceneContent(for: target)
         }
     }
     #endif
