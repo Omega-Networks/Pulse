@@ -77,7 +77,7 @@ The intended deployment is FreeIPA-issued user certificates over SE-generated pu
 `SSHCredential` does not carry a username. The same key can authenticate `root`, `admin`, vendor-default, or operator accounts on different devices. Username lives on:
 
 - `Device.defaultUsername: String?` — preferred username for this device.
-- `SSHConnectSheet` per-session override field.
+- Per-session override field on the connect form. As-built (Slice 7): shipped as the inline `SSHConnectForm` in `Pulse/Views/Terminal/`, not a separate `SSHConnectSheet`. See the Slice 7 amendments summary.
 
 This matches how SSH actually works and stops operators from cloning credentials just to vary the user.
 
@@ -93,7 +93,7 @@ enum HostTrust {
 
 TOFU (Trust On First Use) is the *fallback*, not the model. The `pinned` case ships in v1; `trustedCA` ships with FreeIPA enrolment in v2. The enum case is reserved now so the schema does not need a breaking migration.
 
-A per-site / per-tenant policy `requireCertificateVerification: Bool` is supported in v1 (default `false`). When `true`, non-cert-attested connections are refused without an explicit override that is logged.
+A per-site / per-tenant policy `requireCertificateVerification: Bool` is reserved for v2 and lands with `trustedCA` enforcement (FreeIPA enrolment). When `true`, non-cert-attested connections will be refused without an explicit override that is logged. It is not implemented in v1; the `pinned` TOFU path is the v1 trust model.
 
 The UI distinguishes the trust modes at a glance: CA-attested (green), pinned (amber), unverified (red). No exceptions to this visual contract.
 
@@ -169,7 +169,7 @@ protocol PulseTransport {
 
 ### 9. UI surface — two windows, one Settings pane
 
-- `WindowGroup("SSH Terminal", for: Device.ID.self)` and `WindowGroup("Device Web", for: Device.ID.self)`, mirroring the existing `WindowGroup("Site View", for: Site.ID.self)` in `PulseApp.swift:159`.
+- `WindowGroup("SSH Terminal", for: Device.ID.self)` and `WindowGroup("Device Web", for: Device.ID.self)`, mirroring the existing `WindowGroup("Site View", for: Site.ID.self)` in `PulseApp.swift`. As-built: the SSH terminal scene ships id-addressed (`WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self)` in `SSHTerminalWindow.swift`, wired via `SSHTerminalScene` in `PulseApp.swift`) to avoid the `Device.ID` / `Site.ID` collision on `Int64`. See the Slice 8a routing-disambiguation note. The "Device Web" window is the v1.5 Web companion, not built in v1.
 - Entry points: `DeviceRow.contextMenu` and `DeviceView` popover, disabled when `device.primaryIP == nil`.
 - Settings → SSH:
   - **Credentials** — CRUD, SE-backed generation (default), PEM import (legacy, second screen).
@@ -208,11 +208,16 @@ If either invariant breaks, the bump is blocked until the equivalent display-sch
 - Audit metadata via `os_log`.
 - Encrypted session recording behind per-credential toggle.
 - Session browser with biometric-gated playback.
-- SSH terminal window + Web companion window.
+- SSH terminal window.
 - `PulseTransport` seam with `DirectTransport` implementation.
 
+### v1.5 (Web companion)
+- In-app `WebView` / `WebPage` device UI.
+- `pulse-tunnel://` scheme handler resolving through `PulseTransport`, with a navigation decider and toolbar bindings (`page.title`, `page.estimatedProgress`).
+- The `PulseTransport` and `DeviceURLSchemeHandler` seams ship in v1; the Web surface that consumes them is its own milestone. It was listed under v1 in the original plan but never built.
+
 ### v2
-- FreeIPA enrolment UI and trusted-CA import.
+- FreeIPA enrolment UI and trusted-CA import (including `requireCertificateVerification` enforcement).
 - Off-device log attestation (signed chain heads shipped to FreeIPA / internal log service).
 - iOS SwiftUI surface (the underlying Swift already compiles for iOS).
 
