@@ -79,8 +79,8 @@ Drill down from geographic overview to detailed site topology, including network
 
 Before you begin, make sure you have:
 
-- **Mac computer** running macOS 13 (Ventura) or later
-- **Xcode 15 or later** installed (free from Mac App Store)
+- **Mac computer** running macOS 26 or later
+- **Xcode 26 or later** installed (free from Mac App Store)
 - **Apple Developer account** (free account is sufficient for development)
 - **Git** installed (comes with Xcode Command Line Tools)
 - **Infrastructure** (optional): NetBox instance and Zabbix monitoring system
@@ -107,7 +107,6 @@ For experienced developers, here's the quick version:
 3. Edit `Development.xcconfig` with your team-specific values:
 ```
    DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
-   CLOUDKIT_CONTAINER_ID = iCloud.com.yourorg.pulse
    BUNDLE_IDENTIFIER = com.yourorg.pulse
 ```
 
@@ -119,7 +118,6 @@ For experienced developers, here's the quick version:
 5. Configure data sources
    - Add your NetBox endpoint URL
    - Configure Zabbix monitoring credentials
-   - Set up CloudKit container (if using sync features)
 
 For detailed step-by-step instructions, continue reading below.
 
@@ -158,7 +156,7 @@ cp Development.xcconfig.template Development.xcconfig
 
 #### Step 3: Find Your Apple Developer Configuration Values
 
-Before editing the configuration file, you need to gather three pieces of information from your Apple Developer account.
+Before editing the configuration file, you need to gather two pieces of information from your Apple Developer account.
 
 ##### A. Find Your Team ID
 
@@ -170,46 +168,9 @@ Your Team ID is a 10-character code that identifies your Apple Developer account
 3. Go to **Account → Membership Details**
 4. Your **Team ID** is listed there
 
-##### B. Create Your CloudKit Container ID
+##### B. Create Your Bundle Identifier
 
-Each organisation needs their own CloudKit container. You'll need to create this in the Apple Developer Portal.
-
-**Step-by-step:**
-
-1. Visit [developer.apple.com](https://developer.apple.com)
-2. Sign in with your Apple ID
-3. Click **Account** in the top navigation
-4. Under **Program resources**, find the **Services** section
-5. Click **CloudKit**
-6. Click **CloudKit Database**
-7. You'll see a list of existing containers (or a "Create New Container" button if you don't have any)
-8. Click **Create New Container**
-9. Enter your container identifier using this format:
-   ```
-   iCloud.{domain}.{org}.pulse
-   ```
-   Replace with your organisation's domain structure (lowercase, use dots as separators)
-   
-   **Example for Omega Networks:**
-   - `iCloud.nz.net.omega.pulse`
-   
-   **Other examples:**
-   - `iCloud.com.yourorg.pulse`
-   - `iCloud.yourorg.pulse`
-   
-   **Naming tips:**
-   - Use your actual domain structure (e.g., if you're `citycouncil.govt.nz`, use `iCloud.nz.govt.citycouncil.pulse`)
-   - Or use a simplified format like `iCloud.yourorg.pulse`
-   - Both approaches work - choose what makes sense for your organisation
-
-10. Click **Create**
-11. **Write down your container ID** - you'll need it in the next step
-
-**Naming tip:** You can use domain-style naming (like `nz.net.omega`) or hyphenated names (like `omega-networks`). Both work fine.
-
-##### C. Create Your Bundle Identifier
-
-Your bundle identifier uniquely identifies your app. It can use a different format from your CloudKit container.
+Your bundle identifier uniquely identifies your app.
 
 **Step-by-step:**
 
@@ -233,33 +194,22 @@ Your bundle identifier uniquely identifies your app. It can use a different form
     - `yourorg.pulse`
     - `com.yourorg.pulse`
     
-    **Naming tip:** Your bundle identifier doesn't need to match your CloudKit container format. Choose what makes sense for your organisation.
+    **Naming tip:** Choose a bundle identifier that makes sense for your organisation.
 
-11. Scroll down and enable the **CloudKit** capability
-12. Click **Continue** then **Register**
-
-**Important:** Your bundle identifier doesn't have to match your CloudKit container format exactly. For example:
-- CloudKit: `iCloud.nz.net.omega.pulse`
-- Bundle ID: `omega-networks.Pulse`
-
-Or:
-- CloudKit: `iCloud.nz.govt.wellington.pulse`
-- Bundle ID: `wellington-council.pulse`
-
-This is perfectly valid!
+11. Click **Continue** then **Register**
 
 ---
 
 #### Step 4: Edit Your Configuration File
 
-Now you'll add your three values to the configuration file.
+Now you'll add your two values to the configuration file.
 
 ##### Option A: Using a Text Editor (Recommended for Beginners)
 
 1. In **Finder**, navigate to the `pulse` folder you just cloned
 2. Find the file called `Development.xcconfig`
 3. Right-click on it and choose **Open With → TextEdit**
-4. You need to replace THREE values:
+4. You need to replace TWO values:
    
    **Line 1 - Team ID:**
    ```
@@ -267,13 +217,7 @@ Now you'll add your three values to the configuration file.
    ```
    Replace `YOUR_TEAM_ID_HERE` with your Team ID (e.g., `ABCDE12345`)
    
-   **Line 2 - CloudKit Container:**
-   ```
-   CLOUDKIT_CONTAINER_ID = iCloud.com.yourorg.pulse
-   ```
-   Replace with your container ID (e.g., `iCloud.nz.net.omega.pulse` or `iCloud.nz.govt.wellington.pulse`)
-   
-   **Line 3 - Bundle Identifier:**
+   **Line 2 - Bundle Identifier:**
    ```
    BUNDLE_IDENTIFIER = com.yourorg.pulse
    ```
@@ -288,9 +232,8 @@ nano Development.xcconfig
 ```
 
 1. Use arrow keys to navigate through the file
-2. Replace these THREE values:
+2. Replace these TWO values:
    - `YOUR_TEAM_ID_HERE` → Your Team ID (e.g., `ABCDE12345`)
-   - `iCloud.com.yourorg.pulse` → Your CloudKit container (e.g., `iCloud.nz.net.omega.pulse` or `iCloud.au.com.utilities.pulse`)
    - `com.yourorg.pulse` → Your bundle identifier (e.g., `omega-networks.Pulse` or `nz.govt.wellington.pulse`)
 3. Press **Control+X** to exit
 4. Press **Y** to save changes
@@ -302,16 +245,12 @@ nano Development.xcconfig
 // Apple Developer Team ID - find this in your Apple Developer account
 DEVELOPMENT_TEAM = ABCDE12345
 
-// CloudKit container identifier - create this in your Apple Developer portal
-CLOUDKIT_CONTAINER_ID = iCloud.nz.net.omega.pulse
-
 // Base bundle identifier for your app
 BUNDLE_IDENTIFIER = omega-networks.Pulse
 ```
 
 **Replace these with YOUR actual values:**
 - `ABCDE12345` with your Team ID
-- `iCloud.nz.net.omega.pulse` with your CloudKit container
 - `omega-networks.Pulse` with your Bundle ID
 
 ---
@@ -412,20 +351,6 @@ Zabbix provides real-time monitoring metrics.
 5. Try unchecking and rechecking **"Automatically manage signing"**
 6. If the bundle identifier shows as "not available", you need to register it in the Apple Developer Portal first
 
-#### CloudKit Errors
-
-**Problem:** "CloudKit container not found" or sync issues.
-
-**Solution:**
-1. Verify you're signed into iCloud on your Mac
-2. Check that your CloudKit container exists in Apple Developer Portal
-   - Go to developer.apple.com → Account → Services → CloudKit → CloudKit Database
-   - Verify your container (e.g., `iCloud.nz.net.omega.pulse`) is listed
-3. Make sure the container ID in `Development.xcconfig` exactly matches what's in the portal (including `iCloud.` prefix)
-4. Verify your app has the CloudKit capability enabled in Xcode **Signing & Capabilities**
-5. In Xcode's CloudKit capability, make sure your container is selected in the dropdown
-6. Try cleaning the build folder: **Product → Clean Build Folder** (⌘+Shift+K)
-
 #### Build Takes Forever
 
 **Problem:** First build is taking an extremely long time.
@@ -470,11 +395,11 @@ A: No, Pulse is a macOS/iOS application and requires macOS and Xcode to build an
 
 **Q: Where is my data stored?**
 
-A: Pulse stores data locally on your Mac and optionally syncs to your personal iCloud account. Your infrastructure monitoring data comes from your NetBox and Zabbix servers - Pulse doesn't store a copy of this data, it queries it in real-time.
+A: Pulse stores all data locally on your Mac with no cloud synchronization. Your infrastructure monitoring data comes from your NetBox and Zabbix servers - Pulse queries it in real-time and keeps a local cache. No data is sent to external cloud services.
 
 **Q: Can multiple people use the same Pulse deployment?**
 
-A: Yes, each person follows these setup instructions with their own Apple Developer account. They all connect to the shared NetBox and Zabbix servers. Data can be synced between team members via CloudKit if configured.
+A: Yes, each person follows these setup instructions with their own Apple Developer account. They all connect to the shared NetBox and Zabbix servers. Each person maintains their own local cache and app state.
 
 **Q: Do I need both NetBox and Zabbix?**
 
@@ -502,7 +427,7 @@ Pulse thrives on the triadic relationship between Industry, Academia, and Commun
 - **Academia**: Research new capabilities and validate approaches through real-world testing
 - **Community**: Provide use cases, feedback, and local knowledge that shapes development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for technical guidelines.
+Contributions are welcome via issues and pull requests.
 
 ## License
 
