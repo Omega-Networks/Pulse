@@ -254,7 +254,7 @@ final class PulseTerminalAdapterTests: XCTestCase {
         let collector = StateCollector()
         let registrar = ExitHandlerRegistrar()
 
-        await SSHTerminalView.registerRecordingLifecycle(
+        await SSHTerminalConnectionViewModel.registerRecordingLifecycle(
             register: { handler in await registrar.attach(handler) },
             onChange: { newValue in collector.append(newValue) }
         )
