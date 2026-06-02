@@ -141,7 +141,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// eligible. The "double-click and go" muscle-memory path.
     func testAutoFireDeviceModeWithBothDefaultsAndKnownCredential() {
         let credentialID = UUID()
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .device(42),
             deviceDefaultUsername: "admin",
             deviceDefaultCredentialID: credentialID,
@@ -161,7 +161,7 @@ final class SSHConnectFormTests: XCTestCase {
     func testAutoFireDeviceModeWithStaleCredentialIDReturnsNil() {
         let staleID = UUID()
         let otherID = UUID()
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .device(42),
             deviceDefaultUsername: "admin",
             deviceDefaultCredentialID: staleID,
@@ -175,7 +175,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// the operator's "type the right username" moment.
     func testAutoFireDeviceModeWithoutUsernameReturnsNil() {
         let credentialID = UUID()
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .device(42),
             deviceDefaultUsername: nil,
             deviceDefaultCredentialID: credentialID,
@@ -189,7 +189,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// as "configured"; trimming catches it.
     func testAutoFireDeviceModeWithWhitespaceUsernameReturnsNil() {
         let credentialID = UUID()
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .device(42),
             deviceDefaultUsername: "   ",
             deviceDefaultCredentialID: credentialID,
@@ -201,7 +201,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// Credential default missing → form. Operator gets the picker
     /// rather than a silent failure mid-lifecycle.
     func testAutoFireDeviceModeWithoutCredentialReturnsNil() {
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .device(42),
             deviceDefaultUsername: "admin",
             deviceDefaultCredentialID: nil,
@@ -213,7 +213,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// Both defaults nil → form. The vast majority of devices in
     /// production today (since no UI exists yet to set the defaults).
     func testAutoFireDeviceModeWithNeitherDefaultReturnsNil() {
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .device(42),
             deviceDefaultUsername: nil,
             deviceDefaultCredentialID: nil,
@@ -227,7 +227,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// should still auto-fire cleanly with the trimmed username.
     func testAutoFireDeviceModeTrimsUsernameBeforeAttempt() {
         let credentialID = UUID()
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .device(42),
             deviceDefaultUsername: "  admin\n",
             deviceDefaultCredentialID: credentialID,
@@ -244,7 +244,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// the lifecycle runs immediately.
     func testAutoFireAdHocModeReturnsAttemptFromConnectionValues() {
         let credentialID = UUID()
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .adHoc(host: "127.0.0.1", port: 22, username: "root", credentialID: credentialID),
             deviceDefaultUsername: nil,
             deviceDefaultCredentialID: nil,
@@ -265,8 +265,8 @@ final class SSHConnectFormTests: XCTestCase {
     /// attempt would not retrigger the lifecycle.
     func testConnectionAttemptIdentityIncludesNonce() {
         let credentialID = UUID()
-        let a = SSHTerminalView.ConnectionAttempt(nonce: UUID(), username: "admin", credentialID: credentialID, saveAsDefault: false)
-        let b = SSHTerminalView.ConnectionAttempt(nonce: UUID(), username: "admin", credentialID: credentialID, saveAsDefault: false)
+        let a = SSHTerminalConnectionViewModel.ConnectionAttempt(nonce: UUID(), username: "admin", credentialID: credentialID, saveAsDefault: false)
+        let b = SSHTerminalConnectionViewModel.ConnectionAttempt(nonce: UUID(), username: "admin", credentialID: credentialID, saveAsDefault: false)
         XCTAssertNotEqual(a, b, "Two attempts with the same payload but different nonces must compare unequal so .task(id:) re-fires.")
     }
 
@@ -281,8 +281,8 @@ final class SSHConnectFormTests: XCTestCase {
     func testConnectionAttemptIdentityIncludesSaveAsDefault() {
         let nonce = UUID()
         let credentialID = UUID()
-        let optedOut = SSHTerminalView.ConnectionAttempt(nonce: nonce, username: "admin", credentialID: credentialID, saveAsDefault: false)
-        let optedIn = SSHTerminalView.ConnectionAttempt(nonce: nonce, username: "admin", credentialID: credentialID, saveAsDefault: true)
+        let optedOut = SSHTerminalConnectionViewModel.ConnectionAttempt(nonce: nonce, username: "admin", credentialID: credentialID, saveAsDefault: false)
+        let optedIn = SSHTerminalConnectionViewModel.ConnectionAttempt(nonce: nonce, username: "admin", credentialID: credentialID, saveAsDefault: true)
         XCTAssertNotEqual(optedOut, optedIn, "Toggling saveAsDefault between attempts must invalidate identity so .task(id:) re-fires.")
     }
 
@@ -298,7 +298,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// opt-in posture exists to prevent.
     func testAutoFireDeviceModeNeverOptsIntoSaveAsDefault() {
         let credentialID = UUID()
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .device(42),
             deviceDefaultUsername: "admin",
             deviceDefaultCredentialID: credentialID,
@@ -313,7 +313,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// to), but the contract is stated on the attempt itself so it
     /// holds uniformly across modes.
     func testAutoFireAdHocModeNeverOptsIntoSaveAsDefault() {
-        let attempt = SSHTerminalView.autoFireAttempt(
+        let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
             connection: .adHoc(host: "127.0.0.1", port: 22, username: "root", credentialID: UUID()),
             deviceDefaultUsername: nil,
             deviceDefaultCredentialID: nil,
@@ -340,13 +340,13 @@ final class SSHConnectFormTests: XCTestCase {
         XCTAssertNil(device.defaultUsername)
         XCTAssertNil(device.defaultCredentialID)
         let credentialID = UUID()
-        let attempt = SSHTerminalView.ConnectionAttempt(
+        let attempt = SSHTerminalConnectionViewModel.ConnectionAttempt(
             nonce: UUID(),
             username: "admin",
             credentialID: credentialID,
             saveAsDefault: false
         )
-        let wrote = SSHTerminalView.applyDeviceDefaultsIfRequested(attempt: attempt, device: device)
+        let wrote = SSHTerminalConnectionViewModel.applyDeviceDefaultsIfRequested(attempt: attempt, device: device)
         XCTAssertFalse(wrote, "Opt-out attempt must not write.")
         XCTAssertNil(device.defaultUsername, "defaultUsername must remain nil after opt-out attempt.")
         XCTAssertNil(device.defaultCredentialID, "defaultCredentialID must remain nil after opt-out attempt.")
@@ -360,13 +360,13 @@ final class SSHConnectFormTests: XCTestCase {
     func testApplyDeviceDefaultsIfRequestedWritesBothFieldsWhenOptedIn() {
         let device = Device(id: 42)
         let credentialID = UUID()
-        let attempt = SSHTerminalView.ConnectionAttempt(
+        let attempt = SSHTerminalConnectionViewModel.ConnectionAttempt(
             nonce: UUID(),
             username: "admin",
             credentialID: credentialID,
             saveAsDefault: true
         )
-        let wrote = SSHTerminalView.applyDeviceDefaultsIfRequested(attempt: attempt, device: device)
+        let wrote = SSHTerminalConnectionViewModel.applyDeviceDefaultsIfRequested(attempt: attempt, device: device)
         XCTAssertTrue(wrote)
         XCTAssertEqual(device.defaultUsername, "admin")
         XCTAssertEqual(device.defaultCredentialID, credentialID)
@@ -379,13 +379,13 @@ final class SSHConnectFormTests: XCTestCase {
     /// hygiene.
     @MainActor
     func testApplyDeviceDefaultsIfRequestedSkipsWriteForNilDevice() {
-        let attempt = SSHTerminalView.ConnectionAttempt(
+        let attempt = SSHTerminalConnectionViewModel.ConnectionAttempt(
             nonce: UUID(),
             username: "admin",
             credentialID: UUID(),
             saveAsDefault: true
         )
-        let wrote = SSHTerminalView.applyDeviceDefaultsIfRequested(attempt: attempt, device: nil)
+        let wrote = SSHTerminalConnectionViewModel.applyDeviceDefaultsIfRequested(attempt: attempt, device: nil)
         XCTAssertFalse(wrote, "Nil device must produce no write even when the attempt opted in.")
     }
 
@@ -401,7 +401,7 @@ final class SSHConnectFormTests: XCTestCase {
         let device = Device(id: 42)
         device.defaultUsername = "admin"
         device.defaultCredentialID = UUID()
-        SSHTerminalView.clearDeviceDefaults(device: device)
+        SSHTerminalConnectionViewModel.clearDeviceDefaults(device: device)
         XCTAssertNil(device.defaultUsername, "defaultUsername must be nil after clear.")
         XCTAssertNil(device.defaultCredentialID, "defaultCredentialID must be nil after clear.")
     }
@@ -512,23 +512,23 @@ final class SSHConnectFormTests: XCTestCase {
     /// to surface the pill in `.idle` doesn't have to re-derive the
     /// copy.
     func testStatusPillCopyIdle() {
-        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .idle), "Idle")
+        XCTAssertEqual(SSHTerminalConnectionViewModel.statusPillCopy(for: .idle), "Idle")
     }
 
     func testStatusPillCopyConnecting() {
-        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .connecting), "Connecting")
+        XCTAssertEqual(SSHTerminalConnectionViewModel.statusPillCopy(for: .connecting), "Connecting")
     }
 
     func testStatusPillCopyConnected() {
-        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .connected), "Connected")
+        XCTAssertEqual(SSHTerminalConnectionViewModel.statusPillCopy(for: .connected), "Connected")
     }
 
     func testStatusPillCopyDisconnected() {
-        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .disconnected("cause")), "Disconnected")
+        XCTAssertEqual(SSHTerminalConnectionViewModel.statusPillCopy(for: .disconnected("cause")), "Disconnected")
     }
 
     func testStatusPillCopyFailed() {
-        XCTAssertEqual(SSHTerminalView.statusPillCopy(for: .failed("reason")), "Failed")
+        XCTAssertEqual(SSHTerminalConnectionViewModel.statusPillCopy(for: .failed("reason")), "Failed")
     }
 
     /// `.idle` and `.connecting` produce no primary action — the
@@ -537,11 +537,11 @@ final class SSHConnectFormTests: XCTestCase {
     /// in-flight handshake is visualised by the status pill turning
     /// yellow, no action button.
     func testPrimaryActionShapeIdleIsNil() {
-        XCTAssertNil(SSHTerminalView.primaryActionShape(for: .idle))
+        XCTAssertNil(SSHTerminalConnectionViewModel.primaryActionShape(for: .idle))
     }
 
     func testPrimaryActionShapeConnectingIsNil() {
-        XCTAssertNil(SSHTerminalView.primaryActionShape(for: .connecting))
+        XCTAssertNil(SSHTerminalConnectionViewModel.primaryActionShape(for: .connecting))
     }
 
     /// `.connected` maps to `.disconnect`. The action's behaviour
@@ -550,14 +550,14 @@ final class SSHConnectFormTests: XCTestCase {
     /// the mapping pinned here is the "which action is showing"
     /// contract.
     func testPrimaryActionShapeConnectedIsDisconnect() {
-        XCTAssertEqual(SSHTerminalView.primaryActionShape(for: .connected), .disconnect)
+        XCTAssertEqual(SSHTerminalConnectionViewModel.primaryActionShape(for: .connected), .disconnect)
     }
 
     /// `.disconnected` maps to `.reconnect`. Operator can re-fire
     /// the lifecycle from the captured form values without
     /// returning to the form.
     func testPrimaryActionShapeDisconnectedIsReconnect() {
-        XCTAssertEqual(SSHTerminalView.primaryActionShape(for: .disconnected("cause")), .reconnect)
+        XCTAssertEqual(SSHTerminalConnectionViewModel.primaryActionShape(for: .disconnected("cause")), .reconnect)
     }
 
     /// `.failed` also maps to `.reconnect`. Same retry path; the
@@ -567,7 +567,7 @@ final class SSHConnectFormTests: XCTestCase {
     /// to the same re-fire (toolbar uses captured values; form
     /// re-binds them); deliberate complements.
     func testPrimaryActionShapeFailedIsReconnect() {
-        XCTAssertEqual(SSHTerminalView.primaryActionShape(for: .failed("reason")), .reconnect)
+        XCTAssertEqual(SSHTerminalConnectionViewModel.primaryActionShape(for: .failed("reason")), .reconnect)
     }
 
     // MARK: - Window routing targets (Slice 8b)
@@ -605,5 +605,104 @@ final class SSHConnectFormTests: XCTestCase {
         XCTAssertEqual(deviceJSON, "{\"deviceID\":7}")
         XCTAssertEqual(siteJSON, "{\"siteID\":7}")
         XCTAssertNotEqual(deviceJSON, siteJSON)
+    }
+
+    // MARK: - resolveConnection (lifecycle resolution seam)
+
+    private func makeCredential(id: UUID) -> SSHCredential {
+        SSHCredential(id: id, label: "test", tier: .secureEnclave, publicKey: Data())
+    }
+
+    private func makeAttempt(credentialID: UUID, username: String = "admin") -> SSHTerminalConnectionViewModel.ConnectionAttempt {
+        SSHTerminalConnectionViewModel.ConnectionAttempt(
+            nonce: UUID(),
+            username: username,
+            credentialID: credentialID,
+            saveAsDefault: false
+        )
+    }
+
+    /// Device-backed attempt with no device row resolves to `.failed`
+    /// with the operator-facing "not found" message, before any network
+    /// work. The lifecycle's first guard, now testable without a stack.
+    func testResolveConnectionDeviceNotFoundFails() {
+        let result = SSHTerminalConnectionViewModel.resolveConnection(
+            connection: .device(42),
+            attempt: makeAttempt(credentialID: UUID()),
+            device: nil,
+            credentials: []
+        )
+        guard case .failed(let reason) = result else { return XCTFail("expected .failed, got \(result)") }
+        XCTAssertTrue(reason.contains("not found in the local store"), "got: \(reason)")
+    }
+
+    /// Device present but no primary IP → `.failed`. Catches a NetBox row
+    /// mid-edit (blank or absent primaryIP) before the connect attempt.
+    func testResolveConnectionNoPrimaryIPFails() {
+        let device = Device(id: 42)
+        let result = SSHTerminalConnectionViewModel.resolveConnection(
+            connection: .device(42),
+            attempt: makeAttempt(credentialID: UUID()),
+            device: device,
+            credentials: []
+        )
+        guard case .failed(let reason) = result else { return XCTFail("expected .failed, got \(result)") }
+        XCTAssertTrue(reason.contains("no primary IP"), "got: \(reason)")
+    }
+
+    /// Device + IP present but the attempt's credential is not in the
+    /// store (deleted while the window was open) → `.failed`. The
+    /// defence-in-depth guard the form surfaces for recovery.
+    func testResolveConnectionCredentialNotFoundFails() {
+        let device = Device(id: 42)
+        device.primaryIP = "192.0.2.1/32"
+        let result = SSHTerminalConnectionViewModel.resolveConnection(
+            connection: .device(42),
+            attempt: makeAttempt(credentialID: UUID()),
+            device: device,
+            credentials: [makeCredential(id: UUID())]
+        )
+        guard case .failed(let reason) = result else { return XCTFail("expected .failed, got \(result)") }
+        XCTAssertTrue(reason.contains("Credential not found"), "got: \(reason)")
+    }
+
+    /// Happy path: device + CIDR-stripped IP + matching credential →
+    /// `.ready` with the stripped host, resolved port, device id, the
+    /// attempt's username (not the device row), and the located credential.
+    func testResolveConnectionDeviceReadyResolvesParams() {
+        let credID = UUID()
+        let device = Device(id: 42)
+        device.primaryIP = "192.0.2.1/32"
+        device.preferredSSHPort = 2222
+        let result = SSHTerminalConnectionViewModel.resolveConnection(
+            connection: .device(42),
+            attempt: makeAttempt(credentialID: credID, username: "root"),
+            device: device,
+            credentials: [makeCredential(id: credID)]
+        )
+        guard case .ready(let resolved) = result else { return XCTFail("expected .ready, got \(result)") }
+        XCTAssertEqual(resolved.host, "192.0.2.1")
+        XCTAssertEqual(resolved.port, 2222)
+        XCTAssertEqual(resolved.deviceID, 42)
+        XCTAssertEqual(resolved.username, "root")
+        XCTAssertEqual(resolved.credential.id, credID)
+    }
+
+    /// Ad-hoc attempt resolves without a device row: host/port come from
+    /// the connection, deviceID is nil, and the credential lookup still
+    /// applies.
+    func testResolveConnectionAdHocResolvesWithoutDevice() {
+        let credID = UUID()
+        let result = SSHTerminalConnectionViewModel.resolveConnection(
+            connection: .adHoc(host: "198.51.100.5", port: 22, username: "ops", credentialID: credID),
+            attempt: makeAttempt(credentialID: credID, username: "ops"),
+            device: nil,
+            credentials: [makeCredential(id: credID)]
+        )
+        guard case .ready(let resolved) = result else { return XCTFail("expected .ready, got \(result)") }
+        XCTAssertEqual(resolved.host, "198.51.100.5")
+        XCTAssertEqual(resolved.port, 22)
+        XCTAssertNil(resolved.deviceID)
+        XCTAssertEqual(resolved.credential.id, credID)
     }
 }
