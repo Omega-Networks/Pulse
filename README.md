@@ -265,7 +265,7 @@ Now you'll add your three values to the configuration file.
    ```
    DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
    ```
-   Replace `YOUR_TEAM_ID_HERE` with your Team ID (e.g., `ADC5AJV3TU`)
+   Replace `YOUR_TEAM_ID_HERE` with your Team ID (e.g., `ABCDE12345`)
    
    **Line 2 - CloudKit Container:**
    ```
@@ -289,7 +289,7 @@ nano Development.xcconfig
 
 1. Use arrow keys to navigate through the file
 2. Replace these THREE values:
-   - `YOUR_TEAM_ID_HERE` → Your Team ID (e.g., `ADC5AJV3TU`)
+   - `YOUR_TEAM_ID_HERE` → Your Team ID (e.g., `ABCDE12345`)
    - `iCloud.com.yourorg.pulse` → Your CloudKit container (e.g., `iCloud.nz.net.omega.pulse` or `iCloud.au.com.utilities.pulse`)
    - `com.yourorg.pulse` → Your bundle identifier (e.g., `omega-networks.Pulse` or `nz.govt.wellington.pulse`)
 3. Press **Control+X** to exit
@@ -300,7 +300,7 @@ nano Development.xcconfig
 
 ```xcconfig
 // Apple Developer Team ID - find this in your Apple Developer account
-DEVELOPMENT_TEAM = ADC5AJV3TU
+DEVELOPMENT_TEAM = ABCDE12345
 
 // CloudKit container identifier - create this in your Apple Developer portal
 CLOUDKIT_CONTAINER_ID = iCloud.nz.net.omega.pulse
@@ -310,7 +310,7 @@ BUNDLE_IDENTIFIER = omega-networks.Pulse
 ```
 
 **Replace these with YOUR actual values:**
-- `ADC5AJV3TU` with your Team ID
+- `ABCDE12345` with your Team ID
 - `iCloud.nz.net.omega.pulse` with your CloudKit container
 - `omega-networks.Pulse` with your Bundle ID
 
