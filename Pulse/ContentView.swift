@@ -30,11 +30,6 @@ import UserNotifications
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    
-    // Add transaction control
-    private let updateQueue = DispatchQueue(label: "com.pulse.mapupdates")
-    @State private var isProcessingUpdates = false
-    
     @Environment(\.openWindow) var openWindow
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \SiteGroup.name, order: .forward) private var siteGroups: [SiteGroup]
@@ -57,15 +52,16 @@ struct ContentView: View {
     @State private var cameraPosition: MapCameraPosition = .automatic
     
     //Proprety for changing the map style
-    @AppStorage("mapStyle") 
+    @AppStorage("mapStyle")
     var mapStyle: MapStyle = .standard
     @State var openMapStyles = false
-    
+
+    //Property for PowerSense overlay toggle
+    @State var showPowerSenseOverlay = false
+
     //Properties for the iOS version
     @State private var eventMonitoringTimer: Timer?
     @State var zabbixUpdateTimer: Timer?
-    @State private var isMonitoringEnabled = false
-    
     //Properties for notification handling
     @State private var showingNotificationAlert = false
     let notificationHandler = NotificationHandler()
@@ -99,7 +95,8 @@ struct ContentView: View {
                     cameraPosition: $cameraPosition,
                     mapStyle: $mapStyle,
                     selectedSite: $selectedSite,
-                    selectedSiteGroups: selectedSiteGroups
+                    selectedSiteGroups: selectedSiteGroups,
+                    showPowerSenseOverlay: $showPowerSenseOverlay
                 )
             }
 #elseif os (iOS)
@@ -111,7 +108,8 @@ struct ContentView: View {
                     selectedSite: $selectedSite,
                     selectedSiteGroups: selectedSiteGroups,
                     openSiteGroups: $openSiteGroups,
-                    isMapSheetPresented: $isMapSheetPresented
+                    isMapSheetPresented: $isMapSheetPresented,
+                    showPowerSenseOverlay: $showPowerSenseOverlay
                 )
             }
             .sheet(isPresented: $mainSheetOpen) { //Main sheet containing list of sites and search bar
@@ -142,7 +140,8 @@ struct ContentView: View {
         .toolbar(content: toolbarContent)
 #endif
         .task {
-            ///Delay push notification by 30 seconds to allow CloudKit to sync with Pulse
+            /// Delay Zabbix monitoring start by 30s so initial container/sync
+            /// work finishes before we begin background polling.
             DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
                 startMonitoringZabbixUpdates()
             }

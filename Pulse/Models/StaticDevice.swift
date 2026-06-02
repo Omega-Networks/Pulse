@@ -102,9 +102,7 @@ struct StaticDevice: Identifiable, Equatable {
     static func == (lhs: StaticDevice, rhs: StaticDevice) -> Bool {
         return lhs.id == rhs.id
     }
-}
 
-extension StaticDevice {
     func getDeviceBays() async -> [DeviceBay] {
         if deviceRole == "Shelf" {
             return await DeviceBayCache.shared.getDeviceBays(forDeviceId: id)

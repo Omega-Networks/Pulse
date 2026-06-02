@@ -96,6 +96,16 @@ final class ZabbixAPI: @unchecked Sendable {
 }
 
 // MARK: - ZabbixResource Protocol Extension
+
+/// API resource protocol extension. Move to own file.
+protocol ZabbixResource {
+    associatedtype ModelType: Decodable
+    var methodPath: String { get }
+    var method: String { get }
+    var params: [String: Any]? { get }
+    var headers: [String: String]? { get }
+}
+
 extension ZabbixResource {
     var request: URLRequest {
         get async throws {
@@ -142,16 +152,6 @@ extension ZabbixResource {
             return request
         }
     }
-}
-
-
-/// API resource protocol extension. Move to own file.
-protocol ZabbixResource {
-    associatedtype ModelType: Decodable
-    var methodPath: String { get }
-    var method: String { get }
-    var params: [String: Any]? { get }
-    var headers: [String: String]? { get }
 }
 
 enum ZabbixError: Error {

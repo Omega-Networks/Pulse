@@ -57,9 +57,7 @@ class APIRequest<Resource: NetboxResource> {
         self.apiKey = apiKey
         self.baseURL = baseURL
     }
-}
 
-extension APIRequest {
     func decode(_ data: Data) -> [Resource.ModelType]? {
         let decoder = JSONDecoder()
         let wrapper = try? decoder.decode(Wrapper<Resource.ModelType>.self, from: data)
