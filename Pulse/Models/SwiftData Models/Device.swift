@@ -33,6 +33,11 @@ import SwiftUI
 
 @Model
 final class Device {
+    // Secondary index on `defaultCredentialID` so the credential-delete
+    // cleanup fetch resolves via the index rather than a full-table scan at
+    // 1M+ devices. See the `defaultCredentialID` declaration below.
+    #Index<Device>([\.defaultCredentialID])
+
     @Attribute(.unique) var id: Int64
     var created: Date?
     var display: String?
@@ -61,11 +66,10 @@ final class Device {
     // points at the operator's preferred `SSHCredential` for this device when one has
     // been chosen; nil means the connect sheet picks at runtime. See ADR 0001 §4.
 
-    // TODO: scale. SwiftData (as of macOS 26) doesn't expose a secondary index on
-    // non-unique properties. `SSHCredentialsSettings.deleteCredential` runs
-    // `FetchDescriptor<Device>(predicate: { $0.defaultCredentialID == id })` during
-    // cleanup, which is a full-table scan at 1M+ devices. Cleanup is rare so the cost
-    // is amortised. Revisit when SwiftData gains `@Attribute(.index)` or equivalent.
+    // Indexed (see `#Index` at the top of the model). The credential-delete
+    // cleanup in `SSHCredentialsSettings.deleteCredential` runs
+    // `#Predicate { $0.defaultCredentialID == id }`; the index turns that from
+    // a full-table scan into an index lookup at 1M+ devices.
     var defaultCredentialID: UUID?
     var defaultUsername: String?
     var preferredSSHPort: Int?
