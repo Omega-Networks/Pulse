@@ -102,8 +102,10 @@ struct DeviceWebView: View {
                         Label("Could not load", systemImage: "exclamationmark.triangle")
                     } description: {
                         Text(loadFailure)
+                            .textSelection(.enabled)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .textSelection(.enabled)
                 } else {
                     WebView(page)
                 }
@@ -231,10 +233,19 @@ struct DeviceWebView: View {
                 loadFailure = nil
             }
         } catch {
+            // WebPage.NavigationError is an opaque wrapper (often code 0); the
+            // real cause is usually the URL-loading error it carries in
+            // NSUnderlyingError. Surface both so an operator can read and copy
+            // the actionable code (for example -1202 untrusted cert, -1022 ATS).
             let nsError = error as NSError
+            let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
             Logger(subsystem: "pulse", category: "web.session")
-                .error("web.session.load_failed host=\(resolved.host, privacy: .public) port=\(resolved.port, privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code) desc=\(nsError.localizedDescription, privacy: .public)")
-            loadFailure = "\(nsError.localizedDescription)\n\(nsError.domain) \(nsError.code)"
+                .error("web.session.load_failed host=\(resolved.host, privacy: .public) port=\(resolved.port, privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code) underlying=\(underlying.map { "\($0.domain)#\($0.code)" } ?? "none", privacy: .public) desc=\(nsError.localizedDescription, privacy: .public)")
+            var message = "\(nsError.localizedDescription)\n\(nsError.domain) \(nsError.code)"
+            if let underlying {
+                message += "\nunderlying: \(underlying.domain) \(underlying.code) \(underlying.localizedDescription)"
+            }
+            loadFailure = message
         }
     }
 
