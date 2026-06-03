@@ -93,6 +93,7 @@ struct PulseApp: App {
                 Site.self,
                 Device.self,
                 Service.self,
+                WebHostTrust.self,
                 Event.self,
                 SyncProvider.self,
                 PowerSenseDevice.self,

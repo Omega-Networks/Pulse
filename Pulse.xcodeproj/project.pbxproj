@@ -141,6 +141,13 @@
 		C96191A02ACA5711000198DB /* Edge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961919F2ACA5711000198DB /* Edge.swift */; };
 		C96191A22ACA5721000198DB /* Device.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A12ACA5721000198DB /* Device.swift */; };
 		B17E050100000000000000B1 /* Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A1 /* Service.swift */; };
+		B17E050200000000000000B1 /* WebHostTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A1 /* WebHostTrust.swift */; };
+		B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A2 /* WebHostTrustStore.swift */; };
+		B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A3 /* TLSCertificateInspector.swift */; };
+		B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A4 /* WebServiceResolver.swift */; };
+		B17E050200000000000000B5 /* TLSTrustCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A5 /* TLSTrustCoordinator.swift */; };
+		B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A6 /* WebTrustFoundationTests.swift */; };
+		B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */; };
 		C96191A42ACA572E000198DB /* DeviceRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A32ACA572E000198DB /* DeviceRole.swift */; };
 		C96191A62ACA573A000198DB /* DeviceType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A52ACA573A000198DB /* DeviceType.swift */; };
 		C96191AE2ACA578C000198DB /* Region.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191AD2ACA578C000198DB /* Region.swift */; };
@@ -341,6 +348,13 @@
 		C961919F2ACA5711000198DB /* Edge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Edge.swift; sourceTree = "<group>"; };
 		C96191A12ACA5721000198DB /* Device.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Device.swift; sourceTree = "<group>"; };
 		B17E050100000000000000A1 /* Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Service.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A1 /* WebHostTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrust.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A2 /* WebHostTrustStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrustStore.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A3 /* TLSCertificateInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSCertificateInspector.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A4 /* WebServiceResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebServiceResolver.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A5 /* TLSTrustCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSTrustCoordinator.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A6 /* WebTrustFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebTrustFoundationTests.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSTrustCoordinatorTests.swift; sourceTree = "<group>"; };
 		C96191A32ACA572E000198DB /* DeviceRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRole.swift; sourceTree = "<group>"; };
 		C96191A52ACA573A000198DB /* DeviceType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceType.swift; sourceTree = "<group>"; };
 		C96191AD2ACA578C000198DB /* Region.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Region.swift; sourceTree = "<group>"; };
@@ -635,6 +649,27 @@
 			path = Networking;
 			sourceTree = "<group>";
 		};
+		B17E050200000000000000C1 /* Web */ = {
+			isa = PBXGroup;
+			children = (
+				B17E050200000000000000A1 /* WebHostTrust.swift */,
+				B17E050200000000000000A2 /* WebHostTrustStore.swift */,
+				B17E050200000000000000A3 /* TLSCertificateInspector.swift */,
+				B17E050200000000000000A4 /* WebServiceResolver.swift */,
+				B17E050200000000000000A5 /* TLSTrustCoordinator.swift */,
+			);
+			path = Web;
+			sourceTree = "<group>";
+		};
+		B17E050200000000000000C2 /* Web */ = {
+			isa = PBXGroup;
+			children = (
+				B17E050200000000000000A6 /* WebTrustFoundationTests.swift */,
+				B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */,
+			);
+			path = Web;
+			sourceTree = "<group>";
+		};
 		A11CAFE0000000000000DAD5 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
@@ -680,6 +715,7 @@
 				C9951EDB2E8CDA0F0025C136 /* Services */,
 				A11CAFE0000000000000DAD1 /* SSH */,
 				A11CAFE0000000000000DAD4 /* Networking */,
+				B17E050200000000000000C1 /* Web */,
 				C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */,
 				C96191632ACA552F000198DB /* ContentView.swift */,
 				410A560F2D0F898B00C722E3 /* SyncDashboardView.swift */,
@@ -858,6 +894,7 @@
 			children = (
 				A11CAFE0000000000000DAD3 /* SSH */,
 				A11CAFE0000000000000DAD5 /* Networking */,
+				B17E050200000000000000C2 /* Web */,
 			);
 			path = PulseTests;
 			sourceTree = "<group>";
@@ -1182,6 +1219,11 @@
 				C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */,
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
 				B17E050100000000000000B1 /* Service.swift in Sources */,
+				B17E050200000000000000B1 /* WebHostTrust.swift in Sources */,
+				B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */,
+				B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */,
+				B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */,
+				B17E050200000000000000B5 /* TLSTrustCoordinator.swift in Sources */,
 				C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */,
 				C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */,
 				C96191D92ACA5B17000198DB /* EdgeLabel.swift in Sources */,
@@ -1201,6 +1243,8 @@
 				A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */,
 				A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */,
 				B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */,
+				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
+				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
 				A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */,
 				A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */,
 				A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */,
