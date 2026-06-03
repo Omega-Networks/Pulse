@@ -10,6 +10,8 @@ Right-click a device (in the site list or the topology graph) and choose **Open 
 
 The **Open Web UI** option appears only when NetBox declares a web service for the device (see below). If it is absent, the device has no HTTP or HTTPS service defined in NetBox.
 
+The first time Pulse reaches a device on your local network, macOS asks whether Pulse may access local network devices. Grant it, or the page fails to load with a "could not connect" error (`NSURLErrorCannotConnectToHost`, -1004). You can change this later in **System Settings > Privacy & Security > Local Network**.
+
 ## How Pulse picks the URL: NetBox is the source of truth
 
 Pulse does not guess a device's web address. It reads the device's **NetBox Application Services** (IPAM > Services) and opens what NetBox declares:

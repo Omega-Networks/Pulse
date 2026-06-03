@@ -28,6 +28,17 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<!--
+	  Local Network privacy (macOS 15+). The Device Web companion and the SSH
+	  terminal connect to appliances on the operator's local network by private
+	  IP; macOS gates those connections behind a Local Network permission and
+	  fails them with NSURLErrorCannotConnectToHost (-1004) until the operator
+	  grants access. This usage string is what macOS shows in that prompt.
+	  NetBox / Zabbix over a routed hostname do not trip this gate; a WKWebView
+	  reaching a local appliance does.
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Pulse connects to devices on your local network to open their web and terminal management interfaces.</string>
 	<key>UIBackgroundModes</key>
 	<array/>
 </dict>
