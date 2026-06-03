@@ -47,3 +47,6 @@ project.xcworkspace/xcuserdata/
 # Claude Code / AI assistant local state. Never commit.
 .claude/
 CLAUDE.md
+
+# Session dev logs are output as text for the operator, never committed.
+docs/devlog/
