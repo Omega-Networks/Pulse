@@ -202,6 +202,7 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
                 presentedFingerprint: fingerprint,
                 presentedAlgorithm: algorithm
             )
+            logger.notice("web.trust.first_sight_outcome host=\(host, privacy: .public) accepted=\(outcome == .accept)")
             guard case .accept = outcome else {
                 WebAudit.rejected(host: host, port: port, reason: Self.rejectReason(outcome))
                 return (.cancelAuthenticationChallenge, nil)
@@ -213,6 +214,10 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
             do {
                 try await store.recordPinned(host: host, port: port, fingerprintSHA256: fingerprint, algorithm: algorithm)
                 WebAudit.pinned(host: host, port: port, fingerprint: fingerprint)
+                // Reload only now that the pin is durable, so the reloaded page
+                // reads it back and loads silently (acceptPinned) instead of
+                // racing the write and re-prompting in a loop.
+                coordinator.notePinCommitted()
             } catch {
                 WebAudit.commitFailed(host: host, port: port, fingerprint: fingerprint)
             }
@@ -240,6 +245,8 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
                 do {
                     try await store.replacePin(host: host, port: port, fingerprintSHA256: fingerprint, algorithm: algorithm)
                     WebAudit.accepted(host: host, port: port, fingerprint: fingerprint)
+                    // Reload only after the rotated pin is durable. See first-sight note.
+                    coordinator.notePinCommitted()
                 } catch {
                     WebAudit.commitFailed(host: host, port: port, fingerprint: fingerprint)
                 }

@@ -61,11 +61,23 @@ final class TLSTrustCoordinator: ObservableObject {
 
     @Published var pending: PendingTLSTrust?
 
-    /// Bumped each time the operator accepts a trust prompt. The view observes
-    /// this to reload the page so it connects with the now-pinned certificate:
-    /// accepting a server-trust challenge does not reliably resume the suspended
-    /// provisional navigation, so an explicit reload is the robust path.
+    /// Bumped once the decider has *durably pinned* an accepted certificate (see
+    /// `notePinCommitted()`). The view observes this to reload the page so it
+    /// connects with the now-pinned certificate: accepting a server-trust
+    /// challenge does not reliably resume the suspended provisional navigation,
+    /// so an explicit reload is the robust path. The bump is deliberately tied to
+    /// the pin *commit*, not the operator's tap: reloading at tap time raced the
+    /// store write, so the reload re-evaluated before the pin was readable and
+    /// re-prompted in a loop (notably on busy hosts like Proxmox that open many
+    /// concurrent TLS connections).
     @Published private(set) var acceptTick = 0
+
+    /// Called by the decider after an accepted certificate is durably written to
+    /// the trust store, to trigger the view's reload only once the new pin can be
+    /// read back. See `acceptTick`.
+    func notePinCommitted() {
+        acceptTick += 1
+    }
 
     private let decisionTimeout: Duration
 
@@ -121,12 +133,7 @@ final class TLSTrustCoordinator: ObservableObject {
                     recordedFingerprint: recordedFingerprint,
                     recordedAlgorithm: recordedAlgorithm,
                     recordedFirstSeenAt: recordedFirstSeenAt,
-                    resume: { [weak self] decision in
-                        if case .accept = decision {
-                            Task { @MainActor in self?.acceptTick += 1 }
-                        }
-                        box.resumeIfNeeded(with: decision)
-                    }
+                    resume: { decision in box.resumeIfNeeded(with: decision) }
                 )
                 let requestID = request.id
                 let timeout = self.decisionTimeout
