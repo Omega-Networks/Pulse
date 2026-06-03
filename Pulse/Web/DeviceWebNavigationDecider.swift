@@ -24,6 +24,7 @@
 //
 
 import Foundation
+import OSLog
 import Security
 import WebKit
 
@@ -81,6 +82,7 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
     let origin: WebOrigin
     private let coordinator: TLSTrustCoordinator
     private let store: any WebHostTrustStore
+    private let logger = Logger(subsystem: "pulse", category: "web.trust")
 
     init(origin: WebOrigin, coordinator: TLSTrustCoordinator, store: any WebHostTrustStore) {
         self.origin = origin
@@ -95,7 +97,9 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
         preferences: inout WebPage.NavigationPreferences
     ) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
-        if origin.allows(url) {
+        let allowed = origin.allows(url)
+        logger.debug("web.nav.decide host=\(url.host() ?? "nil", privacy: .public) allowed=\(allowed)")
+        if allowed {
             return .allow
         }
         // Foreign origin: keep the in-app view pinned to this device and hand the
@@ -111,10 +115,12 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
         for challenge: URLAuthenticationChallenge
     ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         let space = challenge.protectionSpace
+        logger.notice("web.trust.challenge host=\(space.host, privacy: .public) port=\(space.port, privacy: .public) method=\(space.authenticationMethod, privacy: .public)")
         guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let serverTrust = space.serverTrust else {
             // Non-server-trust challenge (basic, digest, client cert). Pulse does
             // not collect web credentials in v1.5; let the system handle it.
+            logger.notice("web.trust.challenge.not_server_trust method=\(space.authenticationMethod, privacy: .public)")
             return (.performDefaultHandling, nil)
         }
 
@@ -128,8 +134,11 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
 
         guard let (fingerprint, algorithm) = TLSCertificateInspector.leafFingerprint(of: serverTrust) else {
             // Unreadable certificate chain: refuse rather than guess.
+            logger.error("web.trust.fingerprint_unavailable host=\(host, privacy: .public)")
             return (.cancelAuthenticationChallenge, nil)
         }
+
+        logger.notice("web.trust.evaluate host=\(host, privacy: .public) systemTrusted=\(systemTrusted) fp=\(fingerprint, privacy: .public)")
 
         let recorded = try? await store.trust(forHost: host, port: port)
         let decision = WebHostTrustEvaluator.evaluate(

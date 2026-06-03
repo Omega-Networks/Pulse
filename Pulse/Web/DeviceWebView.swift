@@ -23,6 +23,7 @@
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
+import OSLog
 import SwiftData
 import SwiftUI
 import WebKit
@@ -96,7 +97,16 @@ struct DeviceWebView: View {
     private var content: some View {
         if let page {
             VStack(spacing: 0) {
-                WebView(page)
+                if let loadFailure {
+                    ContentUnavailableView {
+                        Label("Could not load", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(loadFailure)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    WebView(page)
+                }
                 endpointStrip
             }
         } else if devices.first == nil {
@@ -221,7 +231,10 @@ struct DeviceWebView: View {
                 loadFailure = nil
             }
         } catch {
-            loadFailure = error.localizedDescription
+            let nsError = error as NSError
+            Logger(subsystem: "pulse", category: "web.session")
+                .error("web.session.load_failed host=\(resolved.host, privacy: .public) port=\(resolved.port, privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code) desc=\(nsError.localizedDescription, privacy: .public)")
+            loadFailure = "\(nsError.localizedDescription)\n\(nsError.domain) \(nsError.code)"
         }
     }
 
@@ -236,6 +249,7 @@ struct DeviceWebView: View {
     }
 
     private func reload() {
+        loadFailure = nil
         _ = page?.reload()
     }
 }
