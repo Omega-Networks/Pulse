@@ -61,7 +61,7 @@ final class Service {
     // model later arrives, adding a `virtualMachine` relationship alongside is
     // an additive SwiftData change that needs no VersionedSchema / MigrationPlan,
     // and the generic fields mean no backfill is ever required. See ADR 0001
-    // (Web companion Slice W1).
+    // (see ADR 0001).
 
     /// NetBox `parent_object_type`, e.g. `"dcim.device"` or
     /// `"virtualization.virtualmachine"`. Drives which typed relationship is
@@ -159,6 +159,16 @@ struct ServiceProperties: Codable {
         let address: String?
     }
 
+    /// Decodes `Wrapped` if the element is well-formed, otherwise yields nil
+    /// without throwing, so one structurally-malformed array element does not
+    /// abort decoding of the whole array and drop a service's good IPs.
+    private struct FailableDecodable<Wrapped: Decodable>: Decodable {
+        let value: Wrapped?
+        init(from decoder: Decoder) throws {
+            value = try? Wrapped(from: decoder)
+        }
+    }
+
     let id: Int64
     let name: String
     let display: String
@@ -202,9 +212,12 @@ struct ServiceProperties: Codable {
         let protocolEntry = try? values.decode(ProtocolEntry.self, forKey: .serviceProtocol)
 
         // `ipaddresses` is an array of objects; keep each element's CIDR
-        // `address`. compactMap drops any element that lacked an address.
-        let ipEntries = (try? values.decode([IPAddressEntry].self, forKey: .ipaddresses)) ?? []
-        let rawIPAddresses = ipEntries.compactMap { $0.address }
+        // `address`. Decode per element through FailableDecodable so a single
+        // structurally-malformed element is skipped while the good elements are
+        // retained, rather than the whole-array decode failing and dropping
+        // every IP (which would null `primaryIPAddress` and lose the web target).
+        let ipEntries = (try? values.decode([FailableDecodable<IPAddressEntry>].self, forKey: .ipaddresses)) ?? []
+        let rawIPAddresses = ipEntries.compactMap { $0.value?.address }
 
         // Nested `parent` { name }.
         let parentEntry = try? values.decode(ParentEntry.self, forKey: .parent)
@@ -243,7 +256,7 @@ struct ServiceProperties: Codable {
 
     //MARK: Encodable
     //
-    // W1 is read-only sync (GET). No push path exists for services yet, so this
+    // Service sync is read-only (GET). No push path exists for services yet, so this
     // is a minimal conformance mirroring the keyed-container style; flesh it out
     // if/when services gain a POST/PATCH path.
     func encode(to encoder: Encoder) throws {

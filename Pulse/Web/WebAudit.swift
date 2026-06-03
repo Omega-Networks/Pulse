@@ -52,6 +52,17 @@ enum WebAudit {
         /// An operator forgot a pin; the next connection is a fresh first sight.
         case forgotten(host: String, port: Int)
 
+        /// A SwiftData read of the trust store failed during challenge
+        /// evaluation. The challenge is cancelled (fail closed), never treated
+        /// as "no record".
+        case storeError(host: String, port: Int)
+        /// The operator accepted a certificate but persisting the pin failed.
+        /// The session proceeds on the one-time credential; the pin is not saved.
+        case commitFailed(host: String, port: Int, fingerprint: String)
+        /// A trust prompt was suppressed for a subresource load to a foreign
+        /// origin: only the window's own origin may raise a prompt.
+        case foreignChallengeSuppressed(host: String, port: Int)
+
         // MARK: Session (category: web.session)
 
         /// A device web window opened against a resolved service target.
@@ -80,6 +91,12 @@ enum WebAudit {
             sessionLogger.notice("web.session.opened host=\(host, privacy: .public) port=\(port, privacy: .public) service=\(service, privacy: .public)")
         case let .navigationBlocked(host, toURL):
             sessionLogger.notice("web.session.navigation_blocked host=\(host, privacy: .public) to=\(toURL, privacy: .public)")
+        case let .storeError(host, port):
+            trustLogger.error("web.trust.store_error host=\(host, privacy: .public) port=\(port, privacy: .public)")
+        case let .commitFailed(host, port, fingerprint):
+            trustLogger.error("web.trust.commit_failed host=\(host, privacy: .public) port=\(port, privacy: .public) fp=\(fingerprint, privacy: .public)")
+        case let .foreignChallengeSuppressed(host, port):
+            trustLogger.notice("web.trust.foreign_suppressed host=\(host, privacy: .public) port=\(port, privacy: .public)")
         }
     }
 }
@@ -94,4 +111,7 @@ extension WebAudit {
     static func forgotten(host: String, port: Int) { emit(.forgotten(host: host, port: port)) }
     static func opened(host: String, port: Int, service: String) { emit(.opened(host: host, port: port, service: service)) }
     static func navigationBlocked(host: String, toURL: String) { emit(.navigationBlocked(host: host, toURL: toURL)) }
+    static func storeError(host: String, port: Int) { emit(.storeError(host: host, port: port)) }
+    static func commitFailed(host: String, port: Int, fingerprint: String) { emit(.commitFailed(host: host, port: port, fingerprint: fingerprint)) }
+    static func foreignChallengeSuppressed(host: String, port: Int) { emit(.foreignChallengeSuppressed(host: host, port: port)) }
 }

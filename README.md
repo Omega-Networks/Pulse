@@ -47,7 +47,7 @@ When disasters strike, jurisdictional boundaries become irrelevant. Pulse enable
 All data processing happens on your hardware. No cloud dependencies, no external vulnerabilities, no vendor lock-in. Run Pulse on as little as a Mac mini or iPhone, scaling up as your needs grow.
 
 ### Secure Device Access
-Connect to network devices over SSH without leaving Pulse. Credentials are backed by the device's Secure Enclave (biometry or passcode gated, non-exportable), host keys are pinned on first use (TOFU) with an explicit mismatch flow, and sessions can be recorded to an encrypted, tamper-evident log. See the [User Guide](docs/user-guide.md) and [SSH credentials guide](docs/credentials.md) for details. The operator terminal is macOS today.
+Connect to network devices over SSH without leaving Pulse. Credentials are backed by the device's Secure Enclave (biometry or passcode gated, non-exportable), host keys are pinned on first use (TOFU) with an explicit mismatch flow, and sessions can be recorded to an encrypted, tamper-evident log. See the [User Guide](docs/user-guide.md) and [SSH credentials guide](docs/credentials.md) for details. The operator terminal is macOS today. Operators can also open a device's web management interface in-app (the Web companion): the URL is derived from the device's NetBox services, and self-signed certificates are trusted per-host through an operator prompt. See the [Web companion guide](docs/web-companion.md).
 
 ## Capabilities
 
@@ -58,6 +58,7 @@ Connect to network devices over SSH without leaving Pulse. Credentials are backe
 - ✅ macOS native application
 - ✅ iOS/iPadOS support
 - ✅ Secure SSH terminal: Secure Enclave-backed credentials, host-key (TOFU) trust, and encrypted session recording (macOS)
+- ✅ In-app Device Web companion: a device's web UI resolved from its NetBox service, with per-host TLS trust for self-signed certificates (macOS)
 
 ### Advanced Site Management
 Drill down from geographic overview to detailed site topology, including network diagrams, device configurations, live camera feeds, and comprehensive monitoring data.

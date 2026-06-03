@@ -44,6 +44,12 @@ import SwiftData
 /// ADR 0001 §5 (polymorphic host trust) and §9 (the Device Web window).
 @Model
 final class WebHostTrust {
+    // Composite index on (host, port): the trust store's only query is a
+    // FetchDescriptor predicate on host + port, so this keeps that lookup
+    // O(log n) at fleet scale (see WebHostTrustStore), honouring the store's
+    // own scaling contract rather than leaving it to a full-table scan.
+    #Index<WebHostTrust>([\.host, \.port])
+
     @Attribute(.unique) var id: UUID
     var host: String
     var port: Int

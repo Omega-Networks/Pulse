@@ -58,7 +58,7 @@ enum WebLoadStatus: Equatable {
 /// `SSHTerminalView`. The web target is resolved from the device's NetBox
 /// services (`WebServiceResolver`); the page is driven by a `WebPage` whose
 /// navigation decider contains navigation to the device origin and routes the
-/// self-signed-TLS trust decision through the W2a trust coordinator.
+/// self-signed-TLS trust decision through the TLS trust coordinator.
 struct DeviceWebView: View {
 
     let deviceID: Device.ID

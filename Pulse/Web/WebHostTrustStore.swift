@@ -145,7 +145,7 @@ actor SwiftDataWebHostTrustStore: WebHostTrustStore {
 // MARK: - Trust decision (pure, for tests)
 
 /// Outcome of evaluating a presented server certificate against the system
-/// trust store and any recorded `HostTrust`. The navigation decider (Slice W2b)
+/// trust store and any recorded `HostTrust`. The navigation decider
 /// maps each case to a `URLSession.AuthChallengeDisposition` and a
 /// `WebHostTrustStore` mutation.
 enum WebTrustDecision: Equatable {

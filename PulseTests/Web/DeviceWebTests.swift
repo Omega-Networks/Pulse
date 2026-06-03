@@ -57,6 +57,21 @@ final class DeviceWebTests: XCTestCase {
         XCTAssertNil(WebOrigin(url: URL(string: "about:blank")!))
     }
 
+    // MARK: - WebOrigin.isBrowserOpenable (the OS-opener allowlist)
+
+    func testBrowserOpenableAllowsHTTPAndHTTPSWithHost() {
+        XCTAssertTrue(WebOrigin.isBrowserOpenable(URL(string: "https://example.com/")!))
+        XCTAssertTrue(WebOrigin.isBrowserOpenable(URL(string: "http://10.0.0.1:8080/path")!))
+    }
+
+    func testBrowserOpenableRejectsNonWebSchemesAndHostless() {
+        // Arbitrary schemes must never reach the OS opener from page content.
+        XCTAssertFalse(WebOrigin.isBrowserOpenable(URL(string: "file:///etc/passwd")!))
+        XCTAssertFalse(WebOrigin.isBrowserOpenable(URL(string: "ssh://10.0.0.1")!))
+        XCTAssertFalse(WebOrigin.isBrowserOpenable(URL(string: "vnc://10.0.0.1")!))
+        XCTAssertFalse(WebOrigin.isBrowserOpenable(URL(string: "x-apple.systempreferences:com.apple.preference.security")!))
+    }
+
     // MARK: - WebLoadStatus
 
     func testLoadStatusResolution() {

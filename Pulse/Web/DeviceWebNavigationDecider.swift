@@ -64,13 +64,22 @@ struct WebOrigin: Equatable, Sendable {
         guard let other = WebOrigin(url: url) else { return false }
         return other == self
     }
+
+    /// Whether a foreign-origin URL is safe to hand to the system browser: http
+    /// or https with a host. Everything else (file:, ssh:, vnc:,
+    /// x-apple.systempreferences:, custom app schemes) must never reach the OS
+    /// opener from device-controlled content. Pure so the allowlist is tested.
+    static func isBrowserOpenable(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        return (scheme == "http" || scheme == "https") && url.host() != nil
+    }
 }
 
 // MARK: - Device web navigation decider
 
 /// Drives the two policy decisions for a device's web window: keeping navigation
 /// contained to the device's origin, and accepting an otherwise-untrusted TLS
-/// certificate through the W2a trust foundation.
+/// certificate through the TLS trust foundation.
 ///
 /// A `final class` (not a struct) because `WebPage.NavigationDeciding`'s methods
 /// are `@MainActor mutating`: a class satisfies the `mutating` requirement
@@ -107,7 +116,7 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
         // x-apple.systempreferences:, custom app schemes) to the OS opener, so
         // device-controlled page content cannot launch arbitrary apps on the
         // operator's Mac. Everything else is dropped and recorded by the audit.
-        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https", url.host() != nil {
+        if WebOrigin.isBrowserOpenable(url) {
             await openInSystemBrowser(url)
         }
         WebAudit.navigationBlocked(host: origin.host, toURL: url.absoluteString)
@@ -145,12 +154,31 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
 
         logger.notice("web.trust.evaluate host=\(host, privacy: .public) systemTrusted=\(systemTrusted) fp=\(fingerprint, privacy: .public)")
 
-        let recorded = try? await store.trust(forHost: host, port: port)
+        // Fail closed on a store read error: a SwiftData fault must not read as
+        // "no record", which would let an explicitly-distrusted host be
+        // re-trusted. Cancel the challenge and emit a distinct audit event;
+        // retry is cheap, silently re-trusting a distrusted host is not.
+        let recorded: HostTrust?
+        do {
+            recorded = try await store.trust(forHost: host, port: port)
+        } catch {
+            logger.error("web.trust.store_error host=\(host, privacy: .public) port=\(port, privacy: .public)")
+            WebAudit.storeError(host: host, port: port)
+            return (.cancelAuthenticationChallenge, nil)
+        }
+
         let decision = WebHostTrustEvaluator.evaluate(
             systemTrusted: systemTrusted,
             recorded: recorded,
             presentedFingerprint: fingerprint
         )
+
+        // Only the window's own origin may raise an operator trust prompt. A
+        // subresource load to a foreign host:port must not prompt for arbitrary
+        // third-party certificates (prompt fatigue / social engineering). A
+        // system-trusted or already-pinned foreign resource still loads; an
+        // untrusted one is dropped without a prompt.
+        let isOwnOrigin = host.lowercased() == origin.host && port == origin.port
 
         switch decision {
         case .acceptSystemTrusted:
@@ -162,6 +190,10 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
             return (.useCredential, URLCredential(trust: serverTrust))
 
         case .promptFirstSight:
+            guard isOwnOrigin else {
+                WebAudit.foreignChallengeSuppressed(host: host, port: port)
+                return (.cancelAuthenticationChallenge, nil)
+            }
             let outcome = await coordinator.decide(
                 host: host,
                 port: port,
@@ -170,15 +202,27 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
                 presentedFingerprint: fingerprint,
                 presentedAlgorithm: algorithm
             )
-            if case .accept = outcome {
-                try? await store.recordPinned(host: host, port: port, fingerprintSHA256: fingerprint, algorithm: algorithm)
-                WebAudit.pinned(host: host, port: port, fingerprint: fingerprint)
-                return (.useCredential, URLCredential(trust: serverTrust))
+            guard case .accept = outcome else {
+                WebAudit.rejected(host: host, port: port, reason: Self.rejectReason(outcome))
+                return (.cancelAuthenticationChallenge, nil)
             }
-            WebAudit.rejected(host: host, port: port, reason: Self.rejectReason(outcome))
-            return (.cancelAuthenticationChallenge, nil)
+            // Honour the one-time accept even if persisting the pin fails: the
+            // operator approved this exact certificate and the credential is
+            // scoped to it. Emit commit_failed (not pinned) so the audit trail
+            // never overstates what persisted. See ADR 0001 Slice W2b.
+            do {
+                try await store.recordPinned(host: host, port: port, fingerprintSHA256: fingerprint, algorithm: algorithm)
+                WebAudit.pinned(host: host, port: port, fingerprint: fingerprint)
+            } catch {
+                WebAudit.commitFailed(host: host, port: port, fingerprint: fingerprint)
+            }
+            return (.useCredential, URLCredential(trust: serverTrust))
 
         case let .promptMismatch(recordedFingerprint, recordedAlgorithm):
+            guard isOwnOrigin else {
+                WebAudit.foreignChallengeSuppressed(host: host, port: port)
+                return (.cancelAuthenticationChallenge, nil)
+            }
             let firstSeen = try? await store.firstSeenAt(forHost: host, port: port)
             let outcome = await coordinator.decide(
                 host: host,
@@ -193,8 +237,12 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
             )
             switch outcome {
             case .accept:
-                try? await store.replacePin(host: host, port: port, fingerprintSHA256: fingerprint, algorithm: algorithm)
-                WebAudit.accepted(host: host, port: port, fingerprint: fingerprint)
+                do {
+                    try await store.replacePin(host: host, port: port, fingerprintSHA256: fingerprint, algorithm: algorithm)
+                    WebAudit.accepted(host: host, port: port, fingerprint: fingerprint)
+                } catch {
+                    WebAudit.commitFailed(host: host, port: port, fingerprint: fingerprint)
+                }
                 return (.useCredential, URLCredential(trust: serverTrust))
             case .forget:
                 try? await store.forget(host: host, port: port)

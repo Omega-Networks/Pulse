@@ -29,9 +29,9 @@ import SwiftUI
 /// Operator-facing Device Web window, routed per `Device.ID`. Mirrors
 /// `SSHTerminalScene`: an explicit `id: "device-web"` disambiguates the
 /// `WindowGroup(for: Device.ID.self)` registration from the SSH terminal and
-/// Site View scenes, which also key on `Int64`-valued ids (see the Slice 8a
-/// routing-disambiguation note). It converges with the nominal window-target
-/// struct when that slice lands.
+/// Site View scenes, which also key on `Int64`-valued ids (see the
+/// routing-disambiguation note in ADR 0001). It converges with the nominal
+/// window-target struct when that work lands.
 struct DeviceWebScene: Scene {
 
     let modelContainer: ModelContainer

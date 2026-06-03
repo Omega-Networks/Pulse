@@ -21,14 +21,14 @@
 //
 
 import Foundation
+import SwiftData
 import XCTest
 @testable import Pulse
 
-/// Locks down the NetBox Application Service decoder (Slice W1). These cases are
-/// hermetic on purpose: they decode the real `/api/ipam/services/` payload shape
-/// through `JSONDecoder` and assert the result, with no `ModelContainer`. The
-/// live upsert + persistence round trip (`getServices()` against a populated
-/// NetBox) is an integration concern, not a headless unit one.
+/// Locks down the NetBox Application Service decoder and the sync wiring gate.
+/// Most cases are hermetic decode checks against the real `/api/ipam/services/`
+/// payload shape; one integration case drives `getServices()` over an in-memory
+/// container to pin the device-parent versus VM-parent relationship wiring.
 final class ServicePropertiesDecodingTests: XCTestCase {
 
     // MARK: - Device-parented service (the canonical payload)
@@ -156,10 +156,80 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         """.utf8)
 
         XCTAssertThrowsError(try JSONDecoder().decode(ServiceProperties.self, from: json)) { error in
-            guard let swiftDataError = error as? SwiftDataError,
+            guard let swiftDataError = error as? Pulse.SwiftDataError,
                   case .missingData = swiftDataError else {
                 return XCTFail("Expected SwiftDataError.missingData, got \(error)")
             }
         }
+    }
+
+    // MARK: - Malformed ipaddresses element is skipped, good ones retained
+
+    func testMalformedIPAddressElementIsSkippedAndGoodRetained() throws {
+        let json = Data("""
+        {
+          "id": 12, "url": "u", "display": "HTTPS (TCP/443)",
+          "parent_object_type": "dcim.device", "parent_object_id": 6023,
+          "parent": { "id": 6023, "name": "OMG-08-010-LP-PB01" },
+          "name": "HTTPS", "protocol": { "value": "tcp", "label": "TCP" },
+          "ports": [443],
+          "ipaddresses": [
+            { "id": 1, "address": "172.27.10.201/24" },
+            "this-element-is-malformed",
+            { "id": 2, "address": "10.8.0.50/24" }
+          ],
+          "description": ""
+        }
+        """.utf8)
+        let service = try JSONDecoder().decode(ServiceProperties.self, from: json)
+        // The malformed middle element is skipped; both good elements survive.
+        XCTAssertEqual(service.ipAddresses, ["172.27.10.201/24", "10.8.0.50/24"])
+    }
+
+    // MARK: - processServiceBatch wires device parents and retains VM parents
+
+    func testGetServicesWiresDeviceParentAndRetainsVMParent() async throws {
+        // Full app schema so Device's relationship graph resolves in-memory.
+        let schema = Schema([
+            TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Service.self, WebHostTrust.self,
+            Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
+            SSHCredential.self, KnownHost.self
+        ])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [config])
+
+        // Seed the device the dcim.device-parented service points at.
+        let seed = ModelContext(container)
+        seed.insert(Device(id: 6023))
+        try seed.save()
+
+        let deviceParented = try JSONDecoder().decode(ServiceProperties.self, from: Data("""
+        { "id": 7, "url": "u", "display": "HTTPS (TCP/8006)",
+          "parent_object_type": "dcim.device", "parent_object_id": 6023,
+          "parent": { "id": 6023, "name": "PVE" },
+          "name": "HTTPS", "protocol": { "value": "tcp", "label": "TCP" },
+          "ports": [8006], "ipaddresses": [ { "id": 1, "address": "10.0.0.1/24" } ], "description": "" }
+        """.utf8))
+        let vmParented = try JSONDecoder().decode(ServiceProperties.self, from: Data("""
+        { "id": 91, "url": "u", "display": "HTTPS (TCP/443)",
+          "parent_object_type": "virtualization.virtualmachine", "parent_object_id": 4410,
+          "parent": { "id": 4410, "name": "vm" },
+          "name": "HTTPS", "protocol": { "value": "tcp", "label": "TCP" },
+          "ports": [443], "ipaddresses": [ { "id": 2, "address": "10.0.0.2/24" } ], "description": "" }
+        """.utf8))
+
+        let actor = ProviderModelActor(modelContainer: container)
+        try await actor.getServices(serviceProperties: [deviceParented, vmParented])
+
+        let fetch = ModelContext(container)
+        let services = try fetch.fetch(FetchDescriptor<Service>())
+        XCTAssertEqual(services.count, 2)
+        let deviceService = try XCTUnwrap(services.first { $0.id == 7 })
+        let vmService = try XCTUnwrap(services.first { $0.id == 91 })
+        // The wiring gate: a dcim.device parent gets the Device relationship...
+        XCTAssertEqual(deviceService.device?.id, 6023)
+        // ...a virtualization.virtualmachine parent is retained with device == nil.
+        XCTAssertNil(vmService.device)
     }
 }
