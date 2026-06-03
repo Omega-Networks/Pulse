@@ -1318,7 +1318,162 @@ actor ProviderModelActor {
             return 2000
         }
     }
-    
+
+    /**
+     Fetch and process Application Services from NetBox.
+
+     Mirrors getDevices: fetches ServiceProperties, upserts in batches, then
+     deletes services whose ids no longer exist server-side. MUST run AFTER
+     getDevices() so the Device table used for relationship wiring is populated.
+     Services parented to a virtual machine are retained with `device == nil`;
+     they are not dropped (see Service.swift parent-linkage note).
+
+     - Parameter serviceProperties: An optional array of `ServiceProperties` to
+       process. If `nil`, the function fetches them by executing a service API request.
+     */
+    func getServices(serviceProperties: [ServiceProperties]? = nil) async throws {
+        let modelContext = ModelContext(modelContainer)
+
+        var servicePropertiesList: [ServiceProperties] = []
+
+        // Flag for deleting old services depending on whether a GET or POST request was made
+        var deleteOld = false
+
+        if let serviceProperties = serviceProperties {
+            servicePropertiesList = serviceProperties
+        } else {
+            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
+            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
+
+            let resource = ServiceResource()
+            let serviceRequest = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
+            do {
+                servicePropertiesList = try await serviceRequest.execute()
+            } catch {
+                print("Error executing service request: \(error)")
+                throw error
+            }
+            deleteOld = true
+        }
+
+        let existingServices = (try? modelContext.fetch(FetchDescriptor<Service>())) ?? []
+        let existingServiceIds = Set(existingServices.map { $0.id })
+
+        do {
+            // Processing services in batches
+            let batchSize = determineBatchSize(for: servicePropertiesList.count)
+            let totalBatches = (servicePropertiesList.count + batchSize - 1) / batchSize
+
+            print("Batch size: \(batchSize)")
+            print("Batch count: \(totalBatches)")
+
+            await withThrowingTaskGroup(of: Void.self) { group in
+                for i in 0..<totalBatches {
+                    let batchStartIndex = i * batchSize
+                    let batchEndIndex = min(batchStartIndex + batchSize, servicePropertiesList.count)
+                    let batch = Array(servicePropertiesList[batchStartIndex..<batchEndIndex])
+
+                    group.addTask {
+                        try await self.processServiceBatch(batch: batch, existingServiceIds: existingServiceIds)
+                    }
+                }
+            }
+
+            if deleteOld {
+                let updatedServiceIds = Set(servicePropertiesList.map { $0.id })
+                let servicesToDelete = existingServiceIds.subtracting(updatedServiceIds)
+
+                for serviceId in servicesToDelete {
+                    let predicate = #Predicate<Service> { $0.id == serviceId }
+                    let fetchDescriptor = FetchDescriptor(predicate: predicate)
+                    if let serviceToDelete = try? modelContext.fetch(fetchDescriptor).first {
+                        modelContext.delete(serviceToDelete)
+                    }
+                }
+            }
+
+            // Set last NetBox update to now
+            let fetchDescriptor = FetchDescriptor<SyncProvider>()
+            let syncProvider = try modelContext.fetch(fetchDescriptor)
+            syncProvider.first?.lastNetBoxUpdate = Date()
+
+            try modelContext.save()
+
+        } catch {
+            print("Failed. Error: \(error)")
+        }
+        print("Completed getServices function")
+    }
+
+    private func processServiceBatch(batch: [ServiceProperties], existingServiceIds: Set<Int64>) async throws {
+        let batchContext = ModelContext(modelContainer)
+
+        // Fetch existing services in advance, allowing multiple values per key
+        // defensively (mirrors processDeviceBatch).
+        let services = try batchContext.fetch(FetchDescriptor<Service>())
+        let filteredServices = services.filter { existingServiceIds.contains($0.id) }
+
+        var servicesDict = [Int64: [Service]]()
+        for service in filteredServices {
+            servicesDict[service.id, default: []].append(service)
+        }
+
+        // Prefetch all Devices for relationship wiring. A Device id equals a
+        // service's parentObjectId when parentObjectType == "dcim.device".
+        let devices = try batchContext.fetch(FetchDescriptor<Device>())
+        let devicesDict = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
+
+        for serviceProperty in batch {
+            // Resolve the device parent only for device-typed parents. VM
+            // parents intentionally resolve to nil: the service row is still
+            // stored (retain, do not drop), only the relationship is omitted.
+            let resolvedDevice: Device? = (serviceProperty.parentObjectType == "dcim.device")
+                ? devicesDict[serviceProperty.parentObjectId]
+                : nil
+
+            if let existingServices = servicesDict[serviceProperty.id], !existingServices.isEmpty {
+                // Update the first existing service with this ID
+                let existingService = existingServices[0]
+                existingService.name = serviceProperty.name
+                existingService.display = serviceProperty.display
+                existingService.url = serviceProperty.url
+                existingService.serviceDescription = serviceProperty.serviceDescription
+                existingService.protocolValue = serviceProperty.protocolValue
+                existingService.protocolLabel = serviceProperty.protocolLabel
+                existingService.ports = serviceProperty.ports
+                existingService.ipAddresses = serviceProperty.ipAddresses
+                existingService.parentObjectType = serviceProperty.parentObjectType
+                existingService.parentObjectId = serviceProperty.parentObjectId
+                existingService.parentName = serviceProperty.parentName
+                existingService.device = resolvedDevice
+
+                if existingServices.count > 1 {
+                    print("Warning: Multiple services found with ID: \(serviceProperty.id). Only the first one was updated.")
+                }
+            } else {
+                // Insert new service
+                let service = Service(id: serviceProperty.id)
+                service.name = serviceProperty.name
+                service.display = serviceProperty.display
+                service.url = serviceProperty.url
+                service.serviceDescription = serviceProperty.serviceDescription
+                service.protocolValue = serviceProperty.protocolValue
+                service.protocolLabel = serviceProperty.protocolLabel
+                service.ports = serviceProperty.ports
+                service.ipAddresses = serviceProperty.ipAddresses
+                service.parentObjectType = serviceProperty.parentObjectType
+                service.parentObjectId = serviceProperty.parentObjectId
+                service.parentName = serviceProperty.parentName
+                service.device = resolvedDevice   // nil for VM parents (retained)
+
+                batchContext.insert(service)
+            }
+        }
+
+        try batchContext.save()
+        print("Services in batch processed.")
+    }
+
     //MARK: New functions for creating Device, Site and Cable
     func postSite(with properties: SiteProperties) async {
         let netboxApiServer = await Configuration.shared.getNetboxApiServer()

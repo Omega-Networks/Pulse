@@ -80,8 +80,15 @@ final class Device {
     //One-To-Many
     @Relationship(deleteRule: .cascade, inverse: \Event.device)
     var events: [Event]?
-    
-    
+
+    // NetBox Application Services attached to this device (inverse of
+    // Service.device). VM-parented services point elsewhere and never appear
+    // here. Cascade so deleting a device removes its service rows; the
+    // server-authoritative stale-delete in getServices() is the primary cleanup.
+    @Relationship(deleteRule: .cascade, inverse: \Service.device)
+    var services: [Service]?
+
+
     //Many-To-One
     var site: Site?
     var rack: Rack?

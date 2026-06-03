@@ -43,10 +43,10 @@ class InitializationState: ObservableObject {
     @Published var contentViewReady = false
     @Published var startExitAnimation = false
     @Published var isConfigured = false
-    /// Eight NetBox / Zabbix sync calls plus TipKit configuration. Matches the
+    /// Nine NetBox / Zabbix sync calls plus TipKit configuration. Matches the
     /// number of `updateProgress` calls inside `verifyContainer` so the bar fills
     /// to 100% when the real work completes.
-    let totalSteps = 9.0
+    let totalSteps = 10.0
     
     /**
       Updates the initialization progress and step description.
@@ -92,6 +92,7 @@ struct PulseApp: App {
                 SiteGroup.self,
                 Site.self,
                 Device.self,
+                Service.self,
                 Event.self,
                 SyncProvider.self,
                 PowerSenseDevice.self,
@@ -294,10 +295,13 @@ struct PulseApp: App {
             initState.updateProgress(7, "Synchronising Devices...")
             try await modelActor.getDevices()
 
-            initState.updateProgress(8, "Setting up Tips...")
+            initState.updateProgress(8, "Synchronising Services...")
+            try await modelActor.getServices()
+
+            initState.updateProgress(9, "Setting up Tips...")
             tipManager.configure()
 
-            initState.updateProgress(9, "Ready")
+            initState.updateProgress(10, "Ready")
         } catch {
             print("Sync failed (likely due to missing credentials): \(error)")
             initState.currentStep = "Running in Offline Mode"

@@ -106,6 +106,7 @@
 		A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */; };
 		A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */; };
 		A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A003 /* DirectTransportTests.swift */; };
+		B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */; };
 		A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */; };
 		A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */; };
 		A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A006 /* SecureEnclaveKeyManagerTests.swift */; };
@@ -139,6 +140,7 @@
 		C961919D2ACA56E0000198DB /* SiteRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961919C2ACA56E0000198DB /* SiteRow.swift */; };
 		C96191A02ACA5711000198DB /* Edge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961919F2ACA5711000198DB /* Edge.swift */; };
 		C96191A22ACA5721000198DB /* Device.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A12ACA5721000198DB /* Device.swift */; };
+		B17E050100000000000000B1 /* Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A1 /* Service.swift */; };
 		C96191A42ACA572E000198DB /* DeviceRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A32ACA572E000198DB /* DeviceRole.swift */; };
 		C96191A62ACA573A000198DB /* DeviceType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A52ACA573A000198DB /* DeviceType.swift */; };
 		C96191AE2ACA578C000198DB /* Region.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191AD2ACA578C000198DB /* Region.swift */; };
@@ -305,6 +307,7 @@
 		A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporterTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSSHWireFormatTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A003 /* DirectTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTransportTests.swift; sourceTree = "<group>"; };
+		B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServicePropertiesDecodingTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCertificateManagerTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyDelegateTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000A006 /* SecureEnclaveKeyManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnclaveKeyManagerTests.swift; sourceTree = "<group>"; };
@@ -337,6 +340,7 @@
 		C961919C2ACA56E0000198DB /* SiteRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteRow.swift; sourceTree = "<group>"; };
 		C961919F2ACA5711000198DB /* Edge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Edge.swift; sourceTree = "<group>"; };
 		C96191A12ACA5721000198DB /* Device.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Device.swift; sourceTree = "<group>"; };
+		B17E050100000000000000A1 /* Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Service.swift; sourceTree = "<group>"; };
 		C96191A32ACA572E000198DB /* DeviceRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRole.swift; sourceTree = "<group>"; };
 		C96191A52ACA573A000198DB /* DeviceType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceType.swift; sourceTree = "<group>"; };
 		C96191AD2ACA578C000198DB /* Region.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Region.swift; sourceTree = "<group>"; };
@@ -635,6 +639,7 @@
 			isa = PBXGroup;
 			children = (
 				A11CAFE0000000000000A003 /* DirectTransportTests.swift */,
+				B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -873,6 +878,7 @@
 				C96191AD2ACA578C000198DB /* Region.swift */,
 				C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */,
 				C96191A12ACA5721000198DB /* Device.swift */,
+				B17E050100000000000000A1 /* Service.swift */,
 				C96191A32ACA572E000198DB /* DeviceRole.swift */,
 				C96191A52ACA573A000198DB /* DeviceType.swift */,
 				C96191B52ACA57C5000198DB /* Tenant.swift */,
@@ -1175,6 +1181,7 @@
 				41763EDB2CB720DE005DEEFF /* StaticDevice.swift in Sources */,
 				C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */,
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
+				B17E050100000000000000B1 /* Service.swift in Sources */,
 				C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */,
 				C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */,
 				C96191D92ACA5B17000198DB /* EdgeLabel.swift in Sources */,
@@ -1193,6 +1200,7 @@
 				A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */,
 				A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */,
 				A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */,
+				B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */,
 				A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */,
 				A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */,
 				A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */,
