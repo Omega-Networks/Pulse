@@ -441,6 +441,8 @@ Pulse thrives on the triadic relationship between Industry, Academia, and Commun
 
 Contributions are welcome via issues and pull requests.
 
+Pulse is open source and sponsor-supported. If it's useful to you, consider [sponsoring](https://github.com/sponsors/Omega-Networks).
+
 ## License
 
 GNU Affero General Public License (AGPL-3.0) - see [LICENSE](LICENSE)
