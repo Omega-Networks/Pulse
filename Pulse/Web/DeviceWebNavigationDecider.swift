@@ -102,9 +102,14 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
         if allowed {
             return .allow
         }
-        // Foreign origin: keep the in-app view pinned to this device and hand the
-        // link to the system browser rather than navigating away inside Pulse.
-        await openInSystemBrowser(url)
+        // Foreign origin. Hand only http/https links with a real host to the
+        // system browser; never pass an arbitrary scheme (file:, ssh:, vnc:,
+        // x-apple.systempreferences:, custom app schemes) to the OS opener, so
+        // device-controlled page content cannot launch arbitrary apps on the
+        // operator's Mac. Everything else is dropped and recorded by the audit.
+        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https", url.host() != nil {
+            await openInSystemBrowser(url)
+        }
         WebAudit.navigationBlocked(host: origin.host, toURL: url.absoluteString)
         return .cancel
     }

@@ -88,6 +88,12 @@ struct DeviceWebView: View {
             .task { await setUp() }
             .sheet(item: $trustCoordinator.pending) { pending in
                 TLSTrustPromptSheet(pending: pending)
+                    // The sheet's buttons are the only legitimate exits. A swipe
+                    // or stray Esc would nil `pending` without resuming the
+                    // continuation, stranding the challenge until the 90s timeout
+                    // and opening the concurrent-decide path. Mirrors the SSH
+                    // host-key sheet.
+                    .interactiveDismissDisabled()
             }
             .onChange(of: trustCoordinator.acceptTick) {
                 // The operator accepted a certificate; reload so the page

@@ -160,7 +160,7 @@ protocol PulseTransport {
 
 - v1 default: `DirectTransport` using `NIOTSConnectionBootstrap`.
 - Future tunnel: `TunnelTransport` returning a `Channel` whose I/O is forwarded through the in-app tunnel.
-- SSH and Web both consume `PulseTransport`. The Web side does so via `WebPage.Configuration.urlSchemeHandlers["pulse-tunnel"]` registered to a handler that resolves requests through `PulseTransport`.
+- SSH consumes `PulseTransport` in v1. As-built, the v1.5 Web window loads directly through `WebPage` and does **not** consume `PulseTransport`; the Web side doing so via `WebPage.Configuration.urlSchemeHandlers["pulse-tunnel"]` (a handler resolving requests through `PulseTransport`) is the deferred W3 tunnelled path, not the shipped window.
 - Every `PulseTransport` implementation sets a finite connect timeout. The v1 default in `DirectTransport` is 10 seconds. Future implementations may surface a config knob but must never default to an unbounded wait; hanging operator UI is a failure mode the seam exists to prevent. `NIOTSConnectionBootstrap`'s default behaviour is an infinite wait, so the timeout is set explicitly via `.connectTimeout(...)`.
 - Transports must support dual-stack addresses (IPv4 and IPv6). `NIOTSConnectionBootstrap` satisfies this via Happy Eyeballs through Network.framework. Loopback verification covers both stacks (`127.0.0.1` and `::1`) so an IPv6 regression trips a test rather than surfacing in the field.
 - **EventLoopGroup ownership.** v1 transports use `NIOTSEventLoopGroup` exclusively because Pulse runs only on Apple platforms; NIOTransportServices is the right group type for any Network.framework consumer. `SSHClient` constructs the group inside `connect()`. A future `TunnelTransport` will use the same group type for the same reason — there is no abstraction over the group type because there is no second consumer to abstract for. If Pulse ever grows a non-Apple build target this assumption needs revisiting.
@@ -212,9 +212,8 @@ If either invariant breaks, the bump is blocked until the equivalent display-sch
 - `PulseTransport` seam with `DirectTransport` implementation.
 
 ### v1.5 (Web companion)
-- In-app `WebView` / `WebPage` device UI.
-- `pulse-tunnel://` scheme handler resolving through `PulseTransport`, with a navigation decider and toolbar bindings (`page.title`, `page.estimatedProgress`).
-- The `PulseTransport` and `DeviceURLSchemeHandler` seams ship in v1; the Web surface that consumes them is its own milestone. It was listed under v1 in the original plan but never built.
+- In-app `WebView` / `WebPage` device UI. **As-built (W1 + W2a + W2b):** the Device Web window ships, with the URL derived from NetBox Application Services (source of truth), per-host operator-acknowledged TLS trust for self-signed appliance certificates, a navigation decider for origin containment, and toolbar bindings (`page.title`, `page.estimatedProgress`). See the Web companion Slice W1 / W2a / W2b amendments.
+- **Deferred to W3:** the `pulse-tunnel://` scheme handler resolving through `PulseTransport`. The as-built window loads directly; the tunnelled path is gated on the transport work. The `PulseTransport` seam shipped in v1.
 
 ### v2
 - FreeIPA enrolment UI and trusted-CA import (including `requireCertificateVerification` enforcement).
@@ -240,7 +239,7 @@ These rules are enforced by code, not convention:
 2. **The only payload `SessionLogWriter` writes to disk is a sealed `EncryptedRecord`** (`SessionLogCrypto.seal` produces it; the writer's `appendLine` is the sole disk sink). Plaintext bytes have no path to disk.
 3. **`SSHCredential` has no `username` property.** Reviewers cannot accidentally re-introduce the per-credential username binding.
 4. **`HostTrust` is polymorphic from day one.** Adding `trustedCA` enforcement later does not require a schema migration that could be skipped or fail silently.
-5. **`PulseTransport` is the single dependency for outbound bytes in SSH and Web code.** Direct use of `NIOTSConnectionBootstrap` or `URLSession` for device traffic is grep-checkable and reviewed.
+5. **`PulseTransport` is the single dependency for outbound SSH bytes.** Direct use of `NIOTSConnectionBootstrap` for SSH device traffic is grep-checkable and reviewed. As-built, the v1.5 Web window loads through WebKit's own networking (with per-host operator-acknowledged TLS trust), not `PulseTransport`; routing Web bytes through the seam is the deferred W3 path.
 
 ## Verification
 
@@ -254,7 +253,7 @@ These rules are enforced by code, not convention:
 | 6 | Cert acceptance | sshd configured with `HostCertificate` signed by a test CA. Pulse accepts when CA is in `HostTrust.trustedCA`; rejects when not, with `cert.rejected` event in `os_log`. |
 | 7 | Encrypted log integrity | Recorded session file is non-zero; opens to AES-GCM authenticated ciphertext; decrypts only via biometric; hash chain validates; flipping one byte in any record causes validation to fail cleanly with no plaintext exposure. |
 | 8 | Audit signal | `log show --predicate 'subsystem == "pulse" AND category BEGINSWITH "ssh"' --last 1h` shows the full session lifecycle: `session.open`, `auth.success`, `cert.offered` and/or `cert.accepted` when a cert is presented, `host.pinned` or `host.mismatch`, and `session.close` with `durationMs` and `exitCause` for every session in the test run. |
-| 9 | Web companion | Device with a local HTTP UI renders in `WebView`; toolbar binds to `page.title` / `page.estimatedProgress`. `pulse-tunnel://` URL invokes the scheme handler. Navigation decider blocks unrelated origins. |
+| 9 | Web companion | Device with a NetBox-declared web service renders in `WebView`; toolbar binds to `page.title` / `page.estimatedProgress`. A self-signed certificate raises the per-host trust prompt (accept pins, reject cancels). Navigation decider keeps in-app navigation same-origin and routes foreign origins to the system browser. The `pulse-tunnel://` scheme-handler path is deferred to W3. |
 | 10 | Lifecycle | Closing each window deinits `SSHClient` / `WebPage`; `os_log` deinit messages observed. No retain cycles in Instruments. |
 
 ## Alternatives considered
