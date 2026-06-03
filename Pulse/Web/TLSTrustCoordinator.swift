@@ -72,10 +72,26 @@ final class TLSTrustCoordinator: ObservableObject {
     /// concurrent TLS connections).
     @Published private(set) var acceptTick = 0
 
+    /// The primary suspended challenge (the one whose prompt is on screen) plus
+    /// any concurrent challenges for the same host:port coalesced onto that single
+    /// decision. Busy appliances (Proxmox) open several TLS connections at once;
+    /// all share one operator prompt rather than the extras being rejected, which
+    /// tore down the main navigation with -999.
+    private var pendingBox: ResumeBox?
+    private var coalescedBoxes: [ResumeBox] = []
+    private var pendingToken: UUID?
+
+    /// Set when the operator accepts, cleared when the reload it triggers has been
+    /// signalled, so a burst of coalesced accepts reloads the page exactly once.
+    private var awaitingPinCommit = false
+
     /// Called by the decider after an accepted certificate is durably written to
     /// the trust store, to trigger the view's reload only once the new pin can be
-    /// read back. See `acceptTick`.
+    /// read back. Deduped so coalesced accepts reload once, not N times. See
+    /// `acceptTick`.
     func notePinCommitted() {
+        guard awaitingPinCommit else { return }
+        awaitingPinCommit = false
         acceptTick += 1
     }
 
@@ -117,60 +133,119 @@ final class TLSTrustCoordinator: ObservableObject {
         recordedFirstSeenAt: Date? = nil
     ) async -> TLSTrustDecision {
         let box = ResumeBox()
-        let logger = Logger(subsystem: "pulse", category: "web.trust")
 
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<TLSTrustDecision, Never>) in
                 box.attach(continuation)
-
-                let request = PendingTLSTrust(
-                    host: host,
-                    port: port,
-                    scheme: scheme,
-                    reason: reason,
-                    presentedFingerprint: presentedFingerprint,
-                    presentedAlgorithm: presentedAlgorithm,
-                    recordedFingerprint: recordedFingerprint,
-                    recordedAlgorithm: recordedAlgorithm,
-                    recordedFirstSeenAt: recordedFirstSeenAt,
-                    resume: { decision in box.resumeIfNeeded(with: decision) }
-                )
-                let requestID = request.id
-                let timeout = self.decisionTimeout
-
                 Task { @MainActor in
-                    // One coordinator per web window. A second decide while the
-                    // first is in flight is a contract violation: fault-log it
-                    // (lands in Console.app and any SIEM ingesting os_log) and
-                    // resolve the second call with an explicit reason so the
-                    // audit trail explains what happened.
-                    if self.pending != nil {
-                        logger.fault(
-                            "web.trust.concurrent_decide host=\(host, privacy: .public) port=\(port)"
-                        )
-                        box.resumeIfNeeded(with: .reject(reason: "concurrent_decide"))
-                        return
-                    }
-                    self.pending = request
-                }
-
-                Task {
-                    try? await Task.sleep(for: timeout)
-                    box.resumeIfNeeded(with: .reject(reason: "decision_timeout"))
-                    await self.clearPendingIfMatching(requestID)
+                    self.enqueue(
+                        box: box,
+                        host: host,
+                        port: port,
+                        scheme: scheme,
+                        reason: reason,
+                        presentedFingerprint: presentedFingerprint,
+                        presentedAlgorithm: presentedAlgorithm,
+                        recordedFingerprint: recordedFingerprint,
+                        recordedAlgorithm: recordedAlgorithm,
+                        recordedFirstSeenAt: recordedFirstSeenAt
+                    )
                 }
             }
         } onCancel: {
-            // Parent view torn down (window closed). Distinguish from
-            // decision_timeout in the audit vocabulary.
+            // This challenge's task was cancelled (window closed, or WebKit
+            // abandoned the connection). Resolve this box; drop it from the round.
             box.resumeIfNeeded(with: .reject(reason: "cancelled"))
-            Task { @MainActor in self.pending = nil }
+            Task { @MainActor in self.discard(box: box) }
         }
     }
 
-    private func clearPendingIfMatching(_ id: UUID) {
-        if pending?.id == id {
-            pending = nil
+    /// Register a challenge. The first becomes the visible prompt; a concurrent
+    /// challenge for the *same* host:port is coalesced onto it so one operator
+    /// decision applies to every in-flight connection (the load-bearing fix for
+    /// busy appliances that open many TLS connections at once). A concurrent
+    /// challenge for a *different* host:port is a contract violation in this
+    /// single-origin window and is rejected with an explicit reason that lands in
+    /// the audit trail.
+    private func enqueue(
+        box: ResumeBox,
+        host: String,
+        port: Int,
+        scheme: String,
+        reason: String,
+        presentedFingerprint: String,
+        presentedAlgorithm: String,
+        recordedFingerprint: String?,
+        recordedAlgorithm: String?,
+        recordedFirstSeenAt: Date?
+    ) {
+        let logger = Logger(subsystem: "pulse", category: "web.trust")
+
+        if let current = pending {
+            if current.host == host && current.port == port {
+                coalescedBoxes.append(box)
+                logger.notice("web.trust.coalesced host=\(host, privacy: .public) port=\(port)")
+            } else {
+                logger.fault("web.trust.concurrent_decide host=\(host, privacy: .public) port=\(port)")
+                box.resumeIfNeeded(with: .reject(reason: "concurrent_decide"))
+            }
+            return
+        }
+
+        let request = PendingTLSTrust(
+            host: host,
+            port: port,
+            scheme: scheme,
+            reason: reason,
+            presentedFingerprint: presentedFingerprint,
+            presentedAlgorithm: presentedAlgorithm,
+            recordedFingerprint: recordedFingerprint,
+            recordedAlgorithm: recordedAlgorithm,
+            recordedFirstSeenAt: recordedFirstSeenAt,
+            resume: { [weak self] decision in
+                Task { @MainActor in self?.resolveAll(decision) }
+            }
+        )
+        let token = request.id
+        pending = request
+        pendingBox = box
+        pendingToken = token
+
+        let timeout = decisionTimeout
+        Task { @MainActor in
+            try? await Task.sleep(for: timeout)
+            if self.pendingToken == token {
+                self.resolveAll(.reject(reason: "decision_timeout"))
+            }
+        }
+    }
+
+    /// Resolve the current prompt and every challenge coalesced onto it with the
+    /// same decision, then clear the round.
+    private func resolveAll(_ decision: TLSTrustDecision) {
+        if case .accept = decision {
+            awaitingPinCommit = true
+        } else {
+            awaitingPinCommit = false
+        }
+        pendingBox?.resumeIfNeeded(with: decision)
+        for waiter in coalescedBoxes {
+            waiter.resumeIfNeeded(with: decision)
+        }
+        pendingBox = nil
+        coalescedBoxes.removeAll()
+        pendingToken = nil
+        pending = nil
+    }
+
+    /// A single challenge's task was cancelled. If it drove the visible prompt,
+    /// tear the whole round down; otherwise just drop the coalesced waiter (its
+    /// sibling connection gave up) and leave the prompt standing.
+    private func discard(box: ResumeBox) {
+        if pendingBox === box {
+            resolveAll(.reject(reason: "cancelled"))
+        } else {
+            coalescedBoxes.removeAll { $0 === box }
         }
     }
 }
