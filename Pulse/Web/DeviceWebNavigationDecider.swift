@@ -187,7 +187,7 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
 
         case .acceptPinned:
             try? await store.touchLastVerified(forHost: host, port: port)
-            return (.useCredential, URLCredential(trust: serverTrust))
+            return (.useCredential, operatorAcceptedCredential(for: serverTrust))
 
         case .promptFirstSight:
             guard isOwnOrigin else {
@@ -221,7 +221,7 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
             } catch {
                 WebAudit.commitFailed(host: host, port: port, fingerprint: fingerprint)
             }
-            return (.useCredential, URLCredential(trust: serverTrust))
+            return (.useCredential, operatorAcceptedCredential(for: serverTrust))
 
         case let .promptMismatch(recordedFingerprint, recordedAlgorithm):
             guard isOwnOrigin else {
@@ -250,7 +250,7 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
                 } catch {
                     WebAudit.commitFailed(host: host, port: port, fingerprint: fingerprint)
                 }
-                return (.useCredential, URLCredential(trust: serverTrust))
+                return (.useCredential, operatorAcceptedCredential(for: serverTrust))
             case .forget:
                 try? await store.forget(host: host, port: port)
                 WebAudit.forgotten(host: host, port: port)
@@ -267,6 +267,23 @@ final class DeviceWebNavigationDecider: WebPage.NavigationDeciding {
     }
 
     // MARK: - Helpers
+
+    /// Credential for a certificate the operator has explicitly accepted (pinned
+    /// by SHA-256 fingerprint, or a fresh first-sight / rotation accept). Capturing
+    /// a trust exception and attaching it makes WebKit honour that decision fully:
+    /// without it the navigation can still fail with `-1202` over an IP/hostname
+    /// mismatch even though we return `.useCredential`, because appliances are
+    /// reached by bare IP and rarely carry that IP in the certificate SAN. The
+    /// exact-fingerprint pin we verify is a stronger guarantee than name matching,
+    /// so overriding the name policy for an operator-accepted cert is sound. A
+    /// hard failure (for example a deprecated key/algorithm WebKit refuses) is not
+    /// overridable this way and remains a server-side fix.
+    private func operatorAcceptedCredential(for trust: SecTrust) -> URLCredential {
+        if let exceptions = SecTrustCopyExceptions(trust) {
+            _ = SecTrustSetExceptions(trust, exceptions)
+        }
+        return URLCredential(trust: trust)
+    }
 
     private static func rejectReason(_ outcome: TLSTrustDecision) -> String? {
         if case let .reject(reason) = outcome { return reason }
