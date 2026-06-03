@@ -51,6 +51,9 @@ enum WebAudit {
         case rejected(host: String, port: Int, reason: String?)
         /// An operator forgot a pin; the next connection is a fresh first sight.
         case forgotten(host: String, port: Int)
+        /// An operator blocked a host from the trust settings; the next
+        /// connection is refused (explicit distrust) until they unblock it.
+        case distrusted(host: String, port: Int, reason: String)
 
         /// A SwiftData read of the trust store failed during challenge
         /// evaluation. The challenge is cancelled (fail closed), never treated
@@ -87,6 +90,8 @@ enum WebAudit {
             trustLogger.warning("web.trust.rejected host=\(host, privacy: .public) port=\(port, privacy: .public) reason=\(reason ?? "operator", privacy: .public)")
         case let .forgotten(host, port):
             trustLogger.warning("web.trust.forgotten host=\(host, privacy: .public) port=\(port, privacy: .public)")
+        case let .distrusted(host, port, reason):
+            trustLogger.warning("web.trust.distrusted host=\(host, privacy: .public) port=\(port, privacy: .public) reason=\(reason, privacy: .public)")
         case let .opened(host, port, service):
             sessionLogger.notice("web.session.opened host=\(host, privacy: .public) port=\(port, privacy: .public) service=\(service, privacy: .public)")
         case let .navigationBlocked(host, toURL):
@@ -109,6 +114,7 @@ extension WebAudit {
     static func accepted(host: String, port: Int, fingerprint: String) { emit(.accepted(host: host, port: port, fingerprint: fingerprint)) }
     static func rejected(host: String, port: Int, reason: String?) { emit(.rejected(host: host, port: port, reason: reason)) }
     static func forgotten(host: String, port: Int) { emit(.forgotten(host: host, port: port)) }
+    static func distrusted(host: String, port: Int, reason: String) { emit(.distrusted(host: host, port: port, reason: reason)) }
     static func opened(host: String, port: Int, service: String) { emit(.opened(host: host, port: port, service: service)) }
     static func navigationBlocked(host: String, toURL: String) { emit(.navigationBlocked(host: host, toURL: toURL)) }
     static func storeError(host: String, port: Int) { emit(.storeError(host: host, port: port)) }

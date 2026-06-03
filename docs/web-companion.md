@@ -35,6 +35,16 @@ Many appliances serve their web UI over a self-signed or otherwise untrusted cer
 
 Accepting a certificate means: for this host and port, Pulse will load that exact certificate silently from now on, and will prompt you again only if it changes.
 
+## Reviewing and editing trusted hosts
+
+Open **Settings > Web Trust** to see every device-web host you have trusted or blocked, on this device only. Each entry shows the `host:port`, its status, the pinned certificate fingerprint, and when it was first seen and last verified.
+
+- **Forget** removes a pinned certificate. The next time you open that host you get a fresh first-sight prompt, exactly as if you had never trusted it.
+- **Block** marks a host as explicitly distrusted. Pulse then refuses to load it (with no prompt) until you unblock it. Use this for a host you never want the app to reach.
+- **Unblock** drops the block, so the next visit is a fresh first-sight prompt again.
+
+A declined first-sight prompt is not the same as a block: declining cancels that one attempt and stores nothing, so the host prompts again next time. Only **Block** records a standing refusal.
+
 ## Navigation stays on the device
 
 In-app navigation is contained to the device you opened. Links to the same host, port, and scheme load in the window. A link to any other origin is handed to your system browser instead of navigating away inside Pulse, so the window always shows the device you opened. The current address is shown beneath the page.
@@ -51,7 +61,7 @@ Trust and session events are logged under the `pulse` subsystem, categories `web
 log show --predicate 'subsystem == "pulse" AND category BEGINSWITH "web"' --last 1h
 ```
 
-Events include `web.trust.system` (loaded a trusted certificate), `web.trust.pinned` (trusted on first sight), `web.trust.accepted` (accepted a rotation), `web.trust.rejected` (with a reason such as `decision_timeout`), `web.trust.forgotten`, `web.session.opened`, and `web.session.navigation_blocked`.
+Events include `web.trust.system` (loaded a trusted certificate), `web.trust.pinned` (trusted on first sight), `web.trust.accepted` (accepted a rotation), `web.trust.rejected` (with a reason such as `decision_timeout`), `web.trust.forgotten`, `web.trust.distrusted` (an operator blocked a host from Settings), `web.session.opened`, and `web.session.navigation_blocked`.
 
 ## Lab procedure
 

@@ -145,6 +145,7 @@
 		B17E050300000000000000B1 /* WebAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A1 /* WebAudit.swift */; };
 		B17E050300000000000000B2 /* DeviceWebNavigationDecider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */; };
 		B17E050300000000000000B3 /* DeviceWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A3 /* DeviceWebView.swift */; };
+		B17E050400000000000000B1 /* WebTrustSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050400000000000000A1 /* WebTrustSettingsView.swift */; };
 		B17E050300000000000000B4 /* DeviceWebWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A4 /* DeviceWebWindow.swift */; };
 		B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A5 /* DeviceWebTests.swift */; };
 		B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A2 /* WebHostTrustStore.swift */; };
@@ -357,6 +358,7 @@
 		B17E050300000000000000A1 /* WebAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAudit.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebNavigationDecider.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A3 /* DeviceWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebView.swift; sourceTree = "<group>"; };
+		B17E050400000000000000A1 /* WebTrustSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebTrustSettingsView.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A4 /* DeviceWebWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebWindow.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A5 /* DeviceWebTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebTests.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A2 /* WebHostTrustStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrustStore.swift; sourceTree = "<group>"; };
@@ -671,6 +673,7 @@
 				B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */,
 				B17E050300000000000000A3 /* DeviceWebView.swift */,
 				B17E050300000000000000A4 /* DeviceWebWindow.swift */,
+				B17E050400000000000000A1 /* WebTrustSettingsView.swift */,
 			);
 			path = Web;
 			sourceTree = "<group>";
@@ -1238,6 +1241,7 @@
 				B17E050300000000000000B1 /* WebAudit.swift in Sources */,
 				B17E050300000000000000B2 /* DeviceWebNavigationDecider.swift in Sources */,
 				B17E050300000000000000B3 /* DeviceWebView.swift in Sources */,
+				B17E050400000000000000B1 /* WebTrustSettingsView.swift in Sources */,
 				B17E050300000000000000B4 /* DeviceWebWindow.swift in Sources */,
 				B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */,
 				B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */,
