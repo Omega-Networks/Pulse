@@ -102,6 +102,19 @@ struct DeviceRow: View {
             // host to connect to.
             .disabled(device.first?.primaryIP?.isEmpty != false)
 
+            Button(action: {
+                if let device = device.first {
+                    // Routed to the Device Web scene by `id: "device-web"`,
+                    // same disambiguation rationale as the SSH terminal above.
+                    openWindow(id: "device-web", value: device.id)
+                }
+            }) {
+                Label("Open Web UI", systemImage: "globe")
+            }
+            // Disabled unless NetBox declares a web-serving (HTTP/HTTPS) service
+            // for this device. WebServiceResolver is the source-of-truth rule.
+            .disabled(device.first.flatMap { WebServiceResolver.primaryTarget(for: $0) } == nil)
+
             Button(role: .destructive, action: {
                 if let device = device.first {
                     let deviceId = device.id

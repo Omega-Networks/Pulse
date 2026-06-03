@@ -169,8 +169,8 @@ protocol PulseTransport {
 
 ### 9. UI surface — two windows, one Settings pane
 
-- `WindowGroup("SSH Terminal", for: Device.ID.self)` and `WindowGroup("Device Web", for: Device.ID.self)`, mirroring the existing `WindowGroup("Site View", for: Site.ID.self)` in `PulseApp.swift`. As-built: the SSH terminal scene ships id-addressed (`WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self)` in `SSHTerminalWindow.swift`, wired via `SSHTerminalScene` in `PulseApp.swift`) to avoid the `Device.ID` / `Site.ID` collision on `Int64`. See the Slice 8a routing-disambiguation note. The "Device Web" window is the v1.5 Web companion, not built in v1.
-- Entry points: `DeviceRow.contextMenu` and `DeviceView` popover, disabled when `device.primaryIP == nil`.
+- `WindowGroup("SSH Terminal", for: Device.ID.self)` and `WindowGroup("Device Web", for: Device.ID.self)`, mirroring the existing `WindowGroup("Site View", for: Site.ID.self)` in `PulseApp.swift`. As-built: the SSH terminal scene ships id-addressed (`WindowGroup("SSH Terminal", id: "ssh-terminal", for: Device.ID.self)` in `SSHTerminalWindow.swift`, wired via `SSHTerminalScene` in `PulseApp.swift`) to avoid the `Device.ID` / `Site.ID` collision on `Int64`. See the Slice 8a routing-disambiguation note. As-built (Slice W2b): the Device Web window ships the same way, `WindowGroup("Device Web", id: "device-web", for: Device.ID.self)` in `DeviceWebWindow.swift` wired via `DeviceWebScene`, rendering a device's web UI with `WebView` / `WebPage`. See the Web companion Slice W2a and W2b amendments.
+- Entry points: `DeviceRow.contextMenu` and `DeviceView` popover. Open SSH Terminal is disabled when `device.primaryIP == nil`; Open Web UI is shown only when `WebServiceResolver.primaryTarget(for:)` resolves a NetBox-declared web service.
 - Settings → SSH:
   - **Credentials** — CRUD, SE-backed generation (default), PEM import (legacy, second screen).
   - **Host Trust** — browse, forget, import CA bundle, set per-site enforcement policy.
@@ -479,6 +479,22 @@ Slice W2a (`feat/web-companion-w2a-tls-trust`) builds the headless TLS-trust fou
 - **Audit and the window are deferred to W2b.** `WebAudit` (categories `web.trust` and `web.session`) and the navigation decider that emits it ship with the `WebView` window in W2b, where there is an emitter to exercise them. W2a's coordinator logs its own `web.trust.concurrent_decide` fault inline, mirroring the SSH coordinator.
 
 **Verification posture.** W2a is fully headless: `xcodebuild build` (macOS + iOS) compiles the new model, the schema, the store, the evaluator, the inspector, the resolver, the coordinator, and the sheet; `WebTrustFoundationTests` and `TLSTrustCoordinatorTests` cover the resolver rule, the evaluator branches, the certificate fingerprint against an independently-computed SHA-256, store idempotency, the coordinator timeout and resume, and the sheet default-focus. There is no on-device gate in W2a; the page-renders, prompt-fires, and navigation-contained gates belong to W2b.
+
+## Web companion Slice W2b amendments summary
+
+Slice W2b (`feat/web-companion-w2b-window`) ships the on-device Device Web window that consumes the W2a trust foundation, converting the §9 sketch into as-built. The decisions worth recording:
+
+- **The window and view mirror the SSH terminal.** `DeviceWebScene` (`WindowGroup("Device Web", id: "device-web", for: Device.ID.self)`) mirrors `SSHTerminalScene`, registered in `PulseApp.swift` after it, with the same string-`id:` routing discipline (the SSH and Site scenes also key on `Int64`; see the Slice 8a note). `DeviceWebView` mirrors `SSHTerminalView`: a `@Query` device-by-id, a `WebView(page)` driven by a `@State WebPage` built in `.task`, a toolbar bound to the page's `@Observable` `title` / `estimatedProgress` / `isLoading` / `backForwardList`, and a `WebLoadStatus` pure helper for the status label.
+
+- **The navigation decider is a `@MainActor final class`.** `WebPage.NavigationDeciding`'s methods are `@MainActor mutating`, so a class satisfies the `mutating` requirement trivially and holds references to the trust coordinator and store for the window's lifetime (no value-type `Box` was needed). `decidePolicy(for action:)` allows same-origin navigation (scheme, host, port, via the pure `WebOrigin`) and hands a foreign origin to the system browser. `decideAuthenticationChallengeDisposition` validates the system trust store first (`SecTrustEvaluateWithError`), then routes a failure through the W2a `WebHostTrustEvaluator` + `TLSTrustCoordinator` + store, returning `(.useCredential, URLCredential(trust:))` only on operator accept.
+
+- **The entry point reflects the source of truth.** Open Web UI is surfaced (in `DeviceRow` and `DeviceView`) only when `WebServiceResolver.primaryTarget(for:)` resolves a NetBox-declared web service, not merely when a primary IP exists. A device with no web service shows no affordance and a typed empty state in the window.
+
+- **`WebAudit` is wired.** The decider emits `web.trust.{system,pinned,accepted,rejected,forgotten}` and `web.session.{opened,navigation_blocked}` under the `pulse` subsystem.
+
+- **The deferred WebPage API surface was verified at build.** `WebView(page)` and the `_WebKit_SwiftUI` cross-import overlay; `WebPage.NavigationEvent` is `startedProvisionalNavigation` / `receivedServerRedirect` / `committed` / `finished` with load errors thrown from the `navigations` sequence; `WebPage.BackForwardList` exposes `backList` / `forwardList` / `currentItem` with `load(item:)` for back and forward; `URLCredential(trust:)` is the accept credential. All compiled clean on macOS and iOS.
+
+**Verification posture.** Headless: `xcodebuild build` (macOS + iOS) compiles the scene, view, and decider; `DeviceWebTests` covers `WebOrigin` containment and the `WebLoadStatus` mapping. On-device only (left for the human pass, cannot be faked headless): a real device's web UI renders; a trusted certificate loads silently while a self-signed certificate prompts, accept pins and loads, and a changed certificate re-prompts; the navigation decider keeps in-app navigation contained and routes foreign origins to the system browser; the window opens the correct device with no misroute and window-state restoration behaves (a new scene value type may reset saved state once). Operator guide: `docs/web-companion.md`.
 
 ## Forward-looking implementation discipline
 

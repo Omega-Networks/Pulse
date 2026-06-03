@@ -212,6 +212,16 @@ struct DeviceView: View {
                     Label("Open SSH Terminal", systemImage: "terminal.fill")
                 }
             }
+
+            // Surface the Device Web window only when NetBox declares a
+            // web-serving service (WebServiceResolver is the source-of-truth rule).
+            if WebServiceResolver.primaryTarget(for: device) != nil {
+                Button {
+                    openWindow(id: "device-web", value: device.id)
+                } label: {
+                    Label("Open Web UI", systemImage: "globe")
+                }
+            }
         }
     }
     

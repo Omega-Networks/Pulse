@@ -142,6 +142,11 @@
 		C96191A22ACA5721000198DB /* Device.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A12ACA5721000198DB /* Device.swift */; };
 		B17E050100000000000000B1 /* Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A1 /* Service.swift */; };
 		B17E050200000000000000B1 /* WebHostTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A1 /* WebHostTrust.swift */; };
+		B17E050300000000000000B1 /* WebAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A1 /* WebAudit.swift */; };
+		B17E050300000000000000B2 /* DeviceWebNavigationDecider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */; };
+		B17E050300000000000000B3 /* DeviceWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A3 /* DeviceWebView.swift */; };
+		B17E050300000000000000B4 /* DeviceWebWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A4 /* DeviceWebWindow.swift */; };
+		B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A5 /* DeviceWebTests.swift */; };
 		B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A2 /* WebHostTrustStore.swift */; };
 		B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A3 /* TLSCertificateInspector.swift */; };
 		B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A4 /* WebServiceResolver.swift */; };
@@ -349,6 +354,11 @@
 		C96191A12ACA5721000198DB /* Device.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Device.swift; sourceTree = "<group>"; };
 		B17E050100000000000000A1 /* Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Service.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A1 /* WebHostTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrust.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A1 /* WebAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAudit.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebNavigationDecider.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A3 /* DeviceWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebView.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A4 /* DeviceWebWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebWindow.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A5 /* DeviceWebTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebTests.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A2 /* WebHostTrustStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrustStore.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A3 /* TLSCertificateInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSCertificateInspector.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A4 /* WebServiceResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebServiceResolver.swift; sourceTree = "<group>"; };
@@ -657,6 +667,10 @@
 				B17E050200000000000000A3 /* TLSCertificateInspector.swift */,
 				B17E050200000000000000A4 /* WebServiceResolver.swift */,
 				B17E050200000000000000A5 /* TLSTrustCoordinator.swift */,
+				B17E050300000000000000A1 /* WebAudit.swift */,
+				B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */,
+				B17E050300000000000000A3 /* DeviceWebView.swift */,
+				B17E050300000000000000A4 /* DeviceWebWindow.swift */,
 			);
 			path = Web;
 			sourceTree = "<group>";
@@ -666,6 +680,7 @@
 			children = (
 				B17E050200000000000000A6 /* WebTrustFoundationTests.swift */,
 				B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */,
+				B17E050300000000000000A5 /* DeviceWebTests.swift */,
 			);
 			path = Web;
 			sourceTree = "<group>";
@@ -1220,6 +1235,10 @@
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
 				B17E050100000000000000B1 /* Service.swift in Sources */,
 				B17E050200000000000000B1 /* WebHostTrust.swift in Sources */,
+				B17E050300000000000000B1 /* WebAudit.swift in Sources */,
+				B17E050300000000000000B2 /* DeviceWebNavigationDecider.swift in Sources */,
+				B17E050300000000000000B3 /* DeviceWebView.swift in Sources */,
+				B17E050300000000000000B4 /* DeviceWebWindow.swift in Sources */,
 				B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */,
 				B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */,
 				B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */,
@@ -1245,6 +1264,7 @@
 				B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */,
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
 				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
+				B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */,
 				A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */,
 				A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */,
 				A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */,

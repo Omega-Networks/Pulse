@@ -56,6 +56,8 @@ Pulse includes an operator SSH terminal backed by the device's Secure Enclave. F
 
 > The SSH terminal UI ships on macOS today. The underlying engine (credentials, transport, recording) is platform-agnostic; iOS surfacing is tracked for a later release.
 
+**Opening a device's web UI.** Right-click a device and choose **Open Web UI** to render its web interface (Proxmox, OPNsense, an appliance console) inside Pulse. The option appears only when NetBox declares an HTTP or HTTPS service for the device; the scheme and port come from that NetBox service. A self-signed certificate prompts you to trust it on first sight, and the page stays contained to that device. See the [Web companion guide](web-companion.md) for the service rule and the certificate-trust prompt.
+
 ## 5. Terminal preferences
 
 A few terminal preferences (audible / visual bell, font size) are stored as app defaults; there is no dedicated settings pane yet. See [terminal preferences](credentials.md#terminal-preferences) for the keys and how to change them (`defaults write nz.net.omega.pulse ...`, or the in-window Cmd +/-/0 shortcuts on macOS and pinch-to-zoom on iOS).
@@ -80,5 +82,6 @@ A few terminal preferences (audible / visual bell, font size) are stored as app 
 
 - [README](../README.md) for installation and build setup.
 - [SSH credentials guide](credentials.md) for the credential and recording model.
+- [Web companion guide](web-companion.md) for the device web window and its certificate-trust prompt.
 - [Architecture (ADR 0001)](architecture/0001-ssh-terminal-and-web-foundations.md) for design decisions.
 - The project [Wiki](https://github.com/omega-networks/pulse/wiki) and issue tracker for anything else.

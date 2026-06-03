@@ -218,6 +218,9 @@ struct PulseApp: App {
         // `SSHTerminalScene` for the wrapping rationale.
         SSHTerminalScene(modelContainer: modelContainer)
 
+        // Operator-facing Device Web window, routed per `Device.ID`.
+        DeviceWebScene(modelContainer: modelContainer)
+
         #if DEBUG
         WindowGroup("Debug SSH", id: DebugSSHWindow.windowID) {
             DebugSSHWindow()
