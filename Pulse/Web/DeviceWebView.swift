@@ -89,6 +89,12 @@ struct DeviceWebView: View {
             .sheet(item: $trustCoordinator.pending) { pending in
                 TLSTrustPromptSheet(pending: pending)
             }
+            .onChange(of: trustCoordinator.acceptTick) {
+                // The operator accepted a certificate; reload so the page
+                // connects with the now-pinned cert and the error view clears.
+                loadFailure = nil
+                _ = page?.reload()
+            }
     }
 
     // MARK: - Content

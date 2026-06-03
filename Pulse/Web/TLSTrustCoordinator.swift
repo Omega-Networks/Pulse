@@ -61,6 +61,12 @@ final class TLSTrustCoordinator: ObservableObject {
 
     @Published var pending: PendingTLSTrust?
 
+    /// Bumped each time the operator accepts a trust prompt. The view observes
+    /// this to reload the page so it connects with the now-pinned certificate:
+    /// accepting a server-trust challenge does not reliably resume the suspended
+    /// provisional navigation, so an explicit reload is the robust path.
+    @Published private(set) var acceptTick = 0
+
     private let decisionTimeout: Duration
 
     init(decisionTimeout: Duration = .seconds(90)) {
@@ -115,7 +121,12 @@ final class TLSTrustCoordinator: ObservableObject {
                     recordedFingerprint: recordedFingerprint,
                     recordedAlgorithm: recordedAlgorithm,
                     recordedFirstSeenAt: recordedFirstSeenAt,
-                    resume: { decision in box.resumeIfNeeded(with: decision) }
+                    resume: { [weak self] decision in
+                        if case .accept = decision {
+                            Task { @MainActor in self?.acceptTick += 1 }
+                        }
+                        box.resumeIfNeeded(with: decision)
+                    }
                 )
                 let requestID = request.id
                 let timeout = self.decisionTimeout
