@@ -62,13 +62,14 @@ final class TLSTrustCoordinator: ObservableObject {
     @Published var pending: PendingTLSTrust?
 
     /// Bumped once the decider has *durably pinned* an accepted certificate (see
-    /// `notePinCommitted()`). The view observes this to reload the page so it
-    /// connects with the now-pinned certificate: accepting a server-trust
-    /// challenge does not reliably resume the suspended provisional navigation,
-    /// so an explicit reload is the robust path. The bump is deliberately tied to
-    /// the pin *commit*, not the operator's tap: reloading at tap time raced the
-    /// store write, so the reload re-evaluated before the pin was readable and
-    /// re-prompted in a loop (notably on busy hosts like Proxmox that open many
+    /// `notePinCommitted()`). The view observes this as the accept signal: it
+    /// reloads only as a one-shot recovery if the original navigation did not
+    /// resume on the `useCredential` we returned (which now carries a trust
+    /// exception), avoiding a wasteful second full load and TLS handshake in the
+    /// common case (see `DeviceWebView`). The bump is deliberately tied to the pin
+    /// *commit*, not the operator's tap: signalling at tap time raced the store
+    /// write, so a reload could re-evaluate before the pin was readable and
+    /// re-prompt in a loop (notably on busy hosts like Proxmox that open many
     /// concurrent TLS connections).
     @Published private(set) var acceptTick = 0
 
@@ -79,7 +80,6 @@ final class TLSTrustCoordinator: ObservableObject {
     /// tore down the main navigation with -999.
     private var pendingBox: ResumeBox?
     private var coalescedBoxes: [ResumeBox] = []
-    private var pendingToken: UUID?
 
     /// Set when the operator accepts, cleared when the reload it triggers has been
     /// signalled, so a burst of coalesced accepts reloads the page exactly once.
@@ -209,12 +209,13 @@ final class TLSTrustCoordinator: ObservableObject {
         let token = request.id
         pending = request
         pendingBox = box
-        pendingToken = token
 
         let timeout = decisionTimeout
         Task { @MainActor in
             try? await Task.sleep(for: timeout)
-            if self.pendingToken == token {
+            // Still the same round? resolveAll clears `pending`, and a new round
+            // carries a new id, so a stale timeout never resolves the wrong prompt.
+            if self.pending?.id == token {
                 self.resolveAll(.reject(reason: "decision_timeout"))
             }
         }
@@ -234,7 +235,6 @@ final class TLSTrustCoordinator: ObservableObject {
         }
         pendingBox = nil
         coalescedBoxes.removeAll()
-        pendingToken = nil
         pending = nil
     }
 

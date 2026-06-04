@@ -109,10 +109,13 @@ struct WebTrustSettingsView: View {
     }
 
     /// Unblocking drops the row entirely, so the next visit is a fresh first
-    /// sight rather than a silent re-trust. The same removal the operator gets
-    /// from Forget, named for the blocked case.
+    /// sight rather than a silent re-trust. Same removal as Forget, but recorded
+    /// as a distinct audit event so the two operator intents stay separable.
     private func unblock(_ record: WebHostTrust) {
-        forget(record)
+        let (host, port) = (record.host, record.port)
+        modelContext.delete(record)
+        guard persist(host: host, port: port) else { return }
+        WebAudit.unblocked(host: host, port: port)
     }
 
     /// Commit the pending change. On failure, emit `store_error` and report
@@ -152,6 +155,11 @@ private struct WebTrustRow: View {
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
+                } else if let reason = blockedReason {
+                    Text("Blocked: \(reason)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
 
                 Text("First seen \(record.firstSeenAt.formatted(date: .abbreviated, time: .shortened)), last verified \(record.lastVerifiedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -173,6 +181,8 @@ private struct WebTrustRow: View {
     @ViewBuilder
     private var statusBadge: some View {
         switch record.trust {
+        // .trustedCA is schema-reserved (shared with the SSH HostTrust enum) and
+        // not yet written for web; treat it as trusted alongside .pinned.
         case .pinned, .trustedCA:
             badge("Trusted", color: .green, icon: "checkmark.shield.fill")
         case .explicitlyDistrusted:
@@ -217,5 +227,12 @@ private struct WebTrustRow: View {
         case let .trustedCA(fingerprint, _): return fingerprint
         case .explicitlyDistrusted: return nil
         }
+    }
+
+    /// The reason recorded when the operator blocked this host; nil for trusted
+    /// rows, which show a fingerprint instead.
+    private var blockedReason: String? {
+        if case let .explicitlyDistrusted(reason, _) = record.trust { return reason }
+        return nil
     }
 }

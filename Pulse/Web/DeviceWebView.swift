@@ -74,6 +74,13 @@ struct DeviceWebView: View {
     /// back to us).
     @State private var decider: DeviceWebNavigationDecider?
     @State private var loadFailure: String?
+    /// Set when the operator accepts a certificate this session. Arms the
+    /// recovery reload so an accepted-but-abandoned navigation is retried once,
+    /// without reloading when the suspended navigation resumes on its own.
+    @State private var didAcceptCertificate = false
+    /// One-shot guard: the recovery reload fires at most once per accept, so a
+    /// reload that itself fails can never loop.
+    @State private var retriedAfterAccept = false
 
     init(deviceID: Device.ID) {
         self.deviceID = deviceID
@@ -96,10 +103,26 @@ struct DeviceWebView: View {
                     .interactiveDismissDisabled()
             }
             .onChange(of: trustCoordinator.acceptTick) {
-                // The operator accepted a certificate; reload so the page
-                // connects with the now-pinned cert and the error view clears.
-                loadFailure = nil
-                _ = page?.reload()
+                // The operator accepted a certificate and the pin is committed.
+                // Do not reload unconditionally: the suspended provisional
+                // navigation resumes on the useCredential we returned (now
+                // carrying a trust exception), so a reload would be a wasteful
+                // second full load and TLS handshake. Arm the recovery path, and
+                // reload now only if the navigation had already failed before the
+                // accept landed (WebKit abandoned the suspended nav).
+                didAcceptCertificate = true
+                retriedAfterAccept = false
+                if loadFailure != nil {
+                    reloadAfterAccept()
+                }
+            }
+            .onChange(of: loadFailure) { _, newValue in
+                // Recovery: a failure surfaced after the accept (the suspended
+                // navigation was abandoned). Reload once; the pin is durable now,
+                // so the reloaded challenge resolves silently. The guard makes
+                // this a single attempt, never a loop.
+                guard newValue != nil, didAcceptCertificate, !retriedAfterAccept else { return }
+                reloadAfterAccept()
             }
     }
 
@@ -272,6 +295,16 @@ struct DeviceWebView: View {
     }
 
     private func reload() {
+        loadFailure = nil
+        _ = page?.reload()
+    }
+
+    /// Single recovery reload after an accepted certificate whose original
+    /// navigation did not resume. Disarms itself so it runs at most once per
+    /// accept.
+    private func reloadAfterAccept() {
+        retriedAfterAccept = true
+        didAcceptCertificate = false
         loadFailure = nil
         _ = page?.reload()
     }

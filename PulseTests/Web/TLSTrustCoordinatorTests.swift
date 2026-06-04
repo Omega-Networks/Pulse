@@ -95,4 +95,100 @@ final class TLSTrustCoordinatorTests: XCTestCase {
         // trust. Pinned here so a refactor of the sheet cannot silently flip it.
         XCTAssertEqual(TLSTrustPromptSheet.defaultFocus, .reject)
     }
+
+    // MARK: - Coalescing
+
+    func testConcurrentSameHostCoalescesOntoOneDecision() async throws {
+        let coordinator = await TLSTrustCoordinator(decisionTimeout: .seconds(30))
+        async let d1 = coordinator.decide(
+            host: "h", port: 8006, scheme: "https",
+            reason: "self-signed or untrusted certificate",
+            presentedFingerprint: "fp", presentedAlgorithm: "EC-256"
+        )
+        let pending = try await awaitPending(coordinator)
+
+        // A second concurrent challenge for the same host:port coalesces onto the
+        // prompt already on screen, rather than posting a new one or being rejected.
+        async let d2 = coordinator.decide(
+            host: "h", port: 8006, scheme: "https",
+            reason: "self-signed or untrusted certificate",
+            presentedFingerprint: "fp", presentedAlgorithm: "EC-256"
+        )
+        try await Task.sleep(for: .milliseconds(50))
+        let promptID = await coordinator.pending?.id
+        XCTAssertEqual(promptID, pending.id, "the second challenge must not post a new prompt")
+
+        // One operator decision resolves both in-flight challenges.
+        pending.resume(.accept)
+        let r1 = await d1
+        let r2 = await d2
+        XCTAssertEqual(r1, .accept)
+        XCTAssertEqual(r2, .accept)
+        let cleared = await coordinator.pending
+        XCTAssertNil(cleared)
+    }
+
+    func testConcurrentDifferentHostRejectsWithoutDisturbingThePrompt() async throws {
+        let coordinator = await TLSTrustCoordinator(decisionTimeout: .seconds(30))
+        async let d1 = coordinator.decide(
+            host: "a", port: 443, scheme: "https",
+            reason: "self-signed or untrusted certificate",
+            presentedFingerprint: "fpA", presentedAlgorithm: "EC-256"
+        )
+        let pending = try await awaitPending(coordinator)
+
+        // A different host:port while one is pending is a single-origin-window
+        // contract violation: rejected, and the first prompt is left standing.
+        let other = await coordinator.decide(
+            host: "b", port: 443, scheme: "https",
+            reason: "self-signed or untrusted certificate",
+            presentedFingerprint: "fpB", presentedAlgorithm: "EC-256"
+        )
+        XCTAssertEqual(other, .reject(reason: "concurrent_decide"))
+        let promptID = await coordinator.pending?.id
+        XCTAssertEqual(promptID, pending.id)
+
+        pending.resume(.reject(reason: nil))
+        _ = await d1
+    }
+
+    // MARK: - Reload-signal dedup
+
+    func testNotePinCommittedBumpsAcceptTickOncePerAccept() async throws {
+        let coordinator = await TLSTrustCoordinator(decisionTimeout: .seconds(30))
+        async let decision = coordinator.decide(
+            host: "h", port: 443, scheme: "https",
+            reason: "self-signed or untrusted certificate",
+            presentedFingerprint: "fp", presentedAlgorithm: "EC-256"
+        )
+        let pending = try await awaitPending(coordinator)
+        pending.resume(.accept)
+        _ = await decision
+
+        let before = await coordinator.acceptTick
+        // A burst of coalesced accepts each calls notePinCommitted; only the first
+        // bumps the reload signal.
+        await coordinator.notePinCommitted()
+        await coordinator.notePinCommitted()
+        let after = await coordinator.acceptTick
+        XCTAssertEqual(after - before, 1)
+    }
+
+    func testRejectLeavesReloadSignalUnarmed() async throws {
+        let coordinator = await TLSTrustCoordinator(decisionTimeout: .seconds(30))
+        async let decision = coordinator.decide(
+            host: "h", port: 443, scheme: "https",
+            reason: "self-signed or untrusted certificate",
+            presentedFingerprint: "fp", presentedAlgorithm: "EC-256"
+        )
+        let pending = try await awaitPending(coordinator)
+        pending.resume(.reject(reason: nil))
+        _ = await decision
+
+        let before = await coordinator.acceptTick
+        // No accept happened, so a stray notePinCommitted must not bump acceptTick.
+        await coordinator.notePinCommitted()
+        let after = await coordinator.acceptTick
+        XCTAssertEqual(after, before)
+    }
 }

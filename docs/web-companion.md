@@ -75,6 +75,10 @@ End-to-end verification against a self-signed appliance:
 6. Re-key the appliance (or point the service at a different self-signed host). Reopen. Confirm the mismatch prompt shows the stored and presented fingerprints, and that **Reject** aborts while **Accept** re-pins.
 7. Click a link to an external site. Confirm it opens in your system browser, not in the Pulse window.
 
+## A note on certificate key size
+
+A self-signed appliance that serves a large RSA key (for example 4096-bit) completes its TLS handshake noticeably slower than a 2048-bit one, and a web UI that opens many connections at once multiplies that cost. This is a property of the appliance's certificate, not of Pulse: once trusted, the host loads fine, it just handshakes slower. After you accept a certificate, Pulse loads the page in a single navigation (it does not reload on top of the accepted load), so the handshake cost is paid once rather than twice.
+
 ## Related
 
 - [ADR 0001](architecture/0001-ssh-terminal-and-web-foundations.md) for the architecture and the trust model.
