@@ -12,6 +12,8 @@ The **Open Web UI** option appears only when NetBox declares a web service for t
 
 The first time Pulse reaches a device on your local network, macOS asks whether Pulse may access local network devices. Grant it, or the page fails to load with a "could not connect" error (`NSURLErrorCannotConnectToHost`, -1004). You can change this later in **System Settings > Privacy & Security > Local Network**.
 
+Appliances reached by a routed or public IP work too: Pulse relaxes App Transport Security for the web window's content only, so a self-signed certificate on a public host can load once you accept it, while the app's own NetBox and Zabbix traffic stays under standard ATS. You still get the trust prompt for any untrusted certificate.
+
 ## How Pulse picks the URL: NetBox is the source of truth
 
 Pulse does not guess a device's web address. It reads the device's **NetBox Application Services** (IPAM > Services) and opens what NetBox declares:
