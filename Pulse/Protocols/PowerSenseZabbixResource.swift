@@ -73,7 +73,6 @@ extension PowerSenseZabbixResource {
     var request: URLRequest {
         get async throws {
             let logger = Logger(subsystem: "powersense", category: "zabbixResource")
-            let startTime = Date()
 
             // Get PowerSense Zabbix URL from configuration
             let powerSenseZabbixServer = await Configuration.shared.getPowerSenseZabbixServer()
@@ -97,7 +96,6 @@ extension PowerSenseZabbixResource {
             request.setValue("application/json-rpc", forHTTPHeaderField: "Content-Type")
 
             // Add bearer token authentication for newer Zabbix versions
-            let tokenStartTime = Date()
             let bearerToken = try await PowerSenseZabbixAPI.shared.getBearerToken()
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
 
@@ -110,12 +108,7 @@ extension PowerSenseZabbixResource {
             ]
 
             // Serialize request data
-            let serializationStartTime = Date()
             request.httpBody = try JSONSerialization.data(withJSONObject: requestData)
-
-            // Log the request data for debugging
-            let requestJsonData = try? JSONSerialization.data(withJSONObject: requestData, options: .prettyPrinted)
-               
 
             // Add any additional headers
             if let headers = headers {
