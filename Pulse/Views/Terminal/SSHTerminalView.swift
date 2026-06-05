@@ -98,6 +98,17 @@ struct SSHTerminalView: View {
     /// auto-fire-on-appear path before the .task initializer assigns).
     @State private var connectionAttempt: SSHTerminalConnectionViewModel.ConnectionAttempt?
 
+    /// One-shot guard for the auto-fire-on-appear connect. `.onAppear` is not
+    /// guaranteed to fire only once on macOS (window focus, restoration,
+    /// re-insertion), and `autoFireAttempt` mints a fresh nonce on every call, so
+    /// a second auto-fire would change `connectionAttempt`, make the lifecycle
+    /// `.task(id:)` cancel the in-flight connection, and start another. That race
+    /// tore the first SSH channel down mid-handshake ("child channel inactive",
+    /// zero-record recording) and forced a window reopen plus a second auth. Set
+    /// only once an attempt is actually synthesised, so a first `.onAppear` that
+    /// runs before the credential `@Query` has loaded does not burn the one-shot.
+    @State private var didAttemptAutoFire = false
+
     /// Operator-typed username for the next connection attempt. Bound
     /// into `SSHConnectForm`'s username field. Distinct from
     /// `connectionAttempt.username` so the operator can edit the value
@@ -191,14 +202,24 @@ struct SSHTerminalView: View {
         // never needed here.
         .onAppear {
             initializeFormFromDefaults()
-            if let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
-                connection: connection,
-                deviceDefaultUsername: device?.defaultUsername,
-                deviceDefaultCredentialID: device?.defaultCredentialID,
-                knownCredentialIDs: Set(credentials.map { $0.id })
-            ) {
-                connectionAttempt = attempt
-            }
+            // Auto-fire exactly once per view lifetime. Re-firing on a repeated
+            // `.onAppear` would change `connectionAttempt` (each auto-fire carries
+            // a fresh nonce) and make the lifecycle `.task(id:)` cancel the live
+            // connection mid-handshake, the first-run "child channel inactive"
+            // race that forced a window reopen and a second auth. The guard is set
+            // only when an attempt is actually produced, so a first `.onAppear`
+            // that runs before the credential `@Query` has loaded (autoFireAttempt
+            // returns nil) still auto-fires once it can.
+            guard !didAttemptAutoFire,
+                  let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
+                      connection: connection,
+                      deviceDefaultUsername: device?.defaultUsername,
+                      deviceDefaultCredentialID: device?.defaultCredentialID,
+                      knownCredentialIDs: Set(credentials.map { $0.id })
+                  )
+            else { return }
+            didAttemptAutoFire = true
+            connectionAttempt = attempt
         }
         // Lifecycle driver: each new `ConnectionAttempt` (auto-fire on
         // first appear, or operator-clicked Connect on `.idle` /
