@@ -153,6 +153,7 @@
 		B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A3 /* TLSCertificateInspector.swift */; };
 		B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A4 /* WebServiceResolver.swift */; };
 		B17E050200000000000000B5 /* TLSTrustCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A5 /* TLSTrustCoordinator.swift */; };
+		B17E050500000000000000B1 /* ResumeBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050500000000000000A1 /* ResumeBox.swift */; };
 		B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A6 /* WebTrustFoundationTests.swift */; };
 		B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */; };
 		C96191A42ACA572E000198DB /* DeviceRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A32ACA572E000198DB /* DeviceRole.swift */; };
@@ -367,6 +368,7 @@
 		B17E050200000000000000A3 /* TLSCertificateInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSCertificateInspector.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A4 /* WebServiceResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebServiceResolver.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A5 /* TLSTrustCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSTrustCoordinator.swift; sourceTree = "<group>"; };
+		B17E050500000000000000A1 /* ResumeBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeBox.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A6 /* WebTrustFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebTrustFoundationTests.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSTrustCoordinatorTests.swift; sourceTree = "<group>"; };
 		C96191A32ACA572E000198DB /* DeviceRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRole.swift; sourceTree = "<group>"; };
@@ -680,6 +682,14 @@
 			path = Web;
 			sourceTree = "<group>";
 		};
+		B17E050500000000000000C1 /* Concurrency */ = {
+			isa = PBXGroup;
+			children = (
+				B17E050500000000000000A1 /* ResumeBox.swift */,
+			);
+			path = Concurrency;
+			sourceTree = "<group>";
+		};
 		B17E050200000000000000C2 /* Web */ = {
 			isa = PBXGroup;
 			children = (
@@ -724,6 +734,7 @@
 			isa = PBXGroup;
 			children = (
 				067FD09A2ECC6CED00146D44 /* Extensions */,
+				B17E050500000000000000C1 /* Concurrency */,
 				067FD0862ECC6A2B00146D44 /* Spatial */,
 				41D8E6832D2B4238002CA36D /* Tips */,
 				41A777C92B79878900A7695C /* Supporting Files */,
@@ -1251,6 +1262,7 @@
 				B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */,
 				B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */,
 				B17E050200000000000000B5 /* TLSTrustCoordinator.swift in Sources */,
+				B17E050500000000000000B1 /* ResumeBox.swift in Sources */,
 				C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */,
 				C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */,
 				C96191D92ACA5B17000198DB /* EdgeLabel.swift in Sources */,

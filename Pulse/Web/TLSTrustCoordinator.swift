@@ -78,8 +78,8 @@ final class TLSTrustCoordinator: ObservableObject {
     /// decision. Busy appliances (Proxmox) open several TLS connections at once;
     /// all share one operator prompt rather than the extras being rejected, which
     /// tore down the main navigation with -999.
-    private var pendingBox: ResumeBox?
-    private var coalescedBoxes: [ResumeBox] = []
+    private var pendingBox: ResumeBox<TLSTrustDecision>?
+    private var coalescedBoxes: [ResumeBox<TLSTrustDecision>] = []
 
     /// Set when the operator accepts, cleared when the reload it triggers has been
     /// signalled, so a burst of coalesced accepts reloads the page exactly once.
@@ -132,7 +132,7 @@ final class TLSTrustCoordinator: ObservableObject {
         recordedAlgorithm: String? = nil,
         recordedFirstSeenAt: Date? = nil
     ) async -> TLSTrustDecision {
-        let box = ResumeBox()
+        let box = ResumeBox<TLSTrustDecision>()
 
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<TLSTrustDecision, Never>) in
@@ -168,7 +168,7 @@ final class TLSTrustCoordinator: ObservableObject {
     /// single-origin window and is rejected with an explicit reason that lands in
     /// the audit trail.
     private func enqueue(
-        box: ResumeBox,
+        box: ResumeBox<TLSTrustDecision>,
         host: String,
         port: Int,
         scheme: String,
@@ -241,51 +241,12 @@ final class TLSTrustCoordinator: ObservableObject {
     /// A single challenge's task was cancelled. If it drove the visible prompt,
     /// tear the whole round down; otherwise just drop the coalesced waiter (its
     /// sibling connection gave up) and leave the prompt standing.
-    private func discard(box: ResumeBox) {
+    private func discard(box: ResumeBox<TLSTrustDecision>) {
         if pendingBox === box {
             resolveAll(.reject(reason: "cancelled"))
         } else {
             coalescedBoxes.removeAll { $0 === box }
         }
-    }
-}
-
-// MARK: - ResumeBox
-
-/// Lock-protected single-resume wrapper around a `CheckedContinuation`, with
-/// late-attach support. Identical in contract to the SSH coordinator's
-/// `ResumeBox`; see that type for the rationale.
-private final class ResumeBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<TLSTrustDecision, Never>?
-    private var deferredDecision: TLSTrustDecision?
-
-    init() {}
-
-    func attach(_ c: CheckedContinuation<TLSTrustDecision, Never>) {
-        lock.lock()
-        if let deferred = deferredDecision {
-            deferredDecision = nil
-            lock.unlock()
-            c.resume(returning: deferred)
-            return
-        }
-        continuation = c
-        lock.unlock()
-    }
-
-    func resumeIfNeeded(with decision: TLSTrustDecision) {
-        lock.lock()
-        if let c = continuation {
-            continuation = nil
-            lock.unlock()
-            c.resume(returning: decision)
-            return
-        }
-        if deferredDecision == nil {
-            deferredDecision = decision
-        }
-        lock.unlock()
     }
 }
 

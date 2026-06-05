@@ -95,7 +95,7 @@ final class HostKeyMismatchCoordinator: ObservableObject, HostKeyMismatchDecisio
         // handler can reach it without a circular capture. The reshaped
         // ResumeBox holds the resume in a `deferredDecision` slot if the
         // attach happens after a cancel.
-        let box = ResumeBox()
+        let box = ResumeBox<HostKeyMismatchDecision>()
         let logger = Logger(subsystem: "pulse", category: "hostkey.coordinator")
 
         return await withTaskCancellationHandler {
@@ -165,55 +165,5 @@ final class HostKeyMismatchCoordinator: ObservableObject, HostKeyMismatchDecisio
         if pending?.id == id {
             pending = nil
         }
-    }
-}
-
-// MARK: - ResumeBox
-
-/// Lock-protected single-resume wrapper around a `CheckedContinuation`.
-/// The coordinator's operator-action, timeout, concurrent-decide-degrade,
-/// and external-cancellation paths all call `resumeIfNeeded(...)`; the box
-/// guarantees the underlying continuation resumes exactly once even when
-/// they race.
-///
-/// **Late-attach support.** The box is created before
-/// `withCheckedContinuation` so the cancellation handler can reach it. If
-/// a resume call arrives before the continuation is attached (the
-/// cancellation handler firing in a tight race), the decision is parked
-/// in `deferredDecision` and applied at attach time.
-private final class ResumeBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<HostKeyMismatchDecision, Never>?
-    private var deferredDecision: HostKeyMismatchDecision?
-
-    init() {}
-
-    func attach(_ c: CheckedContinuation<HostKeyMismatchDecision, Never>) {
-        lock.lock()
-        if let deferred = deferredDecision {
-            deferredDecision = nil
-            lock.unlock()
-            c.resume(returning: deferred)
-            return
-        }
-        continuation = c
-        lock.unlock()
-    }
-
-    func resumeIfNeeded(with decision: HostKeyMismatchDecision) {
-        lock.lock()
-        if let c = continuation {
-            continuation = nil
-            lock.unlock()
-            c.resume(returning: decision)
-            return
-        }
-        // Continuation not attached yet (cancellation racing with the
-        // body's synchronous setup). Park the decision so attach can
-        // deliver it. Subsequent resumes are dropped.
-        if deferredDecision == nil {
-            deferredDecision = decision
-        }
-        lock.unlock()
     }
 }
