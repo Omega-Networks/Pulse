@@ -51,6 +51,16 @@ A declined first-sight prompt is not the same as a block: declining cancels that
 
 In-app navigation is contained to the device you opened. Links to the same host, port, and scheme load in the window. A link to any other origin is handed to your system browser instead of navigating away inside Pulse, so the window always shows the device you opened. The current address is shown beneath the page.
 
+## New windows and pop-ups
+
+The web window does not open new windows or pop-ups. When a page calls `window.open` (appliance consoles such as noVNC or a serial console, and some "open in new tab" buttons), the platform web API Pulse is built on gives no way to host or redirect that request, so it does not open. This is tracked and will be revisited if the platform gains the capability.
+
+For an interactive console, use the built-in SSH terminal, which is the supported path. Foreign links followed inside the page still open in your system browser, as described above; only new windows are affected.
+
+## Downloads
+
+Downloading files from a device's web UI (firmware images, config backups, logs, certificates) is not yet supported in the web window. The native API Pulse needs to save a download has not shipped in the current OS, so the capability is deferred and tracked, and will be revisited. Until then, pull files using the built-in SSH terminal, or open the device in a desktop browser.
+
 ## Where trust is stored
 
 TLS trust is stored on-device in Pulse's local database, keyed by host and port, separate from SSH host-key trust. Forgetting a device's TLS trust does not touch its SSH host-key trust, and vice versa. As with the rest of Pulse, nothing syncs to iCloud.
