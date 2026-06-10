@@ -29,8 +29,8 @@ import OSLog
 import SwiftData
 
 /// Owns the operator-facing SSH connection lifecycle, extracted from
-/// `SSHTerminalView` (the deferral parked at ADR 0001 §"Forward-looking
-/// implementation discipline" / the Slice 8c note). The view renders
+/// `SSHTerminalView` (the extraction ADR 0001 §"Forward-looking
+/// implementation discipline" deferred and a later pass landed). The view renders
 /// `status`/`isRecording`; this type owns the connect → run → teardown
 /// flow plus the pure mappings (`statusPillCopy`, `primaryActionShape`,
 /// `autoFireAttempt`) and the device-defaults persistence helpers.

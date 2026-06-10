@@ -89,7 +89,7 @@ struct DeviceRow: View {
                     // Wrap the id in `DeviceWindowTarget` so this routes
                     // to the SSH terminal scene by type, not by the
                     // Int64 registration order it once shared with Site
-                    // View (Slice 8b). The matching `id: "ssh-terminal"`
+                    // View. The matching `id: "ssh-terminal"`
                     // is retained as a restoration anchor. See
                     // `SSHTerminalScene` for the full rationale.
                     openWindow(id: "ssh-terminal", value: DeviceWindowTarget(deviceID: device.id))

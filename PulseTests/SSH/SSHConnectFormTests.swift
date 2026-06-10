@@ -570,7 +570,7 @@ final class SSHConnectFormTests: XCTestCase {
         XCTAssertEqual(SSHTerminalConnectionViewModel.primaryActionShape(for: .failed("reason")), .reconnect)
     }
 
-    // MARK: - Window routing targets (Slice 8b)
+    // MARK: - Window routing targets
 
     /// `DeviceWindowTarget` must round-trip through `Codable`: SwiftUI
     /// persists the `WindowGroup` value for state restoration, so a

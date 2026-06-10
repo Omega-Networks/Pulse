@@ -110,11 +110,10 @@ final class SSHSessionRecordingTap: ChannelDuplexHandler {
         // The actor's `close()` is `async` and waits to flush the
         // .meta sidecar; we can't await it from this EventLoop thread
         // without blocking the loop, and the channel-inactive
-        // lifecycle here is best-effort cleanup. The SSHClient
-        // integration in commit 8 may close() the writer directly
-        // with a richer `ExitCause`-derived description before the
-        // channel goes inactive, in which case this call is a no-op
-        // (close is idempotent).
+        // lifecycle here is best-effort cleanup. The SSHClient may
+        // close() the writer directly with a richer `ExitCause`-derived
+        // description before the channel goes inactive, in which case
+        // this call is a no-op (close is idempotent).
         //
         // Explicit `[writer]` capture rather than implicit `self`
         // keeps the closure region-isolation analysis simple under

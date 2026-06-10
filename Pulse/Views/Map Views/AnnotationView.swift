@@ -106,7 +106,7 @@ struct AnnotationView: View {
                     // Wrap the id in `SiteWindowTarget` so this routes to
                     // the Site View scene by type, not by the Int64
                     // registration order it once shared with the terminal
-                    // scene (Slice 8b); see SSHTerminalScene doc-comment
+                    // scene; see SSHTerminalScene doc-comment
                     // for the routing rationale.
                     openWindow(id: "site-view", value: SiteWindowTarget(siteID: site.id))
                 }

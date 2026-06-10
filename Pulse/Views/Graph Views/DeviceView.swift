@@ -203,7 +203,7 @@ struct DeviceView: View {
             // entirely when the builder produces no content. Future
             // UI (Open Web UI, Copy IP, etc.) extends this block
             // when there's an operator ask. The id is wrapped in
-            // `DeviceWindowTarget` so routing is by type (Slice 8b); the
+            // `DeviceWindowTarget` so routing is by type; the
             // matching `id: "ssh-terminal"` is the restoration anchor.
             // See `SSHTerminalScene` doc-comment.
             if let primaryIP = device.primaryIP, !primaryIP.isEmpty {

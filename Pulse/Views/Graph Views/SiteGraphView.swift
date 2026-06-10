@@ -306,7 +306,7 @@ struct SiteGraphView: View {
                                 // this routes to the Site View scene by
                                 // type, not by the Int64 registration
                                 // order it once shared with the terminal
-                                // scene (Slice 8b); see SSHTerminalScene
+                                // scene; see SSHTerminalScene
                                 // doc-comment for the routing rationale.
                                 openWindow(id: "site-view", value: SiteWindowTarget(siteID: siteId))
                             }

@@ -171,7 +171,7 @@ struct PulseApp: App {
         .menuBarExtraStyle(.window)
 
         // Per-Site Site View, keyed on the nominal `SiteWindowTarget`
-        // value type (Slice 8b). `Site.ID` and `Device.ID` both resolve
+        // value type (per ADR 0001 §9, the window model). `Site.ID` and `Device.ID` both resolve
         // to `Int64`, so keying on the raw id let device-targeted
         // openWindow calls mis-route here by registration order; the
         // distinct target type makes that a compile error. The

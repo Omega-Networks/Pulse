@@ -157,8 +157,9 @@ struct FileSystemSessionLogRetentionStore: SessionLogRetentionStore {
 
 /// Launch-time retention policy for session logs.
 ///
-/// `purgeAtLaunch(maxAge:)` is called once from `PulseApp.init` (commit
-/// 10 wires the hook). It walks every persisted session, deletes any
+/// `purgeAtLaunch(maxAge:)` is called once from `PulseApp.init` at launch,
+/// per ADR 0001 §6 (session recording: retention auto-purge runs at launch
+/// on a detached task). It walks every persisted session, deletes any
 /// pair older than `maxAge`, and emits one of two audit events:
 ///
 /// - `session.recording.purged` with the count and oldest-purged date,

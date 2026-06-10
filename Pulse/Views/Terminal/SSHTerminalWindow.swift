@@ -62,19 +62,20 @@ struct SiteWindowTarget: Hashable, Codable {
 /// for a device that already has a terminal open, which is the desired
 /// single-terminal-per-device behaviour.
 ///
-/// **Why a nominal value type (Slice 8b).** `Device.ID` and `Site.ID`
+/// **Why a nominal value type.** `Device.ID` and `Site.ID`
 /// both resolve to `Int64` (the default `Identifiable.ID` for the two
 /// `@Model` classes whose `id: Int64`), so two
 /// `WindowGroup(for: Int64.self)` registrations would collide and a bare
 /// `openWindow(value: someInt64)` would match by registration order
-/// rather than by intent. Slice 8a fixed the runtime routing with an
-/// explicit `id:` string per scene; Slice 8b hardens that into a
-/// compile-time guarantee by keying each scene on a distinct nominal
-/// type (`DeviceWindowTarget` here, `SiteWindowTarget` for Site View).
-/// A misrouted `openWindow` is now a type error, not a registration-order
-/// accident. The `id:` strings are retained as state-restoration anchors
+/// rather than by intent. The runtime routing is disambiguated by an
+/// explicit `id:` string per scene; keying each scene on a distinct
+/// nominal type (`DeviceWindowTarget` here, `SiteWindowTarget` for Site
+/// View) makes the value type itself select the scene, so a
+/// `DeviceWindowTarget` cannot land in the Site View scene by accident.
+/// The `id:` strings are retained as state-restoration anchors
 /// and as a guard against a future `Int64`-keyed scene; every call site
 /// passes the matching `id:` and wraps its id in the matching target.
+/// See ADR 0001 §9 (window model) for the routing rationale.
 ///
 /// On iOS the same view is buildable but no scene registers it here;
 /// iOS routing from a device row to the terminal is the concern of
