@@ -571,7 +571,7 @@ Branch context (slice numbers, commit hashes, PR numbers, in-flight feature name
 
 The single exception is explicit historical-lineage sections in ADRs. The *"Slice N amendments summary"* sections in this document record when a contract changed and what changed; the slice numbers there are correct because they're dating decisions, not describing the code's current state. Operator-facing docs (`docs/credentials.md`) describe behaviour, not lineage.
 
-Mechanical check before merge: a grep over `Pulse`, `PulseTests`, and operator-facing docs for `Slice\s*[0-9]`, commit-hash patterns, and `PR #` references should return empty. Intentional references live only in `docs/architecture/` historical sections. The recording-slice cleanup retroactively applied this discipline across the SSH module; subsequent slices should apply it incrementally rather than carrying transient context into long-lived artefacts.
+Mechanical check before merge: a grep over `Pulse`, `PulseTests`, and operator-facing docs for `Slice\s*[0-9]`, commit-hash patterns, and `PR #` references should return empty. Intentional references live only in `docs/architecture/` historical sections. The gate is enforced in code. Any non-empty grep result in `Pulse/`, `PulseTests/`, or operator docs is a merge blocker.
 
 ### Test-sizing first-principles
 
@@ -638,3 +638,10 @@ Also discovered during plan-lock (not in the pre-recording question list but wor
 ## Review
 
 This document is the contract. Changes require a new ADR or an amendment with explicit rationale. Implementation PRs touching SSH, Web, transport, credentials, or session logging must reference this ADR in their description.
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-05-23 | ADR accepted. Subsequent contract changes are recorded inline above and traced in the per-slice "amendments summary" sections. |
+| 2026-06-10 | PR14 pre-merge documentation-currency pass. Tightened the transient-context discipline language: the grep gate over `Pulse/`, `PulseTests/`, and operator docs is now stated as a merge blocker rather than a discipline left for "subsequent slices" to apply incrementally. Reconciled the Web companion W2b window-routing sentence to the post-hardening state (all three id-addressed scenes key on nominal target structs once the Device Web window adopted `DeviceWindowTarget`). |
