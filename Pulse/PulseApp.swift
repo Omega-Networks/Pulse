@@ -217,7 +217,9 @@ struct PulseApp: App {
         // `SSHTerminalScene` for the wrapping rationale.
         SSHTerminalScene(modelContainer: modelContainer)
 
-        // Operator-facing Device Web window, routed per `Device.ID`.
+        // Operator-facing Device Web window, routed per `DeviceWindowTarget`
+        // (the same nominal envelope the SSH terminal uses). See
+        // `DeviceWebScene` for the routing rationale.
         DeviceWebScene(modelContainer: modelContainer)
 
         #if DEBUG

@@ -26,20 +26,24 @@
 import SwiftData
 import SwiftUI
 
-/// Operator-facing Device Web window, routed per `Device.ID`. Mirrors
-/// `SSHTerminalScene`: an explicit `id: "device-web"` disambiguates the
-/// `WindowGroup(for: Device.ID.self)` registration from the SSH terminal and
-/// Site View scenes, which also key on `Int64`-valued ids (see the
-/// routing-disambiguation note in ADR 0001). It converges with the nominal
-/// window-target struct when that work lands.
+/// Operator-facing Device Web window, routed per `DeviceWindowTarget`.
+/// Mirrors `SSHTerminalScene`: keying the `WindowGroup` on the nominal
+/// `DeviceWindowTarget` rather than the raw `Device.ID` (which is `Int64`
+/// and collides with `Site.ID`) makes a misrouted `openWindow` a compile
+/// error rather than a registration-order accident. Per ADR 0001 §9, all
+/// three id-addressed scenes (SSH Terminal, Site View, Device Web) key on
+/// nominal target structs; the `id: "device-web"` string is retained as the
+/// state-restoration anchor and as a second line of defence against a future
+/// `Int64`-keyed scene. See `DeviceWindowTarget` and `SSHTerminalScene` for
+/// the full routing rationale.
 struct DeviceWebScene: Scene {
 
     let modelContainer: ModelContainer
 
     @ViewBuilder
-    private func sceneContent(for deviceID: Device.ID?) -> some View {
-        if let id = deviceID {
-            DeviceWebView(deviceID: id)
+    private func sceneContent(for target: DeviceWindowTarget?) -> some View {
+        if let target {
+            DeviceWebView(deviceID: target.deviceID)
                 .modelContainer(modelContainer)
         } else {
             // SwiftUI can instantiate the scene with a nil value during
@@ -51,16 +55,16 @@ struct DeviceWebScene: Scene {
 
     #if os(macOS)
     var body: some Scene {
-        WindowGroup("Device Web", id: "device-web", for: Device.ID.self) { $deviceID in
-            sceneContent(for: deviceID)
+        WindowGroup("Device Web", id: "device-web", for: DeviceWindowTarget.self) { $target in
+            sceneContent(for: target)
         }
         .windowResizability(.contentSize)
         .windowToolbarStyle(.unified(showsTitle: true))
     }
     #else
     var body: some Scene {
-        WindowGroup("Device Web", id: "device-web", for: Device.ID.self) { $deviceID in
-            sceneContent(for: deviceID)
+        WindowGroup("Device Web", id: "device-web", for: DeviceWindowTarget.self) { $target in
+            sceneContent(for: target)
         }
     }
     #endif

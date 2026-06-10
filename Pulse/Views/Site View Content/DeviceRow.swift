@@ -104,9 +104,11 @@ struct DeviceRow: View {
 
             Button(action: {
                 if let device = device.first {
-                    // Routed to the Device Web scene by `id: "device-web"`,
-                    // same disambiguation rationale as the SSH terminal above.
-                    openWindow(id: "device-web", value: device.id)
+                    // Wrap the id in `DeviceWindowTarget` so this routes to
+                    // the Device Web scene by type, same as the SSH terminal
+                    // above; the matching `id: "device-web"` is retained as a
+                    // restoration anchor. See `SSHTerminalScene`.
+                    openWindow(id: "device-web", value: DeviceWindowTarget(deviceID: device.id))
                 }
             }) {
                 Label("Open Web UI", systemImage: "globe")
