@@ -218,10 +218,12 @@ struct DeviceView: View {
             // web-serving service (WebServiceResolver is the source-of-truth rule).
             if WebServiceResolver.primaryTarget(for: device) != nil {
                 Button {
-                    // Routed by type via `DeviceWindowTarget`, same as the
-                    // SSH terminal above; `id: "device-web"` is the
-                    // restoration anchor. See `SSHTerminalScene`.
-                    openWindow(id: "device-web", value: DeviceWindowTarget(deviceID: device.id))
+                    // Routed by type via the Device Web scene's own
+                    // `DeviceWebWindowTarget` (distinct from the SSH
+                    // terminal's `DeviceWindowTarget` so the two scenes don't
+                    // share one `WindowGroup(for:)` type and mount twice);
+                    // `id: "device-web"` is the restoration anchor.
+                    openWindow(id: "device-web", value: DeviceWebWindowTarget(deviceID: device.id))
                 } label: {
                     Label("Open Web UI", systemImage: "globe")
                 }
