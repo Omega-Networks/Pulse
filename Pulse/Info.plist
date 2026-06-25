@@ -2,45 +2,72 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  App Transport Security.
+	  - NSAllowsLocalNetworking permits plain HTTP and self-signed TLS on the
+	    local network (the common internal-deployment shape for NetBox and Zabbix).
+	  - NSAllowsArbitraryLoadsInWebContent relaxes ATS for WKWebView content ONLY
+	    (the Device Web companion). Appliance web UIs are routinely served over
+	    self-signed TLS, and an appliance reached by a PUBLIC IP is not covered by
+	    NSAllowsLocalNetworking, so ATS would otherwise refuse its certificate with
+	    NSURLErrorServerCertificateUntrusted (-1202) even after the operator
+	    accepts it (observed on a public FortiGate at :9443 whose cert is otherwise
+	    valid). This flag scopes the relaxation to web content; the app's own
+	    NetBox / Zabbix URLSession traffic stays under full ATS. Untrusted
+	    certificates are still gated by the operator trust prompt
+	    (TLSTrustCoordinator), so this loosens transport policy, not the TOFU trust
+	    decision.
+	  Operators whose NetBox / Zabbix lives on a public IP with a non-trusted cert
+	  can add a per-domain URLSession exception via NSExceptionDomains here, e.g.:
+
+	      <key>NSExceptionDomains</key>
+	      <dict>
+	        <key>netbox.example.org</key>
+	        <dict>
+	          <key>NSExceptionAllowsInsecureHTTPLoads</key>
+	          <true/>
+	        </dict>
+	      </dict>
+	-->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 	</dict>
+	<!--
+	  Local Network privacy (macOS 15+). The Device Web companion and the SSH
+	  terminal connect to appliances on the operator's local network by private
+	  IP; macOS gates those connections behind a Local Network permission and
+	  fails them with NSURLErrorCannotConnectToHost (-1004) until the operator
+	  grants access. This usage string is what macOS shows in that prompt.
+	  NetBox / Zabbix over a routed hostname do not trip this gate; a WKWebView
+	  reaching a local appliance does.
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Pulse connects to devices on your local network to open their web and terminal management interfaces.</string>
 	<key>UIBackgroundModes</key>
 	<array/>
+	<!--
+	  Exported UTType for DeviceRoleRecord, a Transferable used to drag device
+	  roles onto the site graph. Declaring it here silences the "expected to be
+	  declared and exported in the Info.plist" runtime warning and lets macOS
+	  route the drag pasteboard reliably. The identifier must match
+	  UTType(exportedAs:) in DeviceRole.swift; the record is a Codable (JSON)
+	  payload, so it conforms to public.data.
+	-->
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string></string>
-			</array>
 			<key>UTTypeIdentifier</key>
-			<string>your-api-domain.com</string>
-			<key>UTTypeTagSpecification</key>
-			<dict/>
-		</dict>
-		<dict>
+			<string>omega-networks.Pulse.DeviceRoleRecord</string>
+			<key>UTTypeDescription</key>
+			<string>Pulse Device Role</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.data</string>
 			</array>
-			<key>UTTypeDescription</key>
-			<string>Pulse Interface</string>
-			<key>UTTypeIdentifier</key>
-			<string>your-api-domain.com</string>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>pulseinterface</string>
-				</array>
-				<key>public.mime-type</key>
-				<array>
-					<string>application/pulseinterface</string>
-				</array>
-			</dict>
 		</dict>
 	</array>
 </dict>

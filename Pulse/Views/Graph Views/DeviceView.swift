@@ -89,7 +89,14 @@ struct DeviceView: View {
     @State private var showPopover = false
     
     @State private var isTapped: Bool = false
-    
+
+    /// Environment handle for opening the SSH terminal window via
+    /// the device-node context menu. Declared on `DeviceView`
+    /// directly because the environment value does not propagate
+    /// from `SiteGraphView`'s `@Environment(\.openWindow)` into the
+    /// closure scope of a child view's `.contextMenu` button.
+    @Environment(\.openWindow) private var openWindow
+
     /**
      Initializes a new DeviceView with the specified device and bindings.
      
@@ -164,10 +171,10 @@ struct DeviceView: View {
             }
             .onHover { isHovering in
                 self.isHovering = isHovering
-                
+
                 // Cancel any existing timer
                 hoverTimer?.invalidate()
-                
+
                 if isHovering {
                     // Create new timer for 1 second delay
                     hoverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
@@ -184,9 +191,41 @@ struct DeviceView: View {
             .onTapGesture {
                 self.selectedDevice = device
             }
-            
+
             // Device Labels
             deviceLabels
+        }
+        .contextMenu {
+            // Only surface the menu when the device has a routable
+            // primary IP. Without one the SSH terminal cannot
+            // connect, and surfacing the gesture greyed-out is
+            // noise. SwiftUI suppresses the right-click menu
+            // entirely when the builder produces no content. Future
+            // UI (Open Web UI, Copy IP, etc.) extends this block
+            // when there's an operator ask. The id is wrapped in
+            // `DeviceWindowTarget` so routing is by type; the
+            // matching `id: "ssh-terminal"` is the restoration anchor.
+            // See `SSHTerminalScene` doc-comment.
+            if let primaryIP = device.primaryIP, !primaryIP.isEmpty {
+                Button {
+                    openWindow(id: "ssh-terminal", value: DeviceWindowTarget(deviceID: device.id))
+                } label: {
+                    Label("Open SSH Terminal", systemImage: "terminal.fill")
+                }
+            }
+
+            // Surface the Device Web window only when NetBox declares a
+            // web-serving service (WebServiceResolver is the source-of-truth rule).
+            if WebServiceResolver.primaryTarget(for: device) != nil {
+                Button {
+                    // Routed by type via `DeviceWindowTarget`, same as the
+                    // SSH terminal above; `id: "device-web"` is the
+                    // restoration anchor. See `SSHTerminalScene`.
+                    openWindow(id: "device-web", value: DeviceWindowTarget(deviceID: device.id))
+                } label: {
+                    Label("Open Web UI", systemImage: "globe")
+                }
+            }
         }
     }
     

@@ -58,10 +58,12 @@ final class DeviceRole {
         return uniqueAllowedDeviceTypes
     }
     
+    #if os(macOS)
     var record: DeviceRoleRecord {
         DeviceRoleRecord(deviceRole: self)
     }
-    
+    #endif
+
 }
 
 #if os(macOS)

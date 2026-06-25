@@ -288,3 +288,14 @@ struct RackResource: NetboxResource {
     var filterId: String?
     var headers: [String: String]?
 }
+
+// API Resource for Application Services (IPAM > Services)
+struct ServiceResource: NetboxResource {
+    typealias ModelType = ServiceProperties
+
+    var methodPath: String {
+        return "/api/ipam/services/?limit=1000"
+    }
+    var filterId: String?
+    var headers: [String: String]?
+}

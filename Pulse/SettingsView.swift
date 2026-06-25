@@ -116,6 +116,18 @@ struct SettingsView: View {
                 Label("PowerSense", systemImage: "bolt.circle")
             }
 
+            ///SSH credentials (Secure Enclave default, PEM import for legacy keys)
+            SSHCredentialsSettings()
+                .tabItem {
+                    Label("SSH", systemImage: "key.fill")
+                }
+
+            ///Device-web TLS trust: review and edit pinned (trusted) and blocked hosts
+            WebTrustSettingsView()
+                .tabItem {
+                    Label("Web Trust", systemImage: "lock.shield")
+                }
+
             ///Sync dashboard - contains Model Object Counts
             SyncDashboardView()
                 .tabItem {

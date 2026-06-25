@@ -1,0 +1,154 @@
+//
+//  SSHCertificateManager.swift
+//  Pulse
+//
+//  Copyright © 2025–present Omega Networks Limited.
+//
+//  Pulse
+//  The Platform for Unified Leadership in Smart Environments.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience, all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
+
+import Crypto
+import Foundation
+import NIOSSH
+
+/// Reads metadata out of an SSH certificate signed by a CA over an `SSHCredential`'s
+/// public key.
+///
+/// `SSHCredential.certificate` carries the textual OpenSSH cert form as UTF-8 bytes
+/// (the same single-line representation `ssh-keygen` writes to a `*-cert.pub` file:
+/// `algorithm-id BASE64-cert-blob comment`). Storing the textual form keeps round
+/// trips to `ssh-keygen`, FreeIPA, smallstep, and Vault byte-identical, and avoids
+/// having to spec a binary wire layout in our schema.
+///
+/// Per ADR 0001 §3, certificates are first-class on the data model so enrolment flows
+/// can populate `SSHCredential.certificate` without a schema migration.
+enum SSHCertificateManager {
+
+    /// Algorithm-agnostic projection of an SSH certificate's interesting fields.
+    /// Sourced from `NIOSSHCertifiedPublicKey`; the `caFingerprintSHA256` is the same
+    /// fingerprint `ssh-keygen -l -E sha256` prints for the signing key, which is also
+    /// what `HostTrust.trustedCA(caFingerprintSHA256:...)` rows compare against.
+    struct CertificateMetadata: Equatable, Sendable {
+        let keyID: String
+        let principals: [String]
+        let validAfter: Date
+        let validBefore: Date
+        let caFingerprintSHA256: String
+        let serial: UInt64
+    }
+
+    enum CertificateError: Error, CustomStringConvertible, Equatable {
+        case malformedCertificate(reason: String)
+        case notACertifiedKey
+
+        var description: String {
+            switch self {
+            case .malformedCertificate(let reason):
+                return "The supplied bytes are not a valid SSH certificate blob: \(reason)"
+            case .notACertifiedKey:
+                return "The supplied OpenSSH key is a plain public key, not a certificate."
+            }
+        }
+    }
+
+    /// Parses the textual OpenSSH cert form stored in `SSHCredential.certificate`
+    /// and returns the underlying `NIOSSHCertifiedPublicKey`. The auth delegate
+    /// uses this to present the cert to NIOSSH; the
+    /// `metadata(for:)` accessor below wraps `parse(_:)` for callers that
+    /// only need the human-readable summary.
+    static func parse(_ serialised: Data) throws -> NIOSSHCertifiedPublicKey {
+        guard let text = String(data: serialised, encoding: .utf8) else {
+            throw CertificateError.malformedCertificate(reason: "blob is not valid UTF-8")
+        }
+        let publicKey: NIOSSHPublicKey
+        do {
+            publicKey = try NIOSSHPublicKey(openSSHPublicKey: text)
+        } catch {
+            throw CertificateError.malformedCertificate(reason: String(describing: error))
+        }
+        guard let cert = NIOSSHCertifiedPublicKey(publicKey) else {
+            throw CertificateError.notACertifiedKey
+        }
+        return cert
+    }
+
+    /// Parses the textual OpenSSH cert form stored in `SSHCredential.certificate`
+    /// and projects to the algorithm-agnostic `CertificateMetadata` summary
+    /// the credential editor renders.
+    static func metadata(for serialised: Data) throws -> CertificateMetadata {
+        let cert = try parse(serialised)
+        return CertificateMetadata(
+            keyID: cert.keyID,
+            principals: cert.validPrincipals,
+            validAfter: Date(timeIntervalSince1970: TimeInterval(cert.validAfter)),
+            validBefore: Date(timeIntervalSince1970: TimeInterval(cert.validBefore)),
+            caFingerprintSHA256: opensshSHA256Fingerprint(of: cert.signatureKey),
+            serial: cert.serial
+        )
+    }
+
+    /// Encodes a `NIOSSHCertifiedPublicKey` back into the textual OpenSSH cert form
+    /// that `SSHCredential.certificate` carries. Round-trips with `metadata(for:)`.
+    static func serialise(_ cert: NIOSSHCertifiedPublicKey) -> Data {
+        Data(String(openSSHPublicKey: NIOSSHPublicKey(cert)).utf8)
+    }
+
+    /// True when `date` falls inside the certificate's validity window.
+    /// `SSHAuthDelegate` calls this immediately before presenting a cert and falls
+    /// back to the bare public key on `false`, per ADR §7 (cert.expired emission).
+    static func isValid(_ metadata: CertificateMetadata, at date: Date = .now) -> Bool {
+        date >= metadata.validAfter && date <= metadata.validBefore
+    }
+
+    /// SHA-256 over the OpenSSH wire-format public key, rendered as
+    /// `SHA256:<base64-no-padding>`. Matches `ssh-keygen -l -E sha256` output and the
+    /// fingerprint format `HostTrust.trustedCA` and `HostTrust.pinned` rows store.
+    ///
+    /// Routed through the textual-line helper so the cert path (this file) and the
+    /// host-key delegate share a single fingerprint algorithm.
+    /// Visibility is `static` rather than `private` so the delegate can call it
+    /// without re-implementing the same split-and-hash logic.
+    static func opensshSHA256Fingerprint(of key: NIOSSHPublicKey) -> String {
+        fingerprint(forOpenSSHTextLine: String(openSSHPublicKey: key))
+    }
+
+    /// Computes the OpenSSH SHA-256 fingerprint from a textual public-key line of the
+    /// form `algo BASE64` or `algo BASE64 comment`. The wire bytes for the digest are
+    /// the second whitespace-separated token's base64-decoded payload.
+    ///
+    /// Internal rather than private so the comment-bearing input case has a direct
+    /// regression test; production callers reach this through
+    /// `opensshSHA256Fingerprint(of:)`.
+    static func fingerprint(forOpenSSHTextLine line: String) -> String {
+        // Three-way split tolerates the `algo BASE64 comment` form ssh-keygen emits
+        // by default. `parts[1]` is the base64 payload; any trailing comment lands
+        // in `parts[2]` and is discarded. `.ignoreUnknownCharacters` then defends
+        // against incidental whitespace inside `parts[1]` if a caller already
+        // pre-joined fields.
+        let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard parts.count >= 2,
+              let wire = Data(base64Encoded: String(parts[1]), options: .ignoreUnknownCharacters)
+        else {
+            return "SHA256:(unavailable)"
+        }
+        let digest = SHA256.hash(data: wire)
+        let base64 = Data(digest).base64EncodedString().trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        return "SHA256:\(base64)"
+    }
+}

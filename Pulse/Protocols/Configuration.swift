@@ -60,6 +60,14 @@ final class Configuration: @unchecked Sendable {
         static let powerSenseUpdateInterval = "powerSenseUpdateInterval"
         static let powerSenseMinDeviceThreshold = "powerSenseMinDeviceThreshold"
         static let powerSenseGridSize = "powerSenseGridSize"
+
+        // SSH per-credential material (Keychain, keyed by SSHCredential.id)
+        static let sshCredentialPrefix = "ssh-cred-"
+        static let sshPrivateKeySuffix = "-privateKey"
+
+        static func sshPrivateKeyKey(for credentialID: UUID) -> String {
+            "\(sshCredentialPrefix)\(credentialID.uuidString)\(sshPrivateKeySuffix)"
+        }
     }
     
     /// Example values for configuration (non-functional placeholders)
@@ -402,6 +410,80 @@ final class Configuration: @unchecked Sendable {
         UserDefaults.standard.removeObject(forKey: Keys.powerSenseMinDeviceThreshold)
         UserDefaults.standard.removeObject(forKey: Keys.powerSenseGridSize)
         _ = deleteFromKeychain(key: Keys.powerSenseZabbixToken)
+    }
+
+    // MARK: - SSH Credential Material
+    //
+    // Typed accessors per ADR 0001 §1. The generic `saveToKeychain` / `loadFromKeychain`
+    // helpers stay private; SSH callers route through these specialised methods so the
+    // surface area for credential material is grep-checkable from this file alone.
+    //
+    // Each accessor is keyed by `SSHCredential.id` so per-credential material is
+    // isolated. Storage rides on the existing kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    // protection class.
+
+    /// Private key PEM for a portable-tier credential. `nil` when no key has been imported.
+    /// Secure Enclave-tier credentials do not have a PEM: their private material lives in
+    /// the Enclave and is never returned to userspace.
+    func sshPrivateKeyPEM(for credentialID: UUID) -> String? {
+        guard let data = loadFromKeychain(key: Keys.sshPrivateKeyKey(for: credentialID)) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Stores a PEM-encoded private key against the credential. Returns true on success.
+    ///
+    /// Prefer the `Data`-typed overload for secret-material writes from the
+    /// import sheet: Swift `String` is copy-on-write and has no zero-on-dealloc
+    /// primitive, so anything that reaches this entry point through `String`
+    /// leaks a plaintext residue into the Swift runtime heap until the next GC.
+    /// Non-secret callers (tests, fixture setup) may use this directly.
+    @discardableResult
+    func setSSHPrivateKeyPEM(_ pem: String, for credentialID: UUID) -> Bool {
+        setSSHPrivateKeyPEM(Data(pem.utf8), for: credentialID)
+    }
+
+    /// `Data`-typed overload for the secret-material write. The import sheet
+    /// carries the PEM as `Data` end-to-end (see `normalisedPEMData` on
+    /// `SSHKeyImporter.ImportedSSHKey`) and dispatches to this method so the
+    /// plaintext is never round-tripped through an unzeroable `String`.
+    @discardableResult
+    func setSSHPrivateKeyPEM(_ pemData: Data, for credentialID: UUID) -> Bool {
+        guard !pemData.isEmpty else { return false }
+        let status = saveToKeychain(
+            key: Keys.sshPrivateKeyKey(for: credentialID),
+            data: pemData
+        )
+        if status != errSecSuccess {
+            logger.error("Failed to save SSH private key PEM for \(credentialID): \(status)")
+            return false
+        }
+        return true
+    }
+
+    /// Removes the private key PEM for a credential.
+    ///
+    /// Treats `errSecItemNotFound` as success so the caller doesn't need to
+    /// know whether the entry was present. Surfacing the success bit lets
+    /// `SSHCredentialsSettings` keep the SwiftData record around for a retry
+    /// when cleanup partially fails: an orphaned PEM with no associated
+    /// credential metadata is worse than an unremoved row.
+    ///
+    /// Secure Enclave residency is handled separately by
+    /// `SecureEnclaveKeyManager`. Encrypted-PEM passphrase storage is
+    /// deferred per ADR §1 ("Future portable additions" — bcrypt-pbkdf /
+    /// PBKDF2 reachability via an Apple SDK is the gating concern). The
+    /// passphrase Keychain methods removed here are recoverable from
+    /// git-blame when that surface lands.
+    @discardableResult
+    func deleteSSHMaterial(for credentialID: UUID) -> Bool {
+        let keyStatus = deleteFromKeychain(key: Keys.sshPrivateKeyKey(for: credentialID))
+        let keyOK = keyStatus == errSecSuccess || keyStatus == errSecItemNotFound
+        if !keyOK {
+            logger.error("Failed to delete SSH material for \(credentialID): key=\(keyStatus)")
+        }
+        return keyOK
     }
 
     // MARK: - Example Values (for UI placeholders only)

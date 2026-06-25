@@ -488,6 +488,7 @@ extension SyncDashboardView {
                 try await modelActor.getSites()
                 try await modelActor.getRacks()
                 try await modelActor.getDevices()
+                try await modelActor.getServices()
 
                 // Only show success if all operations complete
                 await MainActor.run {

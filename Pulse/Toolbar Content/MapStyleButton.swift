@@ -80,7 +80,7 @@ struct MapStyleView: View {
     //MARK: Temporary fix due to iOS26 bug when applying ONTAPGESTURE to maps.
     @ViewBuilder
     private func MapSelectorButton(style: MapStyle) -> some View {
-        var text = style == .imagery ? "Satellite" : style.rawValue.capitalized;
+        let text = style == .imagery ? "Satellite" : style.rawValue.capitalized;
         if(selectedStyle == style){
             Button(text) {
                 DispatchQueue.main.async {

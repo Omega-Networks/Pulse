@@ -46,6 +46,9 @@ When disasters strike, jurisdictional boundaries become irrelevant. Pulse enable
 ### Local Processing, Local Control
 All data processing happens on your hardware. No cloud dependencies, no external vulnerabilities, no vendor lock-in. Run Pulse on as little as a Mac mini or iPhone, scaling up as your needs grow.
 
+### Secure Device Access
+Connect to network devices over SSH without leaving Pulse. Credentials are backed by the device's Secure Enclave (biometry or passcode gated, non-exportable), host keys are pinned on first use (TOFU) with an explicit mismatch flow, and sessions can be recorded to an encrypted, tamper-evident log. See the [User Guide](docs/user-guide.md) and [SSH credentials guide](docs/credentials.md) for details. The operator terminal is macOS today. Operators can also open a device's web management interface in-app (the Web companion): the URL is derived from the device's NetBox services, and self-signed certificates are trusted per-host through an operator prompt. See the [Web companion guide](docs/web-companion.md).
+
 ## Capabilities
 
 - ✅ NetBox integration for infrastructure visualization
@@ -54,6 +57,8 @@ All data processing happens on your hardware. No cloud dependencies, no external
 - ✅ 2D/3D topology visualization
 - ✅ macOS native application
 - ✅ iOS/iPadOS support
+- ✅ Secure SSH terminal: Secure Enclave-backed credentials, host-key (TOFU) trust, and encrypted session recording (macOS)
+- ✅ In-app Device Web companion: a device's web UI resolved from its NetBox service, with per-host TLS trust for self-signed certificates (macOS)
 
 ### Advanced Site Management
 Drill down from geographic overview to detailed site topology, including network diagrams, device configurations, live camera feeds, and comprehensive monitoring data.
@@ -419,6 +424,13 @@ More detailed instructions to be developed in our [Wiki](https://github.com/omeg
 
 ---
 
+## Documentation
+
+- **[User Guide](docs/user-guide.md)**: day-to-day operation, including setup, navigation, monitoring, and connecting to devices over SSH.
+- **[SSH credentials guide](docs/credentials.md)**: the Secure Enclave and portable credential model, host trust, and session recording.
+- **[Architecture (ADR 0001)](docs/architecture/0001-ssh-terminal-and-web-foundations.md)**: the SSH terminal and web foundations design.
+- **[Architecture diagram](docs/media/pulse_architecture_diagram.md)**: high-level data flow.
+
 ## Contributing
 
 Pulse thrives on the triadic relationship between Industry, Academia, and Community:
@@ -428,6 +440,8 @@ Pulse thrives on the triadic relationship between Industry, Academia, and Commun
 - **Community**: Provide use cases, feedback, and local knowledge that shapes development
 
 Contributions are welcome via issues and pull requests.
+
+Pulse is open source and sponsor-supported. If it's useful to you, consider [sponsoring](https://github.com/sponsors/Omega-Networks).
 
 ## License
 

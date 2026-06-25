@@ -33,6 +33,11 @@ import SwiftUI
 
 @Model
 final class Device {
+    // Secondary index on `defaultCredentialID` so the credential-delete
+    // cleanup fetch resolves via the index rather than a full-table scan at
+    // 1M+ devices. See the `defaultCredentialID` declaration below.
+    #Index<Device>([\.defaultCredentialID])
+
     @Attribute(.unique) var id: Int64
     var created: Date?
     var display: String?
@@ -49,19 +54,41 @@ final class Device {
     
     // --- NEW PROPERTY ---
     //Property for storing camera stream URL (only applies to cameras)
-    @Attribute(.allowsCloudEncryption)
     var cameraStreamURL: String?
     
     //Property to determine rack position
     var rackPosition: Float?
-    
+
+    // MARK: - SSH / Web preferences
+    //
+    // Username sits on the device (or the per-session override), not the credential:
+    // one key authorises many usernames across different devices. `defaultCredentialID`
+    // points at the operator's preferred `SSHCredential` for this device when one has
+    // been chosen; nil means the connect sheet picks at runtime. See ADR 0001 §4.
+
+    // Indexed (see `#Index` at the top of the model). The credential-delete
+    // cleanup in `SSHCredentialsSettings.deleteCredential` runs
+    // `#Predicate { $0.defaultCredentialID == id }`; the index turns that from
+    // a full-table scan into an index lookup at 1M+ devices.
+    var defaultCredentialID: UUID?
+    var defaultUsername: String?
+    var preferredSSHPort: Int?
+    var preferredWebURL: String?
+
     // MARK: Device Model Relationships
     
     //One-To-Many
     @Relationship(deleteRule: .cascade, inverse: \Event.device)
     var events: [Event]?
-    
-    
+
+    // NetBox Application Services attached to this device (inverse of
+    // Service.device). VM-parented services point elsewhere and never appear
+    // here. Cascade so deleting a device removes its service rows; the
+    // server-authoritative stale-delete in getServices() is the primary cleanup.
+    @Relationship(deleteRule: .cascade, inverse: \Service.device)
+    var services: [Service]?
+
+
     //Many-To-One
     var site: Site?
     var rack: Rack?
@@ -79,8 +106,35 @@ final class Device {
     var localY: Double = 0
     
     // MARK: - Computed Properties
-     
-     // --- NEW HELPER PROPERTY ---
+
+    /// The bare IP address from `primaryIP`, with any trailing CIDR
+    /// prefix stripped. NetBox's IPAM stores addresses in CIDR form
+    /// (e.g., `172.17.255.1/32` for a host address, `2001:db8::1/64`
+    /// for IPv6), but consumers that pass the value to network APIs
+    /// — the SSH client, future web companion, future ping/traceroute —
+    /// need the bare address, not the CIDR string.
+    ///
+    /// The split is on the first `/` only. IPv4 and IPv6 CIDR
+    /// representations both place the prefix length after a single
+    /// slash; no IP address text contains a literal `/` for any
+    /// other reason. Returns nil when `primaryIP` is nil; returns an
+    /// empty string when `primaryIP` is empty (caller-side guards
+    /// already handle the empty case via `!isEmpty`).
+    ///
+    /// Display sites (Device Detail panes, the device row metadata)
+    /// keep reading `primaryIP` directly — the CIDR carries subnet
+    /// context that NetBox-fluent operators expect to see in
+    /// informational labels. Only the network-layer call sites
+    /// route through `primaryIPAddress`.
+    var primaryIPAddress: String? {
+        guard let primaryIP else { return nil }
+        if let slash = primaryIP.firstIndex(of: "/") {
+            return String(primaryIP[..<slash])
+        }
+        return primaryIP
+    }
+
+    // --- NEW HELPER PROPERTY ---
      var supportsCameraStream: Bool {
          return deviceRole?.id == 11 || deviceRole?.id == 35 // Camera or Edge Node
      }
@@ -198,10 +252,23 @@ final class Device {
         let r = Double((rgb & 0xFF0000) >> 16) / 255.0
         let g = Double((rgb & 0x00FF00) >> 8) / 255.0
         let b = Double(rgb & 0x0000FF) / 255.0
-        
+
         return Color(red: r, green: g, blue: b)
     }
 }
+
+// MARK: - Identifiable
+
+/// SwiftUI's `WindowGroup(for: Device.ID.self)` routing and any
+/// `ForEach(_:)` that doesn't take an explicit `id:` keypath require
+/// `Identifiable`. `Device.id` is already `@Attribute(.unique) Int64`
+/// (the NetBox primary key) which satisfies the protocol without any
+/// additional work; the empty extension is a structural marker that
+/// the model participates in identity-based SwiftUI APIs. ADR §9 uses
+/// `WindowGroup("SSH Terminal", for: Device.ID.self)` as the entry
+/// point for the operator-facing terminal, so this conformance is
+/// load-bearing for the routing rather than cosmetic.
+extension Device: Identifiable {}
 
 //MARK: API request for device as a reference
 //{

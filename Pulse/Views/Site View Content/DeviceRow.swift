@@ -29,14 +29,15 @@ import SwiftData
 struct DeviceRow: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openWindow) private var openWindow
     var deviceId: Int64
     @Query var device: [Device]
     @Binding var selectedDevice: Device?
-    
+
     init(deviceId: Int64, selectedDevice: Binding<Device?>) {
         self.deviceId = deviceId
         self._selectedDevice = selectedDevice
-        
+
         _device = Query(filter: #Predicate<Device> { $0.id == deviceId } )
     }
     
@@ -82,7 +83,40 @@ struct DeviceRow: View {
             }) {
                 Label("Edit", systemImage: "pencil")
             }
-            
+
+            Button(action: {
+                if let device = device.first {
+                    // Wrap the id in `DeviceWindowTarget` so this routes
+                    // to the SSH terminal scene by type, not by the
+                    // Int64 registration order it once shared with Site
+                    // View. The matching `id: "ssh-terminal"`
+                    // is retained as a restoration anchor. See
+                    // `SSHTerminalScene` for the full rationale.
+                    openWindow(id: "ssh-terminal", value: DeviceWindowTarget(deviceID: device.id))
+                }
+            }) {
+                Label("Open SSH Terminal", systemImage: "terminal.fill")
+            }
+            // Disabled when the device has no primary IP recorded in
+            // NetBox: the operator-facing terminal needs a routable
+            // host to connect to.
+            .disabled(device.first?.primaryIP?.isEmpty != false)
+
+            Button(action: {
+                if let device = device.first {
+                    // Wrap the id in `DeviceWindowTarget` so this routes to
+                    // the Device Web scene by type, same as the SSH terminal
+                    // above; the matching `id: "device-web"` is retained as a
+                    // restoration anchor. See `SSHTerminalScene`.
+                    openWindow(id: "device-web", value: DeviceWindowTarget(deviceID: device.id))
+                }
+            }) {
+                Label("Open Web UI", systemImage: "globe")
+            }
+            // Disabled unless NetBox declares a web-serving (HTTP/HTTPS) service
+            // for this device. WebServiceResolver is the source-of-truth rule.
+            .disabled(device.first.flatMap { WebServiceResolver.primaryTarget(for: $0) } == nil)
+
             Button(role: .destructive, action: {
                 if let device = device.first {
                     let deviceId = device.id
@@ -95,11 +129,6 @@ struct DeviceRow: View {
                 Label("Delete", systemImage: "trash")
             }
         }
-    }
-    
-    private func getDevice() -> Device? {
-        let descriptor = FetchDescriptor<Device>(predicate: #Predicate { $0.id == deviceId })
-        return try? modelContext.fetch(descriptor).first
     }
     
     //TODO: Resolve issue with deleting device causing app-wide crash

@@ -14,6 +14,7 @@
 		067FD0952ECC6A2F00146D44 /* ProjectionSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD08D2ECC6A2F00146D44 /* ProjectionSystem.swift */; };
 		067FD09C2ECC6D1600146D44 /* Array+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD09B2ECC6D1600146D44 /* Array+Extensions.swift */; };
 		067FD09E2ECC6D5500146D44 /* Logger+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067FD09D2ECC6D5500146D44 /* Logger+Extensions.swift */; };
+		A11CAFE0000000000000300 /* Bundle+PulseBundleID.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000301 /* Bundle+PulseBundleID.swift */; };
 		06D467DA2ECDC7310092553E /* SpatialClusteringProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06D467D82ECDC7310092553E /* SpatialClusteringProtocols.swift */; };
 		06D467DB2ECDC7310092553E /* SpatialClusteringSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06D467D92ECDC7310092553E /* SpatialClusteringSystem.swift */; };
 		06E9CC462EE03377008DE369 /* PowerSenseDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06E9CC452EE03377008DE369 /* PowerSenseDataService.swift */; };
@@ -71,6 +72,64 @@
 		41DD37742D349F45009F37A0 /* TipManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41DD37732D349F45009F37A0 /* TipManager.swift */; };
 		41EBAF932CC5A650006E06A5 /* ShelfView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41EBAF922CC5A650006E06A5 /* ShelfView.swift */; };
 		41FE16212C0EA8F5002BF132 /* InterfacePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41FE16202C0EA8F5002BF132 /* InterfacePopover.swift */; };
+		A11CAFE000000000000000B1 /* SSHCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F1 /* SSHCredential.swift */; };
+		A11CAFE000000000000000B2 /* KnownHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F2 /* KnownHost.swift */; };
+		A11CAFE000000000000000B3 /* SecureEnclaveKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */; };
+		A11CAFE000000000000000B4 /* SSHKeyImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F4 /* SSHKeyImporter.swift */; };
+		A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F5 /* SSHCertificateManager.swift */; };
+		A11CAFE000000000000000BA /* SSHHostKeyDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */; };
+		A11CAFE000000000000000BB /* SSHAuthDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FB /* SSHAuthDelegate.swift */; };
+		A11CAFE000000000000000BC /* ExitCause.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FC /* ExitCause.swift */; };
+		A11CAFE000000000000000BD /* SSHSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FD /* SSHSession.swift */; };
+		A11CAFE000000000000000BE /* SSHClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FE /* SSHClient.swift */; };
+		A11CAFE000000000000000BF /* DebugSSHMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000FF /* DebugSSHMenu.swift */; };
+		A11CAFE000000000000010A /* SessionLogRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000010B /* SessionLogRecord.swift */; };
+		A11CAFE000000000000010C /* SessionLogWrappingKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000010D /* SessionLogWrappingKey.swift */; };
+		A11CAFE000000000000010E /* SessionLogWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000010F /* SessionLogWriter.swift */; };
+		A11CAFE0000000000000110 /* SessionLogRetention.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000111 /* SessionLogRetention.swift */; };
+		A11CAFE0000000000000112 /* SessionRecordingAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000113 /* SessionRecordingAudit.swift */; };
+		A11CAFE0000000000000140 /* CredentialAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000141 /* CredentialAudit.swift */; };
+		A11CAFE0000000000000114 /* SSHSessionRecordingTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000115 /* SSHSessionRecordingTap.swift */; };
+		A11CAFE0000000000000116 /* SessionLogReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000117 /* SessionLogReplay.swift */; };
+		A11CAFE0000000000000118 /* PulseTerminalAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */; };
+		A11CAFE000000000000011B /* SSHTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000011C /* SSHTerminalView.swift */; };
+		A11CAFE000000000000011D /* SSHTerminalWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000011E /* SSHTerminalWindow.swift */; };
+		A11CAFE0000000000000F0A /* SSHTerminalConnectionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000F0B /* SSHTerminalConnectionViewModel.swift */; };
+		A11CAFE000000000000011F /* HostKeyMismatchSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000120 /* HostKeyMismatchSheet.swift */; };
+		A11CAFE0000000000000121 /* HostKeyMismatchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000122 /* HostKeyMismatchCoordinator.swift */; };
+		A11CAFE000000000000012F /* SSHConnectForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000130 /* SSHConnectForm.swift */; };
+		A11CAFE0000000000000131 /* TerminalBellController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000132 /* TerminalBellController.swift */; };
+		A11CAFE0000000000000123 /* SSHCredentialTier+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */; };
+		A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */; };
+		A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F7 /* Data+Extensions.swift */; };
+		A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F8 /* PulseTransport.swift */; };
+		A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE000000000000000F9 /* DirectTransport.swift */; };
+		A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */; };
+		A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */; };
+		A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A003 /* DirectTransportTests.swift */; };
+		B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */; };
+		A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */; };
+		A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */; };
+		A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A006 /* SecureEnclaveKeyManagerTests.swift */; };
+		A11CAFE0000000000000B007 /* SSHAuthDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A007 /* SSHAuthDelegateTests.swift */; };
+		A11CAFE0000000000000B008 /* SSHClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A008 /* SSHClientTests.swift */; };
+		A11CAFE0000000000000B009 /* SessionLogRecordTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A009 /* SessionLogRecordTests.swift */; };
+		A11CAFE0000000000000B00A /* SessionLogWrappingKeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00A /* SessionLogWrappingKeyTests.swift */; };
+		A11CAFE0000000000000B00B /* SessionLogWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00B /* SessionLogWriterTests.swift */; };
+		A11CAFE0000000000000B00C /* SessionLogRetentionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00C /* SessionLogRetentionTests.swift */; };
+		A11CAFE0000000000000B00D /* SessionRecordingAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00D /* SessionRecordingAuditTests.swift */; };
+		A11CAFE0000000000000B020 /* CredentialAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A020 /* CredentialAuditTests.swift */; };
+		A11CAFE0000000000000B00E /* SSHSessionRecordingTapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00E /* SSHSessionRecordingTapTests.swift */; };
+		A11CAFE0000000000000B00F /* SessionLogReplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A00F /* SessionLogReplayTests.swift */; };
+		A11CAFE0000000000000B010 /* PulseTerminalAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A010 /* PulseTerminalAdapterTests.swift */; };
+		A11CAFE0000000000000B012 /* HostKeyMismatchSheetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A012 /* HostKeyMismatchSheetTests.swift */; };
+		A11CAFE0000000000000B013 /* SSHConnectFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A013 /* SSHConnectFormTests.swift */; };
+		C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = C923355E2FC3EAF9003BAF42 /* NIOSSH */; };
+		A11CAFE000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000D1 /* SwiftTerm */; };
+		A11CAFE000000000000000C0 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000C1 /* NIOSSH */; };
+		A11CAFE0000000000000203 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000201 /* NIOCore */; };
+		A11CAFE0000000000000204 /* NIOConcurrencyHelpers in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000202 /* NIOConcurrencyHelpers */; };
+		C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = C93291702FC30A3900624995 /* NIOTransportServices */; };
 		C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */; };
 		C96191622ACA552F000198DB /* PulseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191612ACA552F000198DB /* PulseApp.swift */; };
 		C96191642ACA552F000198DB /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191632ACA552F000198DB /* ContentView.swift */; };
@@ -82,6 +141,21 @@
 		C961919D2ACA56E0000198DB /* SiteRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961919C2ACA56E0000198DB /* SiteRow.swift */; };
 		C96191A02ACA5711000198DB /* Edge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961919F2ACA5711000198DB /* Edge.swift */; };
 		C96191A22ACA5721000198DB /* Device.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A12ACA5721000198DB /* Device.swift */; };
+		B17E050100000000000000B1 /* Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A1 /* Service.swift */; };
+		B17E050200000000000000B1 /* WebHostTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A1 /* WebHostTrust.swift */; };
+		B17E050300000000000000B1 /* WebAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A1 /* WebAudit.swift */; };
+		B17E050300000000000000B2 /* DeviceWebNavigationDecider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */; };
+		B17E050300000000000000B3 /* DeviceWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A3 /* DeviceWebView.swift */; };
+		B17E050400000000000000B1 /* WebTrustSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050400000000000000A1 /* WebTrustSettingsView.swift */; };
+		B17E050300000000000000B4 /* DeviceWebWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A4 /* DeviceWebWindow.swift */; };
+		B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A5 /* DeviceWebTests.swift */; };
+		B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A2 /* WebHostTrustStore.swift */; };
+		B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A3 /* TLSCertificateInspector.swift */; };
+		B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A4 /* WebServiceResolver.swift */; };
+		B17E050200000000000000B5 /* TLSTrustCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A5 /* TLSTrustCoordinator.swift */; };
+		B17E050500000000000000B1 /* ResumeBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050500000000000000A1 /* ResumeBox.swift */; };
+		B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A6 /* WebTrustFoundationTests.swift */; };
+		B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */; };
 		C96191A42ACA572E000198DB /* DeviceRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A32ACA572E000198DB /* DeviceRole.swift */; };
 		C96191A62ACA573A000198DB /* DeviceType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A52ACA573A000198DB /* DeviceType.swift */; };
 		C96191AE2ACA578C000198DB /* Region.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191AD2ACA578C000198DB /* Region.swift */; };
@@ -155,6 +229,7 @@
 		067FD08D2ECC6A2F00146D44 /* ProjectionSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectionSystem.swift; sourceTree = "<group>"; };
 		067FD09B2ECC6D1600146D44 /* Array+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Array+Extensions.swift"; sourceTree = "<group>"; };
 		067FD09D2ECC6D5500146D44 /* Logger+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Logger+Extensions.swift"; sourceTree = "<group>"; };
+		A11CAFE0000000000000301 /* Bundle+PulseBundleID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bundle+PulseBundleID.swift"; sourceTree = "<group>"; };
 		06D467D82ECDC7310092553E /* SpatialClusteringProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringProtocols.swift; sourceTree = "<group>"; };
 		06D467D92ECDC7310092553E /* SpatialClusteringSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialClusteringSystem.swift; sourceTree = "<group>"; };
 		06E9CC452EE03377008DE369 /* PowerSenseDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseDataService.swift; sourceTree = "<group>"; };
@@ -213,6 +288,59 @@
 		41EBAF922CC5A650006E06A5 /* ShelfView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfView.swift; sourceTree = "<group>"; };
 		41FE16202C0EA8F5002BF132 /* InterfacePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfacePopover.swift; sourceTree = "<group>"; };
 		762AEEBA6971484482E4B4C0 /* PowerSenseToolbarButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSenseToolbarButton.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F1 /* SSHCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredential.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F2 /* KnownHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnownHost.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnclaveKeyManager.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F4 /* SSHKeyImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporter.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F5 /* SSHCertificateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCertificateManager.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyDelegate.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FB /* SSHAuthDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthDelegate.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FC /* ExitCause.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitCause.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FD /* SSHSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSession.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FE /* SSHClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHClient.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000FF /* DebugSSHMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugSSHMenu.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000010B /* SessionLogRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogRecord.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000010D /* SessionLogWrappingKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogWrappingKey.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000010F /* SessionLogWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogWriter.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000111 /* SessionLogRetention.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogRetention.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000113 /* SessionRecordingAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRecordingAudit.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000141 /* CredentialAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialAudit.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000115 /* SSHSessionRecordingTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSessionRecordingTap.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000117 /* SessionLogReplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogReplay.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTerminalAdapter.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000011C /* SSHTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalView.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000011E /* SSHTerminalWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalWindow.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000F0B /* SSHTerminalConnectionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalConnectionViewModel.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000120 /* HostKeyMismatchSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyMismatchSheet.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000122 /* HostKeyMismatchCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyMismatchCoordinator.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000130 /* SSHConnectForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnectForm.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000132 /* TerminalBellController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalBellController.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SSHCredentialTier+Extensions.swift"; sourceTree = "<group>"; };
+		A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCredentialsSettings.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F7 /* Data+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extensions.swift"; sourceTree = "<group>"; };
+		A11CAFE000000000000000F8 /* PulseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTransport.swift; sourceTree = "<group>"; };
+		A11CAFE000000000000000F9 /* DirectTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTransport.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyImporterTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSSHWireFormatTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A003 /* DirectTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTransportTests.swift; sourceTree = "<group>"; };
+		B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServicePropertiesDecodingTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCertificateManagerTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyDelegateTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A006 /* SecureEnclaveKeyManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnclaveKeyManagerTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A007 /* SSHAuthDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthDelegateTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A008 /* SSHClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHClientTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A009 /* SessionLogRecordTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogRecordTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A00A /* SessionLogWrappingKeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogWrappingKeyTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A00B /* SessionLogWriterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogWriterTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A00C /* SessionLogRetentionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogRetentionTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A00D /* SessionRecordingAuditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRecordingAuditTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A020 /* CredentialAuditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialAuditTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A00E /* SSHSessionRecordingTapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSessionRecordingTapTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A00F /* SessionLogReplayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLogReplayTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A010 /* PulseTerminalAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseTerminalAdapterTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A012 /* HostKeyMismatchSheetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyMismatchSheetTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000A013 /* SSHConnectFormTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnectFormTests.swift; sourceTree = "<group>"; };
+		C926516F2E71AFA2004564DD /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
 		C9613E7F2BDBA5A800873053 /* DeviceOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceOverviewView.swift; sourceTree = "<group>"; };
 		C961915E2ACA552F000198DB /* Pulse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pulse.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C96191612ACA552F000198DB /* PulseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseApp.swift; sourceTree = "<group>"; };
@@ -228,6 +356,21 @@
 		C961919C2ACA56E0000198DB /* SiteRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteRow.swift; sourceTree = "<group>"; };
 		C961919F2ACA5711000198DB /* Edge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Edge.swift; sourceTree = "<group>"; };
 		C96191A12ACA5721000198DB /* Device.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Device.swift; sourceTree = "<group>"; };
+		B17E050100000000000000A1 /* Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Service.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A1 /* WebHostTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrust.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A1 /* WebAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAudit.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebNavigationDecider.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A3 /* DeviceWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebView.swift; sourceTree = "<group>"; };
+		B17E050400000000000000A1 /* WebTrustSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebTrustSettingsView.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A4 /* DeviceWebWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebWindow.swift; sourceTree = "<group>"; };
+		B17E050300000000000000A5 /* DeviceWebTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebTests.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A2 /* WebHostTrustStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrustStore.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A3 /* TLSCertificateInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSCertificateInspector.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A4 /* WebServiceResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebServiceResolver.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A5 /* TLSTrustCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSTrustCoordinator.swift; sourceTree = "<group>"; };
+		B17E050500000000000000A1 /* ResumeBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeBox.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A6 /* WebTrustFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebTrustFoundationTests.swift; sourceTree = "<group>"; };
+		B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSTrustCoordinatorTests.swift; sourceTree = "<group>"; };
 		C96191A32ACA572E000198DB /* DeviceRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRole.swift; sourceTree = "<group>"; };
 		C96191A52ACA573A000198DB /* DeviceType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceType.swift; sourceTree = "<group>"; };
 		C96191AD2ACA578C000198DB /* Region.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Region.swift; sourceTree = "<group>"; };
@@ -281,6 +424,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */,
+				C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */,
+				A11CAFE000000000000000D2 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -288,6 +434,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11CAFE000000000000000C0 /* NIOSSH in Frameworks */,
+				A11CAFE0000000000000203 /* NIOCore in Frameworks */,
+				A11CAFE0000000000000204 /* NIOConcurrencyHelpers in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -336,6 +485,9 @@
 			children = (
 				067FD09D2ECC6D5500146D44 /* Logger+Extensions.swift */,
 				067FD09B2ECC6D1600146D44 /* Array+Extensions.swift */,
+				A11CAFE000000000000000F7 /* Data+Extensions.swift */,
+				A11CAFE0000000000000124 /* SSHCredentialTier+Extensions.swift */,
+				A11CAFE0000000000000301 /* Bundle+PulseBundleID.swift */,
 			);
 			path = Extensions;
 			sourceTree = "<group>";
@@ -447,9 +599,120 @@
 			path = PowerSenseViews;
 			sourceTree = "<group>";
 		};
+		A11CAFE0000000000000DAD1 /* SSH */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE000000000000000F3 /* SecureEnclaveKeyManager.swift */,
+				A11CAFE000000000000000F4 /* SSHKeyImporter.swift */,
+				A11CAFE000000000000000F5 /* SSHCertificateManager.swift */,
+				A11CAFE000000000000000FA /* SSHHostKeyDelegate.swift */,
+				A11CAFE000000000000000FB /* SSHAuthDelegate.swift */,
+				A11CAFE000000000000000FC /* ExitCause.swift */,
+				A11CAFE000000000000000FD /* SSHSession.swift */,
+				A11CAFE000000000000000FE /* SSHClient.swift */,
+				A11CAFE000000000000000FF /* DebugSSHMenu.swift */,
+				A11CAFE000000000000010B /* SessionLogRecord.swift */,
+				A11CAFE000000000000010D /* SessionLogWrappingKey.swift */,
+				A11CAFE000000000000010F /* SessionLogWriter.swift */,
+				A11CAFE0000000000000111 /* SessionLogRetention.swift */,
+				A11CAFE0000000000000113 /* SessionRecordingAudit.swift */,
+				A11CAFE0000000000000141 /* CredentialAudit.swift */,
+				A11CAFE0000000000000115 /* SSHSessionRecordingTap.swift */,
+				A11CAFE0000000000000117 /* SessionLogReplay.swift */,
+			);
+			path = SSH;
+			sourceTree = "<group>";
+		};
+		A11CAFE0000000000000DAD2 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		A11CAFE0000000000000DAD3 /* SSH */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE0000000000000A001 /* SSHKeyImporterTests.swift */,
+				A11CAFE0000000000000A002 /* OpenSSHWireFormatTests.swift */,
+				A11CAFE0000000000000A004 /* SSHCertificateManagerTests.swift */,
+				A11CAFE0000000000000A005 /* SSHHostKeyDelegateTests.swift */,
+				A11CAFE0000000000000A006 /* SecureEnclaveKeyManagerTests.swift */,
+				A11CAFE0000000000000A007 /* SSHAuthDelegateTests.swift */,
+				A11CAFE0000000000000A008 /* SSHClientTests.swift */,
+				A11CAFE0000000000000A009 /* SessionLogRecordTests.swift */,
+				A11CAFE0000000000000A00A /* SessionLogWrappingKeyTests.swift */,
+				A11CAFE0000000000000A00B /* SessionLogWriterTests.swift */,
+				A11CAFE0000000000000A00C /* SessionLogRetentionTests.swift */,
+				A11CAFE0000000000000A00D /* SessionRecordingAuditTests.swift */,
+				A11CAFE0000000000000A020 /* CredentialAuditTests.swift */,
+				A11CAFE0000000000000A00E /* SSHSessionRecordingTapTests.swift */,
+				A11CAFE0000000000000A00F /* SessionLogReplayTests.swift */,
+				A11CAFE0000000000000A010 /* PulseTerminalAdapterTests.swift */,
+				A11CAFE0000000000000A012 /* HostKeyMismatchSheetTests.swift */,
+				A11CAFE0000000000000A013 /* SSHConnectFormTests.swift */,
+			);
+			path = SSH;
+			sourceTree = "<group>";
+		};
+		A11CAFE0000000000000DAD4 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE000000000000000F8 /* PulseTransport.swift */,
+				A11CAFE000000000000000F9 /* DirectTransport.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		B17E050200000000000000C1 /* Web */ = {
+			isa = PBXGroup;
+			children = (
+				B17E050200000000000000A1 /* WebHostTrust.swift */,
+				B17E050200000000000000A2 /* WebHostTrustStore.swift */,
+				B17E050200000000000000A3 /* TLSCertificateInspector.swift */,
+				B17E050200000000000000A4 /* WebServiceResolver.swift */,
+				B17E050200000000000000A5 /* TLSTrustCoordinator.swift */,
+				B17E050300000000000000A1 /* WebAudit.swift */,
+				B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */,
+				B17E050300000000000000A3 /* DeviceWebView.swift */,
+				B17E050300000000000000A4 /* DeviceWebWindow.swift */,
+				B17E050400000000000000A1 /* WebTrustSettingsView.swift */,
+			);
+			path = Web;
+			sourceTree = "<group>";
+		};
+		B17E050500000000000000C1 /* Concurrency */ = {
+			isa = PBXGroup;
+			children = (
+				B17E050500000000000000A1 /* ResumeBox.swift */,
+			);
+			path = Concurrency;
+			sourceTree = "<group>";
+		};
+		B17E050200000000000000C2 /* Web */ = {
+			isa = PBXGroup;
+			children = (
+				B17E050200000000000000A6 /* WebTrustFoundationTests.swift */,
+				B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */,
+				B17E050300000000000000A5 /* DeviceWebTests.swift */,
+			);
+			path = Web;
+			sourceTree = "<group>";
+		};
+		A11CAFE0000000000000DAD5 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE0000000000000A003 /* DirectTransportTests.swift */,
+				B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
 		C96191552ACA552F000198DB = {
 			isa = PBXGroup;
 			children = (
+				C926516F2E71AFA2004564DD /* Development.xcconfig */,
 				C96191602ACA552F000198DB /* Pulse */,
 				C9951ECF2E8815380025C136 /* PulseTests */,
 				C961917E2ACA5530000198DB /* PulseUITests */,
@@ -471,6 +734,7 @@
 			isa = PBXGroup;
 			children = (
 				067FD09A2ECC6CED00146D44 /* Extensions */,
+				B17E050500000000000000C1 /* Concurrency */,
 				067FD0862ECC6A2B00146D44 /* Spatial */,
 				41D8E6832D2B4238002CA36D /* Tips */,
 				41A777C92B79878900A7695C /* Supporting Files */,
@@ -480,6 +744,9 @@
 				C96191922ACA55DA000198DB /* Toolbar Content */,
 				C96191932ACA55F4000198DB /* Views */,
 				C9951EDB2E8CDA0F0025C136 /* Services */,
+				A11CAFE0000000000000DAD1 /* SSH */,
+				A11CAFE0000000000000DAD4 /* Networking */,
+				B17E050200000000000000C1 /* Web */,
 				C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */,
 				C96191632ACA552F000198DB /* ContentView.swift */,
 				410A560F2D0F898B00C722E3 /* SyncDashboardView.swift */,
@@ -578,10 +845,27 @@
 				C96191D12ACA5A42000198DB /* Graph Views */,
 				C96192002ACA5CC4000198DB /* Table Views */,
 				8A4D5B0C123456789ABCDEF0 /* PowerSenseViews */,
+				A11CAFE0000000000000DAD2 /* Settings */,
+				A11CAFE000000000000011A /* Terminal */,
 				C96191F12ACA5C03000198DB /* SiteGroupRow.swift */,
 				419D50F82C227D3600CEA439 /* SitesList.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		A11CAFE000000000000011A /* Terminal */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE0000000000000119 /* PulseTerminalAdapter.swift */,
+				A11CAFE000000000000011C /* SSHTerminalView.swift */,
+				A11CAFE000000000000011E /* SSHTerminalWindow.swift */,
+				A11CAFE0000000000000F0B /* SSHTerminalConnectionViewModel.swift */,
+				A11CAFE0000000000000120 /* HostKeyMismatchSheet.swift */,
+				A11CAFE0000000000000122 /* HostKeyMismatchCoordinator.swift */,
+				A11CAFE0000000000000130 /* SSHConnectForm.swift */,
+				A11CAFE0000000000000132 /* TerminalBellController.swift */,
+			);
+			path = Terminal;
 			sourceTree = "<group>";
 		};
 		C96191992ACA56B3000198DB /* Menu Content */ = {
@@ -640,6 +924,9 @@
 		C9951ECF2E8815380025C136 /* PulseTests */ = {
 			isa = PBXGroup;
 			children = (
+				A11CAFE0000000000000DAD3 /* SSH */,
+				A11CAFE0000000000000DAD5 /* Networking */,
+				B17E050200000000000000C2 /* Web */,
 			);
 			path = PulseTests;
 			sourceTree = "<group>";
@@ -660,6 +947,7 @@
 				C96191AD2ACA578C000198DB /* Region.swift */,
 				C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */,
 				C96191A12ACA5721000198DB /* Device.swift */,
+				B17E050100000000000000A1 /* Service.swift */,
 				C96191A32ACA572E000198DB /* DeviceRole.swift */,
 				C96191A52ACA573A000198DB /* DeviceType.swift */,
 				C96191B52ACA57C5000198DB /* Tenant.swift */,
@@ -669,6 +957,8 @@
 				C96191AF2ACA5794000198DB /* Site.swift */,
 				C9FCA5162D153E4700D9E851 /* Event.swift */,
 				C96191B12ACA57AD000198DB /* SiteGroup.swift */,
+				A11CAFE000000000000000F1 /* SSHCredential.swift */,
+				A11CAFE000000000000000F2 /* KnownHost.swift */,
 			);
 			path = "SwiftData Models";
 			sourceTree = "<group>";
@@ -689,6 +979,11 @@
 			dependencies = (
 			);
 			name = Pulse;
+			packageProductDependencies = (
+				C923355E2FC3EAF9003BAF42 /* NIOSSH */,
+				C93291702FC30A3900624995 /* NIOTransportServices */,
+				A11CAFE000000000000000D1 /* SwiftTerm */,
+			);
 			productName = Pulse;
 			productReference = C961915E2ACA552F000198DB /* Pulse.app */;
 			productType = "com.apple.product-type.application";
@@ -707,6 +1002,11 @@
 				C96191732ACA5530000198DB /* PBXTargetDependency */,
 			);
 			name = PulseTests;
+			packageProductDependencies = (
+				A11CAFE000000000000000C1 /* NIOSSH */,
+				A11CAFE0000000000000201 /* NIOCore */,
+				A11CAFE0000000000000202 /* NIOConcurrencyHelpers */,
+			);
 			productName = PulseTests;
 			productReference = C96191712ACA5530000198DB /* PulseTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -762,6 +1062,10 @@
 			);
 			mainGroup = C96191552ACA552F000198DB;
 			packageReferences = (
+				C932916F2FC30A3900624995 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */,
+				C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
+				A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */,
 			);
 			productRefGroup = C961915F2ACA552F000198DB /* Products */;
 			projectDirPath = "";
@@ -807,12 +1111,44 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11CAFE000000000000000B1 /* SSHCredential.swift in Sources */,
+				A11CAFE000000000000000B2 /* KnownHost.swift in Sources */,
+				A11CAFE000000000000000B3 /* SecureEnclaveKeyManager.swift in Sources */,
+				A11CAFE000000000000000B4 /* SSHKeyImporter.swift in Sources */,
+				A11CAFE000000000000000B5 /* SSHCertificateManager.swift in Sources */,
+				A11CAFE000000000000000BA /* SSHHostKeyDelegate.swift in Sources */,
+				A11CAFE000000000000000BB /* SSHAuthDelegate.swift in Sources */,
+				A11CAFE000000000000000BC /* ExitCause.swift in Sources */,
+				A11CAFE000000000000000BD /* SSHSession.swift in Sources */,
+				A11CAFE000000000000000BE /* SSHClient.swift in Sources */,
+				A11CAFE000000000000000BF /* DebugSSHMenu.swift in Sources */,
+				A11CAFE000000000000010A /* SessionLogRecord.swift in Sources */,
+				A11CAFE000000000000010C /* SessionLogWrappingKey.swift in Sources */,
+				A11CAFE000000000000010E /* SessionLogWriter.swift in Sources */,
+				A11CAFE0000000000000110 /* SessionLogRetention.swift in Sources */,
+				A11CAFE0000000000000112 /* SessionRecordingAudit.swift in Sources */,
+				A11CAFE0000000000000140 /* CredentialAudit.swift in Sources */,
+				A11CAFE0000000000000114 /* SSHSessionRecordingTap.swift in Sources */,
+				A11CAFE0000000000000116 /* SessionLogReplay.swift in Sources */,
+				A11CAFE0000000000000118 /* PulseTerminalAdapter.swift in Sources */,
+				A11CAFE000000000000011B /* SSHTerminalView.swift in Sources */,
+				A11CAFE000000000000011D /* SSHTerminalWindow.swift in Sources */,
+				A11CAFE0000000000000F0A /* SSHTerminalConnectionViewModel.swift in Sources */,
+				A11CAFE000000000000011F /* HostKeyMismatchSheet.swift in Sources */,
+				A11CAFE0000000000000121 /* HostKeyMismatchCoordinator.swift in Sources */,
+				A11CAFE000000000000012F /* SSHConnectForm.swift in Sources */,
+				A11CAFE0000000000000131 /* TerminalBellController.swift in Sources */,
+				A11CAFE000000000000000B6 /* SSHCredentialsSettings.swift in Sources */,
+				A11CAFE000000000000000B8 /* PulseTransport.swift in Sources */,
+				A11CAFE000000000000000B9 /* DirectTransport.swift in Sources */,
 				C97DEDB52E816E4F002898A7 /* PowerSenseToolbarButton.swift in Sources */,
 				4181FEDF2CBF66CF00E4D035 /* RackUnitView.swift in Sources */,
 				C96191642ACA552F000198DB /* ContentView.swift in Sources */,
 				C96191DB2ACA5B2F000198DB /* EdgeView.swift in Sources */,
 				41D8E68E2D2B76A0002CA36D /* FetchEventsTip.swift in Sources */,
 				067FD09C2ECC6D1600146D44 /* Array+Extensions.swift in Sources */,
+				A11CAFE000000000000000B7 /* Data+Extensions.swift in Sources */,
+				A11CAFE0000000000000123 /* SSHCredentialTier+Extensions.swift in Sources */,
 				C96191DF2ACA5B62000198DB /* GridLayerView.swift in Sources */,
 				C96191F22ACA5C03000198DB /* SiteGroupRow.swift in Sources */,
 				41A0BE9C2C8FBF5C00C39B50 /* SettingsView.swift in Sources */,
@@ -896,6 +1232,7 @@
 				41C7AA642ACE081A009DB9BD /* CableProperties.swift in Sources */,
 				C96191B22ACA57AD000198DB /* SiteGroup.swift in Sources */,
 				067FD09E2ECC6D5500146D44 /* Logger+Extensions.swift in Sources */,
+				A11CAFE0000000000000300 /* Bundle+PulseBundleID.swift in Sources */,
 				C962F8EE2E606BBE00B182AE /* AddSiteWindow.swift in Sources */,
 				C96191F92ACA5C44000198DB /* MapView.swift in Sources */,
 				C96191AE2ACA578C000198DB /* Region.swift in Sources */,
@@ -914,6 +1251,18 @@
 				41763EDB2CB720DE005DEEFF /* StaticDevice.swift in Sources */,
 				C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */,
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
+				B17E050100000000000000B1 /* Service.swift in Sources */,
+				B17E050200000000000000B1 /* WebHostTrust.swift in Sources */,
+				B17E050300000000000000B1 /* WebAudit.swift in Sources */,
+				B17E050300000000000000B2 /* DeviceWebNavigationDecider.swift in Sources */,
+				B17E050300000000000000B3 /* DeviceWebView.swift in Sources */,
+				B17E050400000000000000B1 /* WebTrustSettingsView.swift in Sources */,
+				B17E050300000000000000B4 /* DeviceWebWindow.swift in Sources */,
+				B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */,
+				B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */,
+				B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */,
+				B17E050200000000000000B5 /* TLSTrustCoordinator.swift in Sources */,
+				B17E050500000000000000B1 /* ResumeBox.swift in Sources */,
 				C97136DC2E7966A90017CBF7 /* PowerSenseDevice.swift in Sources */,
 				C97136DD2E7966A90017CBF7 /* PowerSenseEvent.swift in Sources */,
 				C96191D92ACA5B17000198DB /* EdgeLabel.swift in Sources */,
@@ -929,6 +1278,29 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11CAFE0000000000000B001 /* SSHKeyImporterTests.swift in Sources */,
+				A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */,
+				A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */,
+				B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */,
+				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
+				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
+				B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */,
+				A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */,
+				A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */,
+				A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */,
+				A11CAFE0000000000000B007 /* SSHAuthDelegateTests.swift in Sources */,
+				A11CAFE0000000000000B008 /* SSHClientTests.swift in Sources */,
+				A11CAFE0000000000000B009 /* SessionLogRecordTests.swift in Sources */,
+				A11CAFE0000000000000B00A /* SessionLogWrappingKeyTests.swift in Sources */,
+				A11CAFE0000000000000B00B /* SessionLogWriterTests.swift in Sources */,
+				A11CAFE0000000000000B00C /* SessionLogRetentionTests.swift in Sources */,
+				A11CAFE0000000000000B00D /* SessionRecordingAuditTests.swift in Sources */,
+				A11CAFE0000000000000B020 /* CredentialAuditTests.swift in Sources */,
+				A11CAFE0000000000000B00E /* SSHSessionRecordingTapTests.swift in Sources */,
+				A11CAFE0000000000000B00F /* SessionLogReplayTests.swift in Sources */,
+				A11CAFE0000000000000B010 /* PulseTerminalAdapterTests.swift in Sources */,
+				A11CAFE0000000000000B012 /* HostKeyMismatchSheetTests.swift in Sources */,
+				A11CAFE0000000000000B013 /* SSHConnectFormTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -959,6 +1331,7 @@
 /* Begin XCBuildConfiguration section */
 		C96191832ACA5530000198DB /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C926516F2E71AFA2004564DD /* Development.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = PulseAppIcon/;
@@ -995,7 +1368,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = ADC5AJV3TU;
+				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -1026,6 +1399,7 @@
 		};
 		C96191842ACA5530000198DB /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C926516F2E71AFA2004564DD /* Development.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = PulseAppIcon/;
@@ -1062,7 +1436,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = ADC5AJV3TU;
+				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -1095,7 +1469,7 @@
 				CURRENT_PROJECT_VERSION = 6;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Pulse/Preview Content\"";
-				DEVELOPMENT_TEAM = QJNZ2WK8TH;
+				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
@@ -1125,12 +1499,12 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.pulse.powersense;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -1188,7 +1562,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -1336,6 +1710,74 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio-ssh.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.13.0;
+			};
+		};
+		A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.100.0;
+			};
+		};
+		C932916F2FC30A3900624995 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio-transport-services";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.28.0;
+			};
+		};
+		A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {
+				kind = exactVersion;
+				version = 1.12.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C923355E2FC3EAF9003BAF42 /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
+			productName = NIOSSH;
+		};
+		A11CAFE000000000000000C1 /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
+			productName = NIOSSH;
+		};
+		C93291702FC30A3900624995 /* NIOTransportServices */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C932916F2FC30A3900624995 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */;
+			productName = NIOTransportServices;
+		};
+		A11CAFE000000000000000D1 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+		A11CAFE0000000000000201 /* NIOCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOCore;
+		};
+		A11CAFE0000000000000202 /* NIOConcurrencyHelpers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOConcurrencyHelpers;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = C96191562ACA552F000198DB /* Project object */;
 }

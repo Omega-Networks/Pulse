@@ -83,6 +83,31 @@ class APIRequest<Resource: NetboxResource> {
         print("HTTP Status Message: \(statusMessage)")
         
         if !(200...299).contains(statusCode) {
+            // Log the NetBox-supplied response body before throwing.
+            // `statusMessage` is the generic
+            // `HTTPURLResponse.localizedString(forStatusCode:)` reason
+            // ("bad request", "unauthorized", "not found"), which tells
+            // the operator nothing about *why* NetBox rejected the
+            // request. NetBox returns a JSON validation body on every
+            // 4xx (e.g. `{"role_id": ["Select a valid choice. 9999 is
+            // not one of the available choices."]}`); without this log
+            // line that body is discarded and the operator's only
+            // diagnostic path is to grep NetBox's own server logs.
+            //
+            // Truncation at 8 KiB defends against a misconfigured or
+            // tampered server returning a megabyte of body and flooding
+            // the console. NetBox validation errors are typically well
+            // under 1 KiB so the cap is comfortably above the real
+            // failure surface.
+            //
+            // The UTF-8 fallback handles a defensively-malformed body
+            // without crashing the log line; NetBox is JSON end-to-end
+            // so the fallback should never fire in practice.
+            let body = String(data: data, encoding: .utf8) ?? "<non-UTF-8 body, \(data.count) bytes>"
+            let truncated: String = body.count > 8192
+                ? String(body.prefix(8192)) + "… [truncated, total \(body.count) bytes]"
+                : body
+            print("Response Body: \(truncated)")
             throw NetboxRequestError.failure(code: statusCode, message: statusMessage)
         }
         
