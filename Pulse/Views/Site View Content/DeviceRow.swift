@@ -104,11 +104,13 @@ struct DeviceRow: View {
 
             Button(action: {
                 if let device = device.first {
-                    // Wrap the id in `DeviceWindowTarget` so this routes to
-                    // the Device Web scene by type, same as the SSH terminal
-                    // above; the matching `id: "device-web"` is retained as a
-                    // restoration anchor. See `SSHTerminalScene`.
-                    openWindow(id: "device-web", value: DeviceWindowTarget(deviceID: device.id))
+                    // `DeviceWebWindowTarget` is the Device Web scene's own
+                    // nominal routing type, distinct from the SSH terminal's
+                    // `DeviceWindowTarget`: two scenes sharing one
+                    // `WindowGroup(for:)` type collide and can mount the view
+                    // twice. The matching `id: "device-web"` is the
+                    // restoration anchor. See `DeviceWebWindowTarget`.
+                    openWindow(id: "device-web", value: DeviceWebWindowTarget(deviceID: device.id))
                 }
             }) {
                 Label("Open Web UI", systemImage: "globe")
