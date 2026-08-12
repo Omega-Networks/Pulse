@@ -50,3 +50,22 @@ CLAUDE.md
 
 # Session dev logs are output as text for the operator, never committed.
 docs/devlog/
+
+# Grok / other agent session scratch (if ever created under the repo root).
+.grok/
+
+# Agent task prompts and companion handoff files — local only, never ship.
+*AGENT_PROMPT.md
+WEB_COMPANION_AGENT_PROMPT.md
+AGENTS.md
+
+# Instruments captures (Time Profiler, etc.) — operator machine only.
+*.trace
+
+# Local environment and secrets. Tokens live in the operator shell, not the tree.
+.env
+.env.*
+
+# Unfiltered lab schema (~5.5 MiB). Regeneration fetches it; only the filtered
+# document is vendored.
+docs/netbox/openapi-raw.yaml
