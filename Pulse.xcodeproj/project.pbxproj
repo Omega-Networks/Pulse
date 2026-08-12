@@ -126,6 +126,13 @@
 		A11CAFE0000000000000B013 /* SSHConnectFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000A013 /* SSHConnectFormTests.swift */; };
 		C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = C923355E2FC3EAF9003BAF42 /* NIOSSH */; };
 		A11CAFE000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000D1 /* SwiftTerm */; };
+		A11CAFE0000000000000NB12 /* NetBoxClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB03 /* NetBoxClientFactory.swift */; };
+		A11CAFE0000000000000NB24 /* NetBoxAPI in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB25 /* NetBoxAPI */; };
+		A11CAFE0000000000000NB13 /* NetBoxLenientDateTranscoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB04 /* NetBoxLenientDateTranscoder.swift */; };
+		A11CAFE0000000000000NB14 /* NetBoxAuthMiddleware.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB05 /* NetBoxAuthMiddleware.swift */; };
+		A11CAFE0000000000000NB15 /* NetBoxDateTranscoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB06 /* NetBoxDateTranscoderTests.swift */; };
+		A11CAFE0000000000000NB22 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB20 /* OpenAPIRuntime */; };
+		A11CAFE0000000000000NB23 /* OpenAPIURLSession in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB21 /* OpenAPIURLSession */; };
 		A11CAFE000000000000000C0 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000C1 /* NIOSSH */; };
 		A11CAFE0000000000000203 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000201 /* NIOCore */; };
 		A11CAFE0000000000000204 /* NIOConcurrencyHelpers in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000202 /* NIOConcurrencyHelpers */; };
@@ -417,6 +424,10 @@
 		C9A2B32B2ACAA19D00C0BE08 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PulseAppIcon.icon; sourceTree = "<group>"; };
 		C9FCA5162D153E4700D9E851 /* Event.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Event.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB03 /* NetBoxClientFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxClientFactory.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB04 /* NetBoxLenientDateTranscoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxLenientDateTranscoder.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB05 /* NetBoxAuthMiddleware.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxAuthMiddleware.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB06 /* NetBoxDateTranscoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxDateTranscoderTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -427,6 +438,9 @@
 				C923355F2FC3EAF9003BAF42 /* NIOSSH in Frameworks */,
 				C93291712FC30A3900624995 /* NIOTransportServices in Frameworks */,
 				A11CAFE000000000000000D2 /* SwiftTerm in Frameworks */,
+				A11CAFE0000000000000NB22 /* OpenAPIRuntime in Frameworks */,
+				A11CAFE0000000000000NB23 /* OpenAPIURLSession in Frameworks */,
+				A11CAFE0000000000000NB24 /* NetBoxAPI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -705,8 +719,19 @@
 			children = (
 				A11CAFE0000000000000A003 /* DirectTransportTests.swift */,
 				B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */,
+				A11CAFE0000000000000NB06 /* NetBoxDateTranscoderTests.swift */,
 			);
 			path = Networking;
+			sourceTree = "<group>";
+		};
+		A11CAFE0000000000000NB40 /* NetBox */ = {
+			isa = PBXGroup;
+			children = (
+				A11CAFE0000000000000NB03 /* NetBoxClientFactory.swift */,
+				A11CAFE0000000000000NB04 /* NetBoxLenientDateTranscoder.swift */,
+				A11CAFE0000000000000NB05 /* NetBoxAuthMiddleware.swift */,
+			);
+			path = NetBox;
 			sourceTree = "<group>";
 		};
 		C96191552ACA552F000198DB = {
@@ -745,6 +770,7 @@
 				C96191932ACA55F4000198DB /* Views */,
 				C9951EDB2E8CDA0F0025C136 /* Services */,
 				A11CAFE0000000000000DAD1 /* SSH */,
+				A11CAFE0000000000000NB40 /* NetBox */,
 				A11CAFE0000000000000DAD4 /* Networking */,
 				B17E050200000000000000C1 /* Web */,
 				C962F8ED2E606BBE00B182AE /* AddSiteWindow.swift */,
@@ -983,6 +1009,9 @@
 				C923355E2FC3EAF9003BAF42 /* NIOSSH */,
 				C93291702FC30A3900624995 /* NIOTransportServices */,
 				A11CAFE000000000000000D1 /* SwiftTerm */,
+				A11CAFE0000000000000NB20 /* OpenAPIRuntime */,
+				A11CAFE0000000000000NB21 /* OpenAPIURLSession */,
+				A11CAFE0000000000000NB25 /* NetBoxAPI */,
 			);
 			productName = Pulse;
 			productReference = C961915E2ACA552F000198DB /* Pulse.app */;
@@ -1066,6 +1095,9 @@
 				C923355D2FC3EAF9003BAF42 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
 				A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				A11CAFE0000000000000200 /* XCRemoteSwiftPackageReference "swift-nio" */,
+				A11CAFE0000000000000NB30 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */,
+				A11CAFE0000000000000NB31 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */,
+				A11CAFE0000000000000NB32 /* XCLocalSwiftPackageReference "NetBoxAPI" */,
 			);
 			productRefGroup = C961915F2ACA552F000198DB /* Products */;
 			projectDirPath = "";
@@ -1271,6 +1303,9 @@
 				C96191BA2ACA57FC000198DB /* APIRequest.swift in Sources */,
 				C96191A62ACA573A000198DB /* DeviceType.swift in Sources */,
 				C9FCA5172D153E4D00D9E851 /* Event.swift in Sources */,
+				A11CAFE0000000000000NB12 /* NetBoxClientFactory.swift in Sources */,
+				A11CAFE0000000000000NB13 /* NetBoxLenientDateTranscoder.swift in Sources */,
+				A11CAFE0000000000000NB14 /* NetBoxAuthMiddleware.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1282,6 +1317,7 @@
 				A11CAFE0000000000000B002 /* OpenSSHWireFormatTests.swift in Sources */,
 				A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */,
 				B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */,
+				A11CAFE0000000000000NB15 /* NetBoxDateTranscoderTests.swift in Sources */,
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
 				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
 				B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */,
@@ -1744,7 +1780,30 @@
 				version = 1.12.0;
 			};
 		};
+		A11CAFE0000000000000NB30 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-openapi-runtime";
+			requirement = {
+				kind = exactVersion;
+				version = 1.12.0;
+			};
+		};
+		A11CAFE0000000000000NB31 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-openapi-urlsession";
+			requirement = {
+				kind = exactVersion;
+				version = 1.3.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A11CAFE0000000000000NB32 /* XCLocalSwiftPackageReference "NetBoxAPI" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = NetBoxAPI;
+		};
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		C923355E2FC3EAF9003BAF42 /* NIOSSH */ = {
@@ -1766,6 +1825,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A11CAFE000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
+		};
+		A11CAFE0000000000000NB20 /* OpenAPIRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE0000000000000NB30 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */;
+			productName = OpenAPIRuntime;
+		};
+		A11CAFE0000000000000NB21 /* OpenAPIURLSession */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE0000000000000NB31 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */;
+			productName = OpenAPIURLSession;
+		};
+		A11CAFE0000000000000NB25 /* NetBoxAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CAFE0000000000000NB32 /* XCLocalSwiftPackageReference "NetBoxAPI" */;
+			productName = NetBoxAPI;
 		};
 		A11CAFE0000000000000201 /* NIOCore */ = {
 			isa = XCSwiftPackageProductDependency;
