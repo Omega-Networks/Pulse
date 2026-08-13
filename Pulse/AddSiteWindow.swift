@@ -115,6 +115,14 @@ struct AddSiteWindow: View {
         }
         .padding(24)
         .frame(minWidth: 420, minHeight: 360)
+        .onAppear {
+            if regionID == nil, let address = sharedLocations.tapAddress {
+                regionID = NetBoxGeo.suggestedRegionID(
+                    regions: regions.map { ($0.id, $0.name) },
+                    address: address
+                )
+            }
+        }
     }
 
     private func create() async {
@@ -129,9 +137,11 @@ struct AddSiteWindow: View {
                     name: trimmed,
                     slug: slug,
                     status: status,
-                    physicalAddress: sharedLocations.tapAddress.flatMap { $0.isEmpty ? nil : $0 },
-                    latitude: sharedLocations.tapLocation?.latitude,
-                    longitude: sharedLocations.tapLocation?.longitude,
+                    physicalAddress: sharedLocations.tapAddress.flatMap {
+                        $0.isEmpty ? nil : NetBoxGeo.physicalAddress($0)
+                    },
+                    latitude: sharedLocations.tapLocation.map { NetBoxGeo.latitude($0.latitude) },
+                    longitude: sharedLocations.tapLocation.map { NetBoxGeo.longitude($0.longitude) },
                     region: regionID,
                     group: groupID,
                     tenant: tenantID

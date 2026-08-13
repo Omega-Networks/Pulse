@@ -287,6 +287,13 @@ actor NetBoxSyncEngine {
                     time: nil
                 )
             )
+            do {
+                try await self.refreshDeviceInterfaces(deviceID: row.id)
+            } catch {
+                self.logger.error(
+                    "Could not load interfaces for new device \(row.id): \(error.localizedDescription)"
+                )
+            }
         }
     }
 
@@ -318,6 +325,7 @@ actor NetBoxSyncEngine {
         writes = task
         do {
             try await task.value
+            await catchUpWatermark()
             await MainActor.run {
                 NotificationCenter.default.post(name: .netBoxStoreDidApply, object: nil)
             }
@@ -541,6 +549,41 @@ actor NetBoxSyncEngine {
     }
 
     // MARK: - Delta
+
+    /// Template interfaces NetBox creates with the device. Never a delete pass.
+    private func refreshDeviceInterfaces(deviceID: Int64) async throws {
+        let extra = [URLQueryItem(name: "device_id", value: String(deviceID))]
+        let (rows, _) = try await fetchAll(
+            path: "/api/dcim/interfaces/",
+            extraQuery: extra,
+            as: NetBoxRecord.Interface.self
+        )
+        _ = try await applyOnStore {
+            try NetBoxStore.applyInterfaces(
+                rows, fetchComplete: false, skipped: 0, keeping: [], in: $0
+            )
+        }
+    }
+
+    /// Advance the changelog watermark after a write so the next boot
+    /// does not re-walk side effects. Failure is logged, not thrown.
+    private func catchUpWatermark() async {
+        let watermark: Int64?
+        do {
+            watermark = try await applyOnStore { context in
+                try context.fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId
+            }
+        } catch {
+            logger.error("Post-write watermark read failed: \(error.localizedDescription)")
+            return
+        }
+        guard let watermark else { return }
+        do {
+            try await performDelta(after: watermark)
+        } catch {
+            logger.error("Post-write changelog catch-up failed: \(error.localizedDescription)")
+        }
+    }
 
     private func changelogRecordMissing(id: Int64) async -> Bool {
         do {

@@ -72,6 +72,6 @@ Validation errors (duplicate cable, missing field) show the server JSON.
 
 ## Site and device creation
 
-**New site** is the map window **+**. Tap the map first if you want coordinates and a reverse-geocoded address; then **+**. The form sends `name`, a slug derived from the name, `status`, and optional region/group/tenant. Coords and address are included only when a map pin exists. A failed POST leaves no local site.
+**New site** is the map window **+**. Tap the map first if you want coordinates and a reverse-geocoded address; then **+**. The form sends `name`, a slug derived from the name, `status`, and optional region/group/tenant. Address is the MapKit full line, clipped to 200 characters. Coordinates are rounded to 5 decimals. Region is preselected when a stored region name appears in that address. A failed POST leaves no local site.
 
-**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/`. A failed POST leaves no local device.
+**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/`, then Pulse loads that device’s interfaces so template ports (FortiAP and similar) show immediately. A failed POST leaves no local device. Serial, primary IP, and other fields are not on this form yet.

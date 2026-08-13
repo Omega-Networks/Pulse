@@ -144,6 +144,7 @@
 		A11CAFE0000000000000NB81 /* NetBoxDelta.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB80 /* NetBoxDelta.swift */; };
 		A11CAFE0000000000000NB91 /* NetBoxWriteBodies.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB90 /* NetBoxWriteBodies.swift */; };
 		A11CAFE0000000000000NB93 /* NetBoxWriteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB92 /* NetBoxWriteService.swift */; };
+		A11CAFE0000000000000NB97 /* NetBoxGeo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB96 /* NetBoxGeo.swift */; };
 		A11CAFE0000000000000NB95 /* NetBoxWriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB94 /* NetBoxWriteTests.swift */; };
 		A11CAFE0000000000000NB83 /* NetBoxDeltaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB82 /* NetBoxDeltaTests.swift */; };
 		A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */; };
@@ -470,6 +471,7 @@
 		A11CAFE0000000000000NB80 /* NetBoxDelta.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxDelta.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB90 /* NetBoxWriteBodies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxWriteBodies.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB92 /* NetBoxWriteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxWriteService.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB96 /* NetBoxGeo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxGeo.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB94 /* NetBoxWriteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxWriteTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB82 /* NetBoxDeltaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxDeltaTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxSyncEngineTests.swift; sourceTree = "<group>"; };
@@ -800,6 +802,7 @@
 				A11CAFE0000000000000NB80 /* NetBoxDelta.swift */,
 				A11CAFE0000000000000NB90 /* NetBoxWriteBodies.swift */,
 				A11CAFE0000000000000NB92 /* NetBoxWriteService.swift */,
+				A11CAFE0000000000000NB96 /* NetBoxGeo.swift */,
 			);
 			path = NetBox;
 			sourceTree = "<group>";
@@ -1392,6 +1395,7 @@
 				A11CAFE0000000000000NB81 /* NetBoxDelta.swift in Sources */,
 				A11CAFE0000000000000NB91 /* NetBoxWriteBodies.swift in Sources */,
 				A11CAFE0000000000000NB93 /* NetBoxWriteService.swift in Sources */,
+				A11CAFE0000000000000NB97 /* NetBoxGeo.swift in Sources */,
 				A11CAFE0000000000000NB61 /* NetBoxAuthorization.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

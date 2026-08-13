@@ -452,9 +452,12 @@ struct MapView: View {
         do {
             let placemarks = try await geocoder?.mapItems
             
-            if let firstPlacemark = placemarks?.first
-            {
-                return "\(firstPlacemark.address, default: "")"
+            if let firstPlacemark = placemarks?.first {
+                let raw = firstPlacemark.address?.fullAddress
+                    ?? firstPlacemark.address?.shortAddress
+                    ?? ""
+                let clipped = NetBoxGeo.physicalAddress(raw)
+                return clipped.isEmpty ? nil : clipped
             }
             
             return nil

@@ -405,6 +405,71 @@ final class NetBoxWriteTests: XCTestCase {
         )
     }
 
+    func testCreateDeviceLoadsInterfacesForThatDevice() async throws {
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 4))
+        seed.insert(DeviceRole(id: 6))
+        seed.insert(DeviceType(id: 8))
+        try seed.save()
+
+        let fetcher = WriteFetcher()
+        fetcher.sendQueue = [
+            NetBoxHTTPResponse(
+                status: 201,
+                body: Data(#"{"id":30,"name":"ap-1","site":{"id":4},"role":{"id":6},"device_type":{"id":8}}"#.utf8),
+                etag: nil
+            ),
+        ]
+        fetcher.getBodies["/api/dcim/devices/30/"] = Data(
+            #"{"id":30,"name":"ap-1","site":{"id":4},"role":{"id":6},"device_type":{"id":8}}"#.utf8
+        )
+        fetcher.getBodies["/api/dcim/interfaces/"] = Data("""
+        { "count": 1, "next": null, "results": [
+          { "id": 501, "name": "wifi0",
+            "device": { "id": 30, "name": "ap-1" },
+            "enabled": true }
+        ] }
+        """.utf8)
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.createDevice(
+            NetBoxWriteBody.DeviceCreate(
+                name: "ap-1", deviceType: 8, role: 6, site: 4, status: "active"
+            )
+        )
+        let ifaces = try ModelContext(container).fetch(FetchDescriptor<Interface>())
+        XCTAssertEqual(ifaces.map(\.name), ["wifi0"])
+        XCTAssertEqual(ifaces.first?.deviceId, 30)
+    }
+
+    func testSitePinHygieneAndRegionSuggestion() throws {
+        XCTAssertEqual(
+            NetBoxGeo.physicalAddress("328 Paremata Haywards Hill Rd, Judgeford, Porirua 5381, New Zealand"),
+            "328 Paremata Haywards Hill Rd, Judgeford, Porirua 5381, New Zealand"
+        )
+        XCTAssertEqual(NetBoxGeo.physicalAddress(String(repeating: "a", count: 250)).count, 200)
+        XCTAssertEqual(NetBoxGeo.latitude(-41.116328917), -41.11633, accuracy: 0.000001)
+        XCTAssertEqual(NetBoxGeo.longitude(174.870069123), 174.87007, accuracy: 0.000001)
+        let body = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.SiteCreate(
+                name: "Lab",
+                slug: "lab",
+                status: "active",
+                latitude: NetBoxGeo.latitude(-41.116328917),
+                longitude: NetBoxGeo.longitude(174.870069123)
+            )
+        )
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(object["latitude"] as? Double, NetBoxGeo.latitude(-41.116328917))
+        XCTAssertEqual(
+            NetBoxGeo.suggestedRegionID(
+                regions: [(1, "Wellington"), (2, "Porirua"), (3, "Porirua City")],
+                address: "328 Paremata Haywards Hill Rd, Judgeford, Porirua 5381"
+            ),
+            2
+        )
+    }
+
     func testConflictDescriptionAndLiveBodyHelper() {
         XCTAssertEqual(
             NetBoxSyncError.httpStatus(code: 412, body: "x").localizedDescription,
