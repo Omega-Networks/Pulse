@@ -52,6 +52,7 @@ struct SyncDashboardView: View {
     @Query private var sites: [Site]
     @Query private var racks: [Rack]
     @Query private var devices: [Device]
+    @Query private var interfaces: [Interface]
     
     // MARK: - UI State
     
@@ -121,6 +122,7 @@ struct SyncDashboardView: View {
                 LabeledContent("Sites:", value: String(sites.count))
                 LabeledContent("Racks:", value: String(racks.count))
                 LabeledContent("Devices:", value: String(devices.count))
+                LabeledContent("Interfaces:", value: String(interfaces.count))
             }
             .id(contextDidSaveDate)
             HStack {
@@ -287,6 +289,7 @@ struct SyncDashboardView: View {
         let modelsToDelete: [any PersistentModel.Type] = [
             Event.self,
             Service.self,
+            Interface.self,
             Device.self,
             Rack.self,
             Site.self,
@@ -379,6 +382,8 @@ struct SyncDashboardView: View {
         case .unknownError(let message):
             alertTitle = "Error"
             alertMessage = "\(source.displayName): \(message)"
+        case .syncing:
+            return
         }
         
         showAlert = true

@@ -37,44 +37,22 @@ enum NetBoxPageIterator {
     /// Safety brake against a `next` that never clears. 100 pages at
     /// `pageLimit` is 100_000 rows — well above today's boot set.
     static let maxPages = 100
+    /// 1M devices × 50 interfaces = 50M rows / 1000 = 50_000 pages;
+    /// +20% slack. Lab (12K × ~20) is ~240 pages.
+    static let interfaceMaxPages = 60_000
 
-    struct Page<Element: Sendable>: Sendable {
-        var results: [Element]
-        var next: String?
-        var count: Int
-    }
-
-    enum IteratorError: Error, Equatable {
-        /// A page returned `next` but zero results — cannot advance offset.
-        case emptyPageWithNext
-        /// More than `maxPages` arrived with `next` still set.
-        case pageLimitExceeded
-    }
-
-    /// Materialize every page. Fine for small types (roles, tenants, …).
-    static func fetchAll<Element: Sendable>(
-        fetchPage: (Int) async throws -> Page<Element>
-    ) async throws -> [Element] {
-        var collected: [Element] = []
-        try await forEachPage(fetchPage: fetchPage) { page in
-            collected.append(contentsOf: page)
-        }
-        return collected
-    }
-
-    /// Stream each page into `body`. Use this for devices/services so the
-    /// full list is never held just to walk it.
     /// GET every offset page through `NetBoxFetching` and the per-element
-    /// list decoder. Shared by the boot engine and on-demand site loads.
-    static func fetchDecoded<T: Decodable & Sendable>(
+    /// list decoder. Invokes `body` once per page and does not accumulate
+    /// rows. A throw leaves already-delivered pages with the caller.
+    static func streamDecoded<T: Decodable & Sendable>(
         path: String,
         extraQuery: [URLQueryItem] = [],
         as type: T.Type,
         using fetcher: any NetBoxFetching,
-        maxPages: Int = NetBoxPageIterator.maxPages
-    ) async throws -> (rows: [T], skipped: Int) {
+        maxPages: Int = NetBoxPageIterator.maxPages,
+        body: @Sendable ([T], Int) async throws -> Void
+    ) async throws -> (skipped: Int, pages: Int) {
         var skipped = 0
-        var rows: [T] = []
         var offset = 0
         var pages = 0
         while true {
@@ -86,29 +64,38 @@ enum NetBoxPageIterator {
             let data = try await fetcher.get(path: path, query: query)
             let page = try NetBoxListDecoder.decodePage(T.self, from: data)
             skipped += page.skipped
-            rows.append(contentsOf: page.results)
+            try await body(page.results, page.skipped)
             guard page.next != nil else { break }
             guard !page.results.isEmpty else { throw NetBoxSyncError.emptyPageWithNext }
             offset += page.results.count
         }
-        return (rows, skipped)
+        return (skipped, pages)
     }
 
-    static func forEachPage<Element: Sendable>(
-        fetchPage: (Int) async throws -> Page<Element>,
-        maxPages: Int = NetBoxPageIterator.maxPages,
-        body: ([Element]) async throws -> Void
-    ) async throws {
-        var offset = 0
-        var pages = 0
-        while true {
-            pages += 1
-            guard pages <= maxPages else { throw IteratorError.pageLimitExceeded }
-            let page = try await fetchPage(offset)
-            try await body(page.results)
-            guard page.next != nil else { return }
-            guard !page.results.isEmpty else { throw IteratorError.emptyPageWithNext }
-            offset += page.results.count
+    /// Materialize every page. Fine for small types (roles, tenants, …).
+    /// Interfaces must use `streamDecoded` so the full list is never held.
+    static func fetchDecoded<T: Decodable & Sendable>(
+        path: String,
+        extraQuery: [URLQueryItem] = [],
+        as type: T.Type,
+        using fetcher: any NetBoxFetching,
+        maxPages: Int = NetBoxPageIterator.maxPages
+    ) async throws -> (rows: [T], skipped: Int) {
+        let collected = CollectedRows<T>()
+        let result = try await streamDecoded(
+            path: path,
+            extraQuery: extraQuery,
+            as: type,
+            using: fetcher,
+            maxPages: maxPages
+        ) { page, _ in
+            await collected.append(page)
         }
+        return (await collected.rows, result.skipped)
     }
+}
+
+private actor CollectedRows<Element: Sendable> {
+    private(set) var rows: [Element] = []
+    func append(_ page: [Element]) { rows.append(contentsOf: page) }
 }

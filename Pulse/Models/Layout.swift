@@ -144,25 +144,10 @@ actor LayoutManager {
             return Graph(devices: [], connections: [])
         }
         
-        var connections: [Edge] = []
-        
-        // Create edges for each connected interface
-        for device in devices {
-            let interfaces = await InterfaceCache.shared.getInterfaces(forDeviceId: device.id)
-            for interface in interfaces {
-                if let connectedEndpointId = interface.connectedEndpointId,
-                   let connectedEndpoint = await getInterface(id: connectedEndpointId) {
-                    let edge = Edge(start: interface, end: connectedEndpoint)
-                    connections.append(edge)
-                }
-            }
-        }
-        
+        let context = ModelContext(modelContainer)
+        let vos = (try? SiteTopologyEdges.fetchVOs(siteId: site.id, in: context)) ?? []
+        let connections = SiteTopologyEdges.derive(from: vos)
         return Graph(devices: Array(devices), connections: connections)
-    }
-    
-    private func getInterface(id: Int64) async -> Interface? {
-        return await InterfaceCache.shared.getInterface(withId: id)
     }
 
     

@@ -50,7 +50,8 @@ actor NetBoxSyncEngine {
     }
 
     /// Tenant groups → roles → types → tenants → regions → site groups →
-    /// sites → racks → devices → services.
+    /// sites → racks → devices → services → interfaces. Boot and Settings
+    /// → Sync Data both wait for every stage, including interfaces.
     func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         if let inFlight {
             try await inFlight.value
@@ -81,6 +82,7 @@ actor NetBoxSyncEngine {
             ("Synchronising Racks...", { try await self.syncRacks() }),
             ("Synchronising Devices...", { try await self.syncDevices() }),
             ("Synchronising Services...", { try await self.syncServices() }),
+            ("Synchronising Interfaces...", { try await self.syncInterfaces() }),
         ]
         for (index, stage) in stages.enumerated() {
             progress?(index, stage.0)
@@ -238,6 +240,41 @@ actor NetBoxSyncEngine {
         }
     }
 
+    private func syncInterfaces() async throws {
+        let extra = filter.excludedRoleQueryAsInts.map {
+            URLQueryItem(name: "device_role_id__n", value: String($0))
+        }
+        let keeping = AcceptedInterfaceIDs()
+        let walk = try await NetBoxPageIterator.streamDecoded(
+            path: "/api/dcim/interfaces/",
+            extraQuery: extra,
+            as: NetBoxRecord.Interface.self,
+            using: fetcher,
+            maxPages: NetBoxPageIterator.interfaceMaxPages
+        ) { page, _ in
+            let result = try await self.applyOnStore { context in
+                try NetBoxStore.applyInterfaces(
+                    page,
+                    fetchComplete: false,
+                    skipped: 0,
+                    keeping: [],
+                    in: context
+                )
+            }
+            await keeping.formUnion(result.acceptedIDs)
+        }
+        let seen = await keeping.ids
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyInterfaces(
+                [],
+                fetchComplete: true,
+                skipped: walk.skipped,
+                keeping: seen,
+                in: context
+            )
+        }
+    }
+
     // MARK: - Fetch
 
     private func fetchAll<T: Decodable & Sendable>(
@@ -279,6 +316,13 @@ actor NetBoxSyncEngine {
             return true
         }
     }
+}
+
+/// Accumulates accepted interface ids across streamed pages without
+/// capturing a mutable `Set` in a Sendable closure.
+private actor AcceptedInterfaceIDs {
+    private(set) var ids: Set<Int64> = []
+    func formUnion(_ other: Set<Int64>) { ids.formUnion(other) }
 }
 
 // MARK: - Environment

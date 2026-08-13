@@ -43,9 +43,9 @@ class InitializationState: ObservableObject {
     @Published var contentViewReady = false
     @Published var startExitAnimation = false
     @Published var isConfigured = false
-    /// Ten NetBox types plus TipKit. Matches the last `updateProgress` step
-    /// inside `verifyContainer` so the bar fills to 100% when work completes.
-    let totalSteps = 11.0
+    /// Eleven NetBox types (including interfaces) plus TipKit. Matches the
+    /// last `updateProgress` step inside `verifyContainer`.
+    let totalSteps = 12.0
     
     /**
       Updates the initialization progress and step description.
@@ -92,6 +92,7 @@ struct PulseApp: App {
                 SiteGroup.self,
                 Site.self,
                 Device.self,
+                Interface.self,
                 Service.self,
                 WebHostTrust.self,
                 Event.self,
@@ -283,10 +284,11 @@ struct PulseApp: App {
                 }
             }
 
-            initState.updateProgress(10, "Setting up Tips...")
+            initState.updateProgress(11, "Setting up Tips...")
             tipManager.configure()
+            await SiteDataService(modelContainer: modelContainer).refreshSeverities()
 
-            initState.updateProgress(11, "Ready")
+            initState.updateProgress(12, "Ready")
         } catch {
             logger.error("NetBox sync failed: \(error.localizedDescription)")
             if let netboxError = error as? NetBoxSyncError {
@@ -304,21 +306,12 @@ struct PulseApp: App {
             try? await Task.sleep(for: .seconds(2))
         }
 
-        // Brief pause so a full bar is visible before the welcome message swaps in.
         try? await Task.sleep(for: .milliseconds(500))
-
         initState.showWelcome = true
         initState.currentStep = "Welcome to Pulse"
-
-        // Time to read the welcome message.
         try? await Task.sleep(for: .milliseconds(1500))
-
-        // Trigger exit animation.
         initState.startExitAnimation = true
-
-        // Wait for the loading view to animate out.
         try? await Task.sleep(for: .milliseconds(1100))
-
         withAnimation(.easeInOut(duration: 0.5)) {
             showContentView = true
         }

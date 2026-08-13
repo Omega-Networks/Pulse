@@ -24,56 +24,74 @@ import XCTest
 @testable import Pulse
 
 final class NetBoxPageIteratorTests: XCTestCase {
-    func testFetchesUntilNextIsNil() async throws {
-        let pages: [NetBoxPageIterator.Page<Int>] = [
-            .init(results: [1, 2], next: "https://example.com/?offset=2", count: 3),
-            .init(results: [3], next: nil, count: 3),
-        ]
-        var offsets: [Int] = []
-        let all = try await NetBoxPageIterator.fetchAll { offset in
-            offsets.append(offset)
-            return pages[offsets.count - 1]
-        }
-        XCTAssertEqual(all, [1, 2, 3])
-        XCTAssertEqual(offsets, [0, 2])
-    }
+    struct Row: Decodable, Sendable { var ok: Bool }
 
-    func testSinglePageDoesNotAdvance() async throws {
-        var calls = 0
-        let all = try await NetBoxPageIterator.fetchAll { offset -> NetBoxPageIterator.Page<Int> in
-            calls += 1
-            XCTAssertEqual(offset, 0)
-            return .init(results: [9], next: nil, count: 1)
-        }
-        XCTAssertEqual(all, [9])
-        XCTAssertEqual(calls, 1)
-    }
-
-    func testEmptyPageWithNextThrowsAndDoesNotLoop() async {
-        do {
-            _ = try await NetBoxPageIterator.fetchAll { _ -> NetBoxPageIterator.Page<Int> in
-                .init(results: [], next: "https://example.com/?offset=1000", count: 1)
+    func testStreamDecodedDoesNotAccumulateCallerSide() async throws {
+        final class TwoPageFetcher: NetBoxFetching, @unchecked Sendable {
+            var calls = 0
+            func get(path: String, query: [URLQueryItem]) async throws -> Data {
+                calls += 1
+                if calls == 1 {
+                    return Data(#"{"count":2,"next":"x","results":[{"ok":true}]}"#.utf8)
+                }
+                return Data(#"{"count":2,"next":null,"results":[{"ok":false}]}"#.utf8)
             }
-            XCTFail("expected emptyPageWithNext")
-        } catch NetBoxPageIterator.IteratorError.emptyPageWithNext {
+        }
+        var seen: [[Bool]] = []
+        let fetcher = TwoPageFetcher()
+        let result = try await NetBoxPageIterator.streamDecoded(
+            path: "/api/dcim/interfaces/",
+            as: Row.self,
+            using: fetcher
+        ) { page, skipped in
+            XCTAssertEqual(skipped, 0)
+            seen.append(page.map(\.ok))
+        }
+        XCTAssertEqual(result.skipped, 0)
+        XCTAssertEqual(result.pages, 2)
+        XCTAssertEqual(seen, [[true], [false]])
+        XCTAssertEqual(fetcher.calls, 2)
+    }
+
+    func testFetchDecodedMaterializesSmallTypes() async throws {
+        final class TwoPageFetcher: NetBoxFetching, @unchecked Sendable {
+            var calls = 0
+            func get(path: String, query: [URLQueryItem]) async throws -> Data {
+                calls += 1
+                if calls == 1 {
+                    return Data(#"{"count":2,"next":"x","results":[{"ok":true}]}"#.utf8)
+                }
+                return Data(#"{"count":2,"next":null,"results":[{"ok":false}]}"#.utf8)
+            }
+        }
+        let page = try await NetBoxPageIterator.fetchDecoded(
+            path: "/api/dcim/sites/",
+            as: Row.self,
+            using: TwoPageFetcher()
+        )
+        XCTAssertEqual(page.rows.map(\.ok), [true, false])
+        XCTAssertEqual(page.skipped, 0)
+    }
+
+    func testStreamDecodedPageCapThrowsSyncError() async {
+        final class LoopFetcher: NetBoxFetching, @unchecked Sendable {
+            func get(path: String, query: [URLQueryItem]) async throws -> Data {
+                Data(#"{"count":99,"next":"x","results":[{"ok":true}]}"#.utf8)
+            }
+        }
+        do {
+            _ = try await NetBoxPageIterator.streamDecoded(
+                path: "/api/dcim/interfaces/",
+                as: Row.self,
+                using: LoopFetcher(),
+                maxPages: 2
+            ) { _, _ in }
+            XCTFail("expected pageLimitExceeded")
+        } catch NetBoxSyncError.pageLimitExceeded {
             // expected
         } catch {
             XCTFail("wrong error \(error)")
         }
-    }
-
-    func testForEachPageStreamsWithoutMaterializingCallerSide() async throws {
-        var seen: [[Int]] = []
-        try await NetBoxPageIterator.forEachPage(
-            fetchPage: { offset -> NetBoxPageIterator.Page<Int> in
-                if offset == 0 {
-                    return .init(results: [1], next: "n", count: 2)
-                }
-                return .init(results: [2], next: nil, count: 2)
-            },
-            body: { seen.append($0) }
-        )
-        XCTAssertEqual(seen, [[1], [2]])
     }
 
     func testFetchDecodedPageCapThrowsSyncError() async {
@@ -82,7 +100,6 @@ final class NetBoxPageIteratorTests: XCTestCase {
                 Data(#"{"count":99,"next":"x","results":[{"ok":true}]}"#.utf8)
             }
         }
-        struct Row: Decodable, Sendable { var ok: Bool }
         do {
             _ = try await NetBoxPageIterator.fetchDecoded(
                 path: "/api/dcim/sites/",
@@ -98,20 +115,24 @@ final class NetBoxPageIteratorTests: XCTestCase {
         }
     }
 
-    func testPageCapStopsALoopingNext() async {
-        var calls = 0
+    func testEmptyPageWithNextThrowsAndDoesNotLoop() async {
+        final class EmptyNextFetcher: NetBoxFetching, @unchecked Sendable {
+            var calls = 0
+            func get(path: String, query: [URLQueryItem]) async throws -> Data {
+                calls += 1
+                return Data(#"{"count":1,"next":"x","results":[]}"#.utf8)
+            }
+        }
+        let fetcher = EmptyNextFetcher()
         do {
-            try await NetBoxPageIterator.forEachPage(
-                fetchPage: { offset -> NetBoxPageIterator.Page<Int> in
-                    calls += 1
-                    return .init(results: [offset], next: "still-more", count: 99)
-                },
-                maxPages: 3,
-                body: { _ in }
-            )
-            XCTFail("expected pageLimitExceeded")
-        } catch NetBoxPageIterator.IteratorError.pageLimitExceeded {
-            XCTAssertEqual(calls, 3)
+            _ = try await NetBoxPageIterator.streamDecoded(
+                path: "/api/dcim/interfaces/",
+                as: Row.self,
+                using: fetcher
+            ) { _, _ in }
+            XCTFail("expected emptyPageWithNext")
+        } catch NetBoxSyncError.emptyPageWithNext {
+            XCTAssertEqual(fetcher.calls, 1)
         } catch {
             XCTFail("wrong error \(error)")
         }
@@ -119,18 +140,26 @@ final class NetBoxPageIteratorTests: XCTestCase {
 
     func testTransportErrorStopsIteration() async {
         struct Boom: Error {}
-        var calls = 0
-        do {
-            _ = try await NetBoxPageIterator.fetchAll { _ -> NetBoxPageIterator.Page<Int> in
+        final class BoomFetcher: NetBoxFetching, @unchecked Sendable {
+            var calls = 0
+            func get(path: String, query: [URLQueryItem]) async throws -> Data {
                 calls += 1
                 if calls == 1 {
-                    return .init(results: [1], next: "n", count: 2)
+                    return Data(#"{"count":2,"next":"x","results":[{"ok":true}]}"#.utf8)
                 }
                 throw Boom()
             }
+        }
+        let fetcher = BoomFetcher()
+        do {
+            _ = try await NetBoxPageIterator.streamDecoded(
+                path: "/api/dcim/interfaces/",
+                as: Row.self,
+                using: fetcher
+            ) { _, _ in }
             XCTFail("expected Boom")
         } catch is Boom {
-            XCTAssertEqual(calls, 2)
+            XCTAssertEqual(fetcher.calls, 2)
         } catch {
             XCTFail("wrong error \(error)")
         }

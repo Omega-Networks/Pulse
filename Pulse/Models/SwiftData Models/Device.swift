@@ -88,6 +88,13 @@ final class Device {
     @Relationship(deleteRule: .cascade, inverse: \Service.device)
     var services: [Service]?
 
+    // NetBox interfaces attached to this device (inverse of Interface.device).
+    // Cascade so deleting a device removes its interface rows; the
+    // server-authoritative stale-delete in the interface sync stage is
+    // the primary cleanup.
+    @Relationship(deleteRule: .cascade, inverse: \Interface.device)
+    var interfaces: [Interface]?
+
 
     //Many-To-One
     var site: Site?
@@ -104,6 +111,8 @@ final class Device {
     
     var localX: Double = 0
     var localY: Double = 0
+    var highestSeverityStored: Int = -2
+    var highestUnacknowledgedSeverityStored: Int = -1
     
     // MARK: - Computed Properties
 
@@ -181,22 +190,23 @@ final class Device {
         }
     }
     
-    /// Current highest severity level among active events
-    var highestSeverity: Int {
-        guard zabbixId != 0 else { return -2 }
-        guard !activeEvents.isEmpty else {
-            return zabbixId != 0 ? -1 : -2
+    /// Current highest severity level among active events.
+    /// Reads a stored field so map/list `body` never touches `Event.rClock`
+    /// after Delete All invalidates backing data.
+    var highestSeverity: Int { highestSeverityStored }
+
+    var highestUnacknowledgedSeverity: Int { highestUnacknowledgedSeverityStored }
+
+    func refreshSeverityFromEvents() {
+        guard zabbixId != 0 else {
+            highestSeverityStored = -2
+            highestUnacknowledgedSeverityStored = -1
+            return
         }
-        return activeEvents.compactMap { Int($0.severity) }.max() ?? -1
-    }
-    
-    /// Current highest severity level among unacknowledged events
-    var highestUnacknowledgedSeverity: Int {
-        guard zabbixId != 0 else { return -1 }
-        guard !unacknowledgedEvents.isEmpty else {
-            return -1
-        }
-        return unacknowledgedEvents.compactMap { Int($0.severity) }.max() ?? -1
+        let active = activeEvents
+        highestSeverityStored = active.compactMap { Int($0.severity) }.max() ?? -1
+        highestUnacknowledgedSeverityStored =
+            unacknowledgedEvents.compactMap { Int($0.severity) }.max() ?? -1
     }
     
      /// Count of active events grouped by severity level

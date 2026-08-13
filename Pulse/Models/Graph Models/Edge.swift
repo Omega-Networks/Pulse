@@ -26,17 +26,17 @@
 import Foundation
 
 /**
- A proxy for two Interface entities hat represent a network connection between two devices.
+ A proxy for two InterfaceVO snapshots that represent a network connection
+ between two devices.
  A few things to take note of:
  - The source is the Device the Interface is connecting from.
  - The destination is the Device of the Interface's connected endpoint.
  */
 struct Edge: Equatable, Identifiable, Hashable {
     var id = UUID()
-    var start: Interface
-    var end: Interface
-    
-    // Since Interface is now a struct, we can rely on default Equatable
+    var start: InterfaceVO
+    var end: InterfaceVO
+
     static func == (lhs: Edge, rhs: Edge) -> Bool {
         return (lhs.start.id == rhs.start.id && lhs.end.id == rhs.end.id) ||
                (lhs.start.id == rhs.end.id && lhs.end.id == rhs.start.id)

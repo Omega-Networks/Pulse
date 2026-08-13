@@ -29,7 +29,7 @@ final class NetBoxSyncEngineTests: XCTestCase {
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Service.self, WebHostTrust.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
@@ -166,12 +166,68 @@ final class NetBoxSyncEngineTests: XCTestCase {
         XCTAssertTrue(deviceQuery.contains { $0.name == "role_id__n" && $0.value == "29" })
         XCTAssertTrue(deviceQuery.contains { $0.name == "role_id__n" && $0.value == "30" })
     }
+
+    func testInterfaceWalkIsPartOfFullSyncAndUsesRoleExclude() async throws {
+        let container = try makeContainer()
+        let fetcher = MockNetBoxFetcher()
+        fetcher.emptySuccess = true
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.fullSync()
+        XCTAssertTrue(fetcher.paths.contains("/api/dcim/interfaces/"))
+        let servicesIndex = try XCTUnwrap(fetcher.paths.firstIndex(of: "/api/ipam/services/"))
+        let interfaceIndex = try XCTUnwrap(fetcher.paths.firstIndex(of: "/api/dcim/interfaces/"))
+        XCTAssertGreaterThan(interfaceIndex, servicesIndex)
+        let query = try XCTUnwrap(fetcher.queries["/api/dcim/interfaces/"])
+        XCTAssertTrue(query.contains { $0.name == "device_role_id__n" && $0.value == "29" })
+        XCTAssertTrue(query.contains { $0.name == "device_role_id__n" && $0.value == "30" })
+    }
+
+    func testInterfaceMidWalkFailureDoesNotStampOrDelete() async throws {
+        let container = try makeContainer()
+        let sitePage = Data("""
+        {"count":1,"next":null,"results":[
+          {"id":1,"name":"Lab","display":"Lab"}
+        ]}
+        """.utf8)
+        let devicePage = Data("""
+        {"count":1,"next":null,"results":[
+          {"id":10,"name":"core",
+           "site":{"id":1},"role":{"id":2},"device_type":{"id":8}}
+        ]}
+        """.utf8)
+        let page1 = Data("""
+        {"count":2,"next":"x","results":[
+          {"id":1,"name":"eth0","device":{"id":10,"name":"d"},
+           "enabled":true,"mtu":1500,"speed":1000,
+           "lag":null,"bridge":null,"parent":null}
+        ]}
+        """.utf8)
+        let fetcher = MockNetBoxFetcher()
+        fetcher.emptySuccess = true
+        fetcher.bodies["/api/dcim/sites/"] = sitePage
+        fetcher.bodies["/api/dcim/devices/"] = devicePage
+        fetcher.sequentialBodies["/api/dcim/interfaces/"] = [page1]
+        fetcher.failAfterSequential = true
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.fullSync()
+            XCTFail("expected mid-walk failure")
+        } catch {
+            // expected
+        }
+        let context = ModelContext(container)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<SyncProvider>()).isEmpty)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).map(\.id), [1])
+    }
 }
 
 private final class MockNetBoxFetcher: NetBoxFetching, @unchecked Sendable {
     var paths: [String] = []
     var queries: [String: [URLQueryItem]] = [:]
     var bodies: [String: Data] = [:]
+    var sequentialBodies: [String: [Data]] = [:]
+    var sequentialIndex: [String: Int] = [:]
+    var failAfterSequential = false
     var failPath: String?
     var emptySuccess = false
     var delayNanoseconds: UInt64 = 0
@@ -186,6 +242,16 @@ private final class MockNetBoxFetcher: NetBoxFetching, @unchecked Sendable {
         queries[path] = query
         if path == failPath {
             throw NetBoxSyncError.httpStatus(code: 500, body: "boom")
+        }
+        if let pages = sequentialBodies[path] {
+            let index = sequentialIndex[path, default: 0]
+            sequentialIndex[path] = index + 1
+            if index < pages.count {
+                return pages[index]
+            }
+            if failAfterSequential {
+                throw NetBoxSyncError.httpStatus(code: 500, body: "mid-walk")
+            }
         }
         if let body = bodies[path] {
             return body

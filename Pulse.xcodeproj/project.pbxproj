@@ -28,7 +28,7 @@
 		410F37262CAB5938008236ED /* DeviceDetailsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410F37252CAB5938008236ED /* DeviceDetailsPanelView.swift */; };
 		410F372A2CABA58B008236ED /* Rack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410F37292CABA58B008236ED /* Rack.swift */; };
 		411226102C167CAF003C6C65 /* DeviceDetails.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4112260F2C167CAF003C6C65 /* DeviceDetails.swift */; };
-		4114A6EC2BA3B7EF00ABEC8C /* InterfaceStatusCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4114A6EB2BA3B7EF00ABEC8C /* InterfaceStatusCell.swift */; };
+
 		411BE6592CA0E1B2008272D6 /* DeviceChartSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 411BE6582CA0E1B2008272D6 /* DeviceChartSelector.swift */; };
 		4122CC3B2C081B3600EEE5CA /* DeviceFaceplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4122CC3A2C081B3600EEE5CA /* DeviceFaceplate.swift */; };
 		4128B0DB2CC7459500EB85D2 /* DeviceBaySlotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4128B0DA2CC7459000EB85D2 /* DeviceBaySlotView.swift */; };
@@ -41,7 +41,7 @@
 		415F99462CD820B300845D15 /* SiteDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 415F99452CD820B300845D15 /* SiteDataService.swift */; };
 		41691A772D2CD04100F8FCA3 /* SiteLeftPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41691A762D2CD04100F8FCA3 /* SiteLeftPane.swift */; };
 		416EF8932D21E979001CD25B /* ChartDataProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 416EF8922D21E979001CD25B /* ChartDataProcessor.swift */; };
-		41703CA32CC9D9CB00FA5C03 /* Interface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41703CA22CC9D9CB00FA5C03 /* Interface.swift */; };
+
 		4171CB852B8C38850001D252 /* SyncProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4171CB842B8C38850001D252 /* SyncProvider.swift */; };
 		41763EDB2CB720DE005DEEFF /* StaticDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41763EDA2CB720DE005DEEFF /* StaticDevice.swift */; };
 		4177A5EC2CE3FF2E00A7C754 /* SyncButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4177A5EB2CE3FF2E00A7C754 /* SyncButton.swift */; };
@@ -164,6 +164,11 @@
 		C96191A02ACA5711000198DB /* Edge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961919F2ACA5711000198DB /* Edge.swift */; };
 		C96191A22ACA5721000198DB /* Device.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A12ACA5721000198DB /* Device.swift */; };
 		B17E050100000000000000B1 /* Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A1 /* Service.swift */; };
+		B17E051100000000000000B1 /* Interface.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051100000000000000A1 /* Interface.swift */; };
+		B17E051200000000000000B1 /* InterfaceVO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051200000000000000A1 /* InterfaceVO.swift */; };
+		B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051300000000000000A1 /* SiteTopologyEdges.swift */; };
+		A11CAFE0000000000000NB73 /* SiteTopologyEdgesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */; };
+		A11CAFE0000000000000NB71 /* NetBoxInterfaceSchemaMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */; };
 		B17E050200000000000000B1 /* WebHostTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A1 /* WebHostTrust.swift */; };
 		B17E050300000000000000B1 /* WebAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A1 /* WebAudit.swift */; };
 		B17E050300000000000000B2 /* DeviceWebNavigationDecider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */; };
@@ -264,7 +269,7 @@
 		410F37252CAB5938008236ED /* DeviceDetailsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDetailsPanelView.swift; sourceTree = "<group>"; };
 		410F37292CABA58B008236ED /* Rack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Rack.swift; sourceTree = "<group>"; };
 		4112260F2C167CAF003C6C65 /* DeviceDetails.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDetails.swift; sourceTree = "<group>"; };
-		4114A6EB2BA3B7EF00ABEC8C /* InterfaceStatusCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceStatusCell.swift; sourceTree = "<group>"; };
+
 		411BE6582CA0E1B2008272D6 /* DeviceChartSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceChartSelector.swift; sourceTree = "<group>"; };
 		4122CC3A2C081B3600EEE5CA /* DeviceFaceplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceFaceplate.swift; sourceTree = "<group>"; };
 		4128B0DA2CC7459000EB85D2 /* DeviceBaySlotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceBaySlotView.swift; sourceTree = "<group>"; };
@@ -277,7 +282,7 @@
 		415F99452CD820B300845D15 /* SiteDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteDataService.swift; sourceTree = "<group>"; };
 		41691A762D2CD04100F8FCA3 /* SiteLeftPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLeftPane.swift; sourceTree = "<group>"; };
 		416EF8922D21E979001CD25B /* ChartDataProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChartDataProcessor.swift; sourceTree = "<group>"; };
-		41703CA22CC9D9CB00FA5C03 /* Interface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interface.swift; sourceTree = "<group>"; };
+
 		4171CB842B8C38850001D252 /* SyncProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncProvider.swift; sourceTree = "<group>"; };
 		41763EDA2CB720DE005DEEFF /* StaticDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaticDevice.swift; sourceTree = "<group>"; };
 		4177A5EB2CE3FF2E00A7C754 /* SyncButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncButton.swift; sourceTree = "<group>"; };
@@ -378,6 +383,11 @@
 		C961919F2ACA5711000198DB /* Edge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Edge.swift; sourceTree = "<group>"; };
 		C96191A12ACA5721000198DB /* Device.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Device.swift; sourceTree = "<group>"; };
 		B17E050100000000000000A1 /* Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Service.swift; sourceTree = "<group>"; };
+		B17E051100000000000000A1 /* Interface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interface.swift; sourceTree = "<group>"; };
+		B17E051200000000000000A1 /* InterfaceVO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceVO.swift; sourceTree = "<group>"; };
+		B17E051300000000000000A1 /* SiteTopologyEdges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteTopologyEdges.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteTopologyEdgesTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxInterfaceSchemaMigrationTests.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A1 /* WebHostTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrust.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A1 /* WebAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAudit.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebNavigationDecider.swift; sourceTree = "<group>"; };
@@ -572,7 +582,7 @@
 			isa = PBXGroup;
 			children = (
 				C96191E22ACA5B7F000198DB /* InterfacesTable.swift */,
-				4114A6EB2BA3B7EF00ABEC8C /* InterfaceStatusCell.swift */,
+
 				41934BAE2BC8C552007DB27A /* MemberCell.swift */,
 			);
 			path = Interfaces;
@@ -752,6 +762,8 @@
 				A11CAFE0000000000000NB09 /* NetBoxFilterConfigurationTests.swift */,
 				A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */,
 				A11CAFE0000000000000NB0F /* NetBoxMappingTests.swift */,
+				A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */,
+				A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */,
 				A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */,
 				A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */,
 			);
@@ -865,7 +877,7 @@
 				41D7B54D2C28EBB600D11F4B /* UpdateParameters.swift */,
 				41763EDA2CB720DE005DEEFF /* StaticDevice.swift */,
 				41A898FC2CC6F7E900856329 /* DeviceBay.swift */,
-				41703CA22CC9D9CB00FA5C03 /* Interface.swift */,
+
 				415F99452CD820B300845D15 /* SiteDataService.swift */,
 				416EF8922D21E979001CD25B /* ChartDataProcessor.swift */,
 				41DD37732D349F45009F37A0 /* TipManager.swift */,
@@ -947,6 +959,8 @@
 			isa = PBXGroup;
 			children = (
 				C961919F2ACA5711000198DB /* Edge.swift */,
+				B17E051200000000000000A1 /* InterfaceVO.swift */,
+				B17E051300000000000000A1 /* SiteTopologyEdges.swift */,
 			);
 			path = "Graph Models";
 			sourceTree = "<group>";
@@ -1013,6 +1027,7 @@
 				C96191AD2ACA578C000198DB /* Region.swift */,
 				C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */,
 				C96191A12ACA5721000198DB /* Device.swift */,
+				B17E051100000000000000A1 /* Interface.swift */,
 				B17E050100000000000000A1 /* Service.swift */,
 				C96191A32ACA572E000198DB /* DeviceRole.swift */,
 				C96191A52ACA573A000198DB /* DeviceType.swift */,
@@ -1241,6 +1256,8 @@
 				067FD0842ECC67B700146D44 /* MetalUtilities.swift in Sources */,
 				067FD0852ECC67B700146D44 /* MockSpatialTypes.swift in Sources */,
 				C96191A02ACA5711000198DB /* Edge.swift in Sources */,
+				B17E051200000000000000B1 /* InterfaceVO.swift in Sources */,
+				B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */,
 				C961919B2ACA56D4000198DB /* SearchBar.swift in Sources */,
 				411226102C167CAF003C6C65 /* DeviceDetails.swift in Sources */,
 				410A5D532C1FD393005A073C /* DetailSheet.swift in Sources */,
@@ -1289,7 +1306,7 @@
 				C96191C92ACA58A2000198DB /* SelectButton.swift in Sources */,
 				C961920D2ACA5D28000198DB /* TableToolbar.swift in Sources */,
 				C96191B42ACA57B9000198DB /* SwiftDataError.swift in Sources */,
-				41703CA32CC9D9CB00FA5C03 /* Interface.swift in Sources */,
+
 				4138F99C2C33A1E600FEA28E /* AnnotationView.swift in Sources */,
 				4181FED92CBF645700E4D035 /* StaticDeviceInRackView.swift in Sources */,
 				4183714E2AD64877006E6E61 /* Item.swift in Sources */,
@@ -1300,7 +1317,7 @@
 				C96191A42ACA572E000198DB /* DeviceRole.swift in Sources */,
 				06E9CC462EE03377008DE369 /* PowerSenseDataService.swift in Sources */,
 				41D7B54E2C28EBB600D11F4B /* UpdateParameters.swift in Sources */,
-				4114A6EC2BA3B7EF00ABEC8C /* InterfaceStatusCell.swift in Sources */,
+
 				C97C4F3E2ACB7CEC009F3795 /* PreviewTrait.swift in Sources */,
 				41ACDC682B72D762003027A3 /* NotificationHandler.swift in Sources */,
 
@@ -1325,6 +1342,7 @@
 				41763EDB2CB720DE005DEEFF /* StaticDevice.swift in Sources */,
 				C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */,
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
+				B17E051100000000000000B1 /* Interface.swift in Sources */,
 				B17E050100000000000000B1 /* Service.swift in Sources */,
 				B17E050200000000000000B1 /* WebHostTrust.swift in Sources */,
 				B17E050300000000000000B1 /* WebAudit.swift in Sources */,
@@ -1372,6 +1390,8 @@
 				A11CAFE0000000000000NB18 /* NetBoxFilterConfigurationTests.swift in Sources */,
 				A11CAFE0000000000000NB19 /* NetBoxPageIteratorTests.swift in Sources */,
 				A11CAFE0000000000000NB1E /* NetBoxMappingTests.swift in Sources */,
+				A11CAFE0000000000000NB71 /* NetBoxInterfaceSchemaMigrationTests.swift in Sources */,
+				A11CAFE0000000000000NB73 /* SiteTopologyEdgesTests.swift in Sources */,
 				A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */,
 				A11CAFE0000000000000NB63 /* NetBoxAuthorizationTests.swift in Sources */,
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,

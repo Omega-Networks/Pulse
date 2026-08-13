@@ -32,7 +32,7 @@ struct DeviceFaceplate: View {
     @Query private var device: [Device]
     private var deviceId: Int64 = 0
     
-    @State private var interfaces: [Interface] = []
+    @State private var interfaces: [InterfaceVO] = []
     @State private var hoveredInterfaceId: Int64?
     
     private let squareSize: CGFloat = 25
@@ -46,7 +46,7 @@ struct DeviceFaceplate: View {
     }
     
     // MARK: - Interface Grouping
-    private var interfaceRows: (odd: [Interface], even: [Interface]) {
+    private var interfaceRows: (odd: [InterfaceVO], even: [InterfaceVO]) {
         let filteredInterfaces = interfaces.filter { $0.type != "virtual" }
         
         // For interfaces just named "eth", put them in the odd row
@@ -76,7 +76,7 @@ struct DeviceFaceplate: View {
             .font(.caption)
     }
     
-    private func interfaceCell(_ interface: Interface, row: Int, rowCount: Int) -> some View {
+    private func interfaceCell(_ interface: InterfaceVO, row: Int, rowCount: Int) -> some View {
         VStack {
             if row == 0 {
                 interfaceLabel(interface.name)
@@ -90,7 +90,7 @@ struct DeviceFaceplate: View {
         }
     }
     
-    private func interfaceGrid(_ interfaces: [Interface]) -> some View {
+    private func interfaceGrid(_ interfaces: [InterfaceVO]) -> some View {
         let rows = interfaceRows
         
         return VStack(spacing: 4) {
@@ -166,18 +166,16 @@ struct DeviceFaceplate: View {
         )
         .frame(height: 80)
         .task {
-            await loadInterfaces()
+            loadInterfaces()
         }
         .onChange(of: deviceId) {
-            Task.detached(priority: .background) {
-                await loadInterfaces()
-            }
+            loadInterfaces()
         }
     }
     
     // MARK: - Helper Methods
-    private func loadInterfaces() async {
-        interfaces = await InterfaceCache.shared.getInterfaces(forDeviceId: deviceId)
+    private func loadInterfaces() {
+        interfaces = (try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)) ?? []
     }
     
     private func formattedInterfaceName(_ name: String) -> String {
@@ -228,7 +226,7 @@ struct DeviceFaceplate: View {
 
 //MARK: - Separate view for interface port
 private struct InterfacePortView: View {
-    let interface: Interface
+    let interface: InterfaceVO
     let squareSize: CGFloat
     @State private var isHovered = false
     

@@ -94,44 +94,12 @@ actor SiteDataService {
         }
     }
     
-    // Coordinator function that handles all loading
+    /// Rack fillers (static devices / bays) and Zabbix items for this site.
+    /// Does **not** fetch interfaces — those live in SwiftData from the
+    /// boot / Settings full sync (`NetBoxSyncEngine.syncInterfaces`).
     func loadAllSiteData(for siteId: Int64) async throws {
         try await getStaticDevices(for: siteId)
-        try await getInterfaces(for: siteId)
         try await getItems(for: siteId)
-    }
-    
-    //     MARK: - Loading Interfaces and Items
-    
-    func getInterfaces(for siteId: Int64) async throws {
-        let localContext = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Device>(
-            predicate: #Predicate<Device> { device in
-                device.site?.id == siteId
-            }
-        )
-        let deviceIds = try localContext.fetch(descriptor).map(\.id)
-
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for deviceId in deviceIds {
-                group.addTask {
-                    let (rows, skipped) = try await NetBoxPageIterator.fetchDecoded(
-                        path: "/api/dcim/interfaces/",
-                        extraQuery: [URLQueryItem(name: "device_id", value: String(deviceId))],
-                        as: NetBoxRecord.Interface.self,
-                        using: self.fetcher
-                    )
-                    if skipped > 0 {
-                        self.logger.error("Skipped \(skipped) interfaces for device \(deviceId)")
-                    }
-                    await InterfaceCache.shared.setInterfaces(
-                        rows.map { $0.asCacheValue() },
-                        forDeviceId: deviceId
-                    )
-                }
-            }
-            try await group.waitForAll()
-        }
     }
     
     //MARK: - WIP: loadItems function with TaskGroup
@@ -388,6 +356,8 @@ actor SiteDataService {
         do {
             try context.save()
             logger.debug("Successfully saved context")
+            refreshSeverities(in: context)
+            try? context.save()
             
             // Map devices for newly inserted events
             if !insertedEventIds.isEmpty {
@@ -528,9 +498,29 @@ actor SiteDataService {
             }
             
             logger.debug("Event sync completed successfully")
+            let refreshContext = ModelContext(modelContainer)
+            refreshSeverities(in: refreshContext)
+            try? refreshContext.save()
             
         } catch {
             logger.error("Failed to sync events: \(error.localizedDescription)")
+        }
+    }
+
+    func refreshSeverities() {
+        let context = ModelContext(modelContainer)
+        refreshSeverities(in: context)
+        try? context.save()
+    }
+
+    private func refreshSeverities(in context: ModelContext) {
+        let devices = (try? context.fetch(FetchDescriptor<Device>())) ?? []
+        for device in devices {
+            device.refreshSeverityFromEvents()
+        }
+        let sites = (try? context.fetch(FetchDescriptor<Site>())) ?? []
+        for site in sites {
+            site.refreshSeverityFromEvents()
         }
     }
 

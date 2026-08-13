@@ -50,18 +50,24 @@ extension ContentView {
         
         if #available(macOS 26.0, *) {
             ToolbarItem(placement: .status) {
-                Image(systemName: "swiftdata")
-                    .font(.system(size: 22))
-                    .foregroundColor(getSymbolColor(for: syncProvider.first?.lastZabbixUpdate))
+                HStack(spacing: 8) {
+                    NetBoxSyncIndicator()
+                    Image(systemName: "swiftdata")
+                        .font(.system(size: 22))
+                        .foregroundColor(getSymbolColor(for: syncProvider.first?.lastZabbixUpdate))
+                }
             }
             .sharedBackgroundVisibility(.hidden)
             
             ToolbarSpacer()
         } else {
             ToolbarItem(placement: .status) {
-                Image(systemName: "swiftdata")
-                    .font(.system(size: 22))
-                    .foregroundColor(getSymbolColor(for: syncProvider.first?.lastZabbixUpdate))
+                HStack(spacing: 8) {
+                    NetBoxSyncIndicator()
+                    Image(systemName: "swiftdata")
+                        .font(.system(size: 22))
+                        .foregroundColor(getSymbolColor(for: syncProvider.first?.lastZabbixUpdate))
+                }
             }
         }
         

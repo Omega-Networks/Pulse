@@ -27,10 +27,10 @@ import SwiftUI
 import SwiftData
 
 struct MemberCell: View {
-    let parentInterface: Interface
-    let allInterfaces: [Interface]
+    let parentInterface: InterfaceVO
+    let allInterfaces: [InterfaceVO]
     
-    var memberInterfaces: [Interface] {
+    var memberInterfaces: [InterfaceVO] {
         // Based on the parent interface type, find its members
         switch parentInterface.type {
             case "lag":

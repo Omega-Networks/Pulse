@@ -54,14 +54,14 @@ struct InterfacesTable: View {
     @State var device: Device
     
     @State var selection = Set<Int64>()
-    @State private var interfaces: [Interface] = []
+    @State private var interfaces: [InterfaceVO] = []
     
-    @State var sortOrder: [KeyPathComparator<Interface>] = [
+    @State var sortOrder: [KeyPathComparator<InterfaceVO>] = [
         .init(\.id, order: SortOrder.forward)
     ]
     
     //Computed property for displaying Interfaces that do not belong in a lag, bridge or parent
-    var filteredInterfaces: [Interface] {
+    var filteredInterfaces: [InterfaceVO] {
         interfaces.filter { interface in
             // An interface should be shown in the main table if it doesn't have:
             // - a LAG parent (not a member of a Link Aggregation Group)
@@ -80,15 +80,15 @@ struct InterfacesTable: View {
     
     // Properties for editing Interface objects
     @State private var isEditing = false
-    @State private var editedInterfaces: [Int64: Interface] = [:]
+    @State private var editedInterfaces: [Int64: InterfaceVO] = [:]
     
     // Property for tracking the dragged interface
-    @State private var targetedInterface: Interface?
-    @State private var interfaceToDelete: Interface?
+    @State private var targetedInterface: InterfaceVO?
+    @State private var interfaceToDelete: InterfaceVO?
     @State private var showDeleteConfirmation = false
     
     //New array for storing new Interfaces
-    @State private var newInterfaces: [Interface]  = []
+    @State private var newInterfaces: [InterfaceVO]  = []
     
     //    @State private var dataLoaded = false
     
@@ -119,12 +119,13 @@ struct InterfacesTable: View {
                 }
         }
         .task {
-            await loadInterfaces()
+            loadInterfaces()
         }
     }
     
-    private func loadInterfaces() async {
-        interfaces = await InterfaceCache.shared.getInterfaces(forDeviceId: device.id)
+    private func loadInterfaces() {
+        let deviceId = device.id
+        interfaces = (try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)) ?? []
     }
 }
 
@@ -137,7 +138,7 @@ extension InterfacesTable {
     //MARK: Subviews for the InterfacesTable
     private var tableView: some View {
         Table(selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Name") { (interface: Interface) in
+            TableColumn("Name") { (interface: InterfaceVO) in
                 HStack {
                     if let symbolName = poeSymbolName(for: interface.poeMode, type: interface.type) {
                         Image(systemName: symbolName)
@@ -150,18 +151,18 @@ extension InterfacesTable {
             }
             
             
-            TableColumn("Description") { (interface: Interface) in
+            TableColumn("Description") { (interface: InterfaceVO) in
                 EditableText(text: Binding(
                     get: { editedInterfaces[interface.id]?.interfaceDescription ?? interface.interfaceDescription ?? "" },
                     set: { editedInterfaces[interface.id, default: interface].interfaceDescription = $0.isEmpty ? nil : $0 }
                 ))
             }
             
-            TableColumn("Type") { (interface: Interface) in
+            TableColumn("Type") { (interface: InterfaceVO) in
                 Text(interface.type ?? "")
             }
             
-            TableColumn("Member") { (interface: Interface) in
+            TableColumn("Member") { (interface: InterfaceVO) in
                 if ["lag", "bridge"].contains(interface.type) || !filteredInterfaces.isEmpty {
                     MemberCell(parentInterface: interface, allInterfaces: interfaces)
                 }
@@ -173,7 +174,7 @@ extension InterfacesTable {
         }
     }
     
-    private func deleteButtonInTable(for interface: Interface) -> some View {
+    private func deleteButtonInTable(for interface: InterfaceVO) -> some View {
         Button(action: {
             self.interfaceToDelete = interface
             self.showDeleteConfirmation = true

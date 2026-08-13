@@ -30,12 +30,43 @@ final class NetBoxMappingTests: XCTestCase {
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Service.self, WebHostTrust.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         return try ModelContainer(for: schema, configurations: [config])
+    }
+
+    private func interfaceRecord(id: Int64, deviceID: Int64?) -> NetBoxRecord.Interface {
+        NetBoxRecord.Interface(
+            id: id,
+            name: "eth\(id)",
+            display: "eth\(id)",
+            url: nil,
+            created: nil,
+            lastUpdated: nil,
+            type: "1000base-t",
+            label: nil,
+            enabled: true,
+            mtu: 1500,
+            speed: 1_000_000,
+            interfaceDescription: "",
+            poeMode: nil,
+            duplex: nil,
+            occupied: false,
+            deviceID: deviceID,
+            deviceName: nil,
+            connectedEndpointID: nil,
+            connectedEndpointName: nil,
+            connectedEndpointDeviceID: nil,
+            lagID: nil,
+            lagName: nil,
+            bridgeID: nil,
+            bridgeName: nil,
+            parentID: nil,
+            parentName: nil
+        )
     }
 
     // MARK: - List decoder
@@ -404,6 +435,149 @@ final class NetBoxMappingTests: XCTestCase {
 
     // MARK: - On-demand ingest
 
+    func testInterfaceUpsertSkipsUnresolvedDeviceWithoutGatingDelete() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let site = Site(id: 1)
+        site.name = "Lab"
+        context.insert(site)
+        let device = Device(id: 10)
+        device.site = site
+        context.insert(device)
+        try context.save()
+
+        let accepted = interfaceRecord(id: 1, deviceID: 10)
+        let orphan = interfaceRecord(id: 2, deviceID: 99)
+        let first = try NetBoxStore.applyInterfaces(
+            [accepted, orphan],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        XCTAssertEqual(first.upserted, 1)
+        XCTAssertEqual(first.outOfScope, 1)
+        XCTAssertFalse(first.didDelete)
+        XCTAssertEqual(first.acceptedIDs, [1])
+
+        let stale = interfaceRecord(id: 3, deviceID: 10)
+        _ = try NetBoxStore.applyInterfaces(
+            [stale],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).count, 2)
+
+        let finished = try NetBoxStore.applyInterfaces(
+            [],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertTrue(finished.didDelete)
+        XCTAssertEqual(finished.deleted, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).map(\.id), [1])
+    }
+
+    func testInterfaceDeleteUsesAccumulatedKeepingNotLastPage() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let site = Site(id: 1)
+        context.insert(site)
+        let device = Device(id: 10)
+        device.site = site
+        context.insert(device)
+        try context.save()
+
+        _ = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 10)],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        _ = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 2, deviceID: 10)],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        let lastPageOnly = try NetBoxStore.applyInterfaces(
+            [],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [2],
+            in: context
+        )
+        XCTAssertTrue(lastPageOnly.didDelete)
+        XCTAssertEqual(Set(try context.fetch(FetchDescriptor<Interface>()).map(\.id)), [2])
+    }
+
+    func testInterfacePoisonedSkipGatesDelete() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let site = Site(id: 1)
+        context.insert(site)
+        let device = Device(id: 10)
+        device.site = site
+        context.insert(device)
+        try context.save()
+
+        _ = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 10), interfaceRecord(id: 2, deviceID: 10)],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [1, 2],
+            in: context
+        )
+        let gated = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 10)],
+            fetchComplete: true,
+            skipped: 1,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertFalse(gated.didDelete)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).count, 2)
+    }
+
+    func testInterfaceWithDeviceButNoSiteIsStored() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        context.insert(Device(id: 10))
+        try context.save()
+
+        let result = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 10)],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertEqual(result.upserted, 1)
+        XCTAssertEqual(result.outOfScope, 0)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).first?.siteId, 0)
+    }
+
+    func testInterfaceWithoutDeviceIsOutOfScope() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let result = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 99)],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        XCTAssertEqual(result.upserted, 0)
+        XCTAssertEqual(result.outOfScope, 1)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Interface>()).isEmpty)
+    }
+
     func testInterfacePageDecodesMTUAsIntegerAndFirstEndpoint() throws {
         let json = Data("""
         { "count": 1, "next": null, "results": [
@@ -413,7 +587,11 @@ final class NetBoxMappingTests: XCTestCase {
             "type": { "value": "1000base-t", "label": "1000BASE-T" },
             "enabled": true, "mtu": 1500, "speed": 1000000,
             "description": "uplink",
-            "connected_endpoints": [ { "id": 99, "name": "eth1" } ],
+            "duplex": { "value": "full", "label": "Full" },
+            "occupied": true,
+            "connected_endpoints": [
+              { "id": 99, "name": "eth1", "device": { "id": 11 } }
+            ],
             "lag": null, "bridge": null, "parent": null,
             "created": "2024-01-02T03:04:05Z",
             "last_updated": "2024-01-02T03:04:05Z"
@@ -422,13 +600,38 @@ final class NetBoxMappingTests: XCTestCase {
         """.utf8)
         let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Interface.self, from: json)
         XCTAssertEqual(page.skipped, 0)
-        XCTAssertEqual(page.results.first?.mtu, "1500")
-        XCTAssertEqual(page.results.first?.speed, "1000000")
+        XCTAssertEqual(page.results.first?.mtu, 1500)
+        XCTAssertEqual(page.results.first?.speed, 1_000_000)
         XCTAssertEqual(page.results.first?.connectedEndpointID, 99)
+        XCTAssertEqual(page.results.first?.connectedEndpointDeviceID, 11)
         XCTAssertEqual(page.results.first?.deviceID, 10)
-        let cached = try XCTUnwrap(page.results.first?.asCacheValue())
-        XCTAssertEqual(cached.mtu, "1500")
-        XCTAssertEqual(cached.connectedEndpointName, "eth1")
+        XCTAssertEqual(page.results.first?.duplex, "full")
+        XCTAssertEqual(page.results.first?.occupied, true)
+        XCTAssertEqual(page.results.first?.connectedEndpointName, "eth1")
+        XCTAssertNil(page.results.first?.lagID)
+        XCTAssertNil(page.results.first?.bridgeID)
+        XCTAssertNil(page.results.first?.parentID)
+    }
+
+    func testInterfacePageAcceptsStringMTUAndEmptyEndpoint() throws {
+        let json = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 89, "name": "eth2",
+            "device": { "id": 10, "name": "core-switch-01" },
+            "enabled": false, "mtu": "9000", "speed": "0",
+            "connected_endpoints": [],
+            "lag": null, "bridge": null, "parent": null
+          }
+        ] }
+        """.utf8)
+        let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Interface.self, from: json)
+        XCTAssertEqual(page.skipped, 0)
+        XCTAssertEqual(page.results.first?.mtu, 9000)
+        XCTAssertEqual(page.results.first?.speed, 0)
+        XCTAssertNil(page.results.first?.connectedEndpointID)
+        XCTAssertNil(page.results.first?.connectedEndpointDeviceID)
+        XCTAssertEqual(page.results.first?.occupied, false)
     }
 
     func testStaticDeviceAndBayPagesDecodeWithoutGeneratedCounts() throws {
