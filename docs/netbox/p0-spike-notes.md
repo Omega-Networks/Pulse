@@ -10,7 +10,7 @@ Against the operator's lab instance. Token was env-sourced; hostname and token a
 | `netbox-full-version` | 4.6.2-Docker-5.0.1 |
 | `django-version` | 6.0.5 |
 | Schema | OpenAPI 3.0.3, 5.5 MiB, 226 968 lines, 329 paths |
-| Plugins | `netbox_dns` 1.5.7 (out of scope) |
+| Plugins | DNS plugin present (out of scope; not in the vendored spec) |
 
 ## UNVERIFIED plan items — confirmed or discounted
 
@@ -24,17 +24,17 @@ Against the operator's lab instance. Token was env-sourced; hostname and token a
 
 ## Dates
 
-DRF fractional-seconds footgun is still real in source, but **this lab snapshot had zero zero-microsecond timestamps** across devices (page), sites (page), tenants (all 15), racks, regions, roles, services, and all 163 changelog rows. Every sampled `created` / `last_updated` / `time` included microseconds.
+DRF fractional-seconds footgun is still real in source, but **this lab snapshot had zero zero-microsecond timestamps** across the sampled types. Every sampled `created` / `last_updated` / `time` included microseconds.
 
 The lenient transcoder is still mandatory: a single exact-second save will emit `2026-08-13T12:00:00Z` and the runtime's `.iso8601WithFractionalSeconds` will reject it. Proven:
 
-- Real lab fractional timestamp decodes (fixture taken from device 882 `created=2022-09-21T03:30:07.062900Z`).
+- Real lab fractional timestamp decodes (fixture `2022-09-21T03:30:07.062900Z`).
 - Synthetic zero-microsecond `2024-01-02T03:04:05Z` decodes via the fallback.
 - Invalid string throws.
 
 ## Changelog retention (for P3, recorded now)
 
-`/api/core/object-changes/` count **163**. Oldest `id=103148` at `2026-05-15T01:50:48.072047Z`, newest `id=103310` at `2026-07-31T00:21:45.979725Z`. ~90-day window matches default `CHANGELOG_RETENTION`.
+`/api/core/object-changes/` on this snapshot spanned roughly 90 days, matching default `CHANGELOG_RETENTION`.
 
 ## Module isolation (not just a build-cost call)
 

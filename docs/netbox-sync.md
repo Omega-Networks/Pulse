@@ -4,7 +4,7 @@ Pulse mirrors a subset of NetBox into local SwiftData on every launch and when y
 
 ## Token
 
-In Settings, enter the NetBox API URL (including `https://`) and a token.
+In Settings, enter the NetBox API URL (must be `https://` with a host) and a token. An empty token is refused — Pulse will not send an unauthenticated request. `http://` is rejected even on the local network.
 
 - Tokens that do **not** start with `nbt_` are sent as `Authorization: Token …` (v1).
 - Tokens that start with `nbt_` are sent as `Authorization: Bearer …` (v2).

@@ -39,6 +39,14 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 - SwiftData models do not cross actors; `NetBoxRecord` values do.
 - Logger subsystem `netbox`. Operator errors go through `RequestStatusManager`.
 
+## Transport (P1 amendment)
+
+P1 list traffic uses `NetBoxLiveFetcher` (URLSession + typed `URLQueryItem` + offset pages). That is the ratified P1 transport: generated list types require fields the lab omits, so ingest goes through `NetBoxRecord` DTOs and the per-element decoder, not `Client`. `NetBoxClientFactory` and `NetBoxAuthMiddleware` stay in tree as the future generated-transport path (typed operations, P4 writes) and must not grow a second Token/Bearer implementation. Both the live fetcher and the middleware call the single `NetBoxAuthorization` / `NetBoxServerURL` rule (fail-closed empty token, `https` + host). Wiring the generated client as the runtime transport is a later, explicit change — not a silent dual stack.
+
+## Store QoS (P1 amendment)
+
+`NetBoxStore` apply/delete runs inside `Task.detached(priority: .userInitiated)` with a context created on that task. SwiftData `fetch`/`save` on a Background queue while boot or Sync Dashboard waits at User-initiated is a priority inversion (Instruments hang risk at the delete-pass fetch). Do not apply on the engine actor's inherited executor.
+
 ## Verification
 
 | Gate | Status |
@@ -72,3 +80,4 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 
 - 2026-08-13 — P1 accepted. Ingest-DTO lesson recorded after generated types skipped lab tenants, sites, racks, devices, and services.
 - 2026-08-13 — Delete All / SwiftData invalidation: P1 stop-crash recorded; store-replace and severity-as-data named as the real design.
+- 2026-08-13 — Transport: `NetBoxLiveFetcher` ratified for P1; factory/middleware retained for the generated path; one `NetBoxAuthorization` rule. Store apply hops to user-initiated QoS.
