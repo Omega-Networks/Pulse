@@ -4,6 +4,24 @@
 //
 //  Copyright © 2025–present Omega Networks Limited.
 //
+//  Pulse
+//  The Platform for Unified Leadership in Smart Environments.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
 
 import Foundation
 import NetBoxAPI
@@ -38,7 +56,9 @@ actor NetBoxSyncEngine {
             try await inFlight.value
             return
         }
-        let task = Task { try await self.performFullSync(progress: progress) }
+        let task = Task(priority: .userInitiated) {
+            try await self.performFullSync(progress: progress)
+        }
         inFlight = task
         defer { inFlight = nil }
         do {
@@ -66,7 +86,7 @@ actor NetBoxSyncEngine {
             progress?(index, stage.0)
             try await stage.1()
         }
-        try stampSuccess()
+        try await stampSuccess()
     }
 
     // MARK: - Types
@@ -77,12 +97,12 @@ actor NetBoxSyncEngine {
             extraQuery: [],
             as: Components.Schemas.TenantGroup.self
         )
-        _ = try NetBoxStore.applyTenantGroups(
-            rows.map(NetBoxMapping.tenantGroup),
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        let records = rows.map(NetBoxMapping.tenantGroup)
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyTenantGroups(
+                records, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncDeviceRoles() async throws {
@@ -94,12 +114,12 @@ actor NetBoxSyncEngine {
             extraQuery: extra,
             as: Components.Schemas.DeviceRole.self
         )
-        _ = try NetBoxStore.applyDeviceRoles(
-            rows.map(NetBoxMapping.deviceRole),
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        let records = rows.map(NetBoxMapping.deviceRole)
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyDeviceRoles(
+                records, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncDeviceTypes() async throws {
@@ -111,12 +131,12 @@ actor NetBoxSyncEngine {
             extraQuery: extra,
             as: Components.Schemas.DeviceType.self
         )
-        _ = try NetBoxStore.applyDeviceTypes(
-            rows.map(NetBoxMapping.deviceType),
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        let records = rows.map(NetBoxMapping.deviceType)
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyDeviceTypes(
+                records, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncTenants() async throws {
@@ -125,12 +145,11 @@ actor NetBoxSyncEngine {
             extraQuery: [],
             as: NetBoxRecord.Tenant.self
         )
-        _ = try NetBoxStore.applyTenants(
-            rows,
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyTenants(
+                rows, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncRegions() async throws {
@@ -139,12 +158,12 @@ actor NetBoxSyncEngine {
             extraQuery: [],
             as: Components.Schemas.Region.self
         )
-        _ = try NetBoxStore.applyRegions(
-            rows.map(NetBoxMapping.region),
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        let records = rows.map(NetBoxMapping.region)
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyRegions(
+                records, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncSiteGroups() async throws {
@@ -153,12 +172,12 @@ actor NetBoxSyncEngine {
             extraQuery: [],
             as: Components.Schemas.SiteGroup.self
         )
-        _ = try NetBoxStore.applySiteGroups(
-            rows.map(NetBoxMapping.siteGroup),
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        let records = rows.map(NetBoxMapping.siteGroup)
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applySiteGroups(
+                records, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncSites() async throws {
@@ -167,12 +186,11 @@ actor NetBoxSyncEngine {
             extraQuery: [],
             as: NetBoxRecord.Site.self
         )
-        _ = try NetBoxStore.applySites(
-            rows,
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applySites(
+                rows, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncRacks() async throws {
@@ -181,12 +199,11 @@ actor NetBoxSyncEngine {
             extraQuery: [],
             as: NetBoxRecord.Rack.self
         )
-        _ = try NetBoxStore.applyRacks(
-            rows,
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyRacks(
+                rows, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncDevices() async throws {
@@ -201,12 +218,11 @@ actor NetBoxSyncEngine {
             extraQuery: extra,
             as: NetBoxRecord.Device.self
         )
-        _ = try NetBoxStore.applyDevices(
-            rows,
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyDevices(
+                rows, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     private func syncServices() async throws {
@@ -215,12 +231,11 @@ actor NetBoxSyncEngine {
             extraQuery: [],
             as: NetBoxRecord.Service.self
         )
-        _ = try NetBoxStore.applyServices(
-            rows,
-            fetchComplete: true,
-            skipped: skipped,
-            in: ModelContext(modelContainer)
-        )
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyServices(
+                rows, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
     }
 
     // MARK: - Fetch
@@ -238,17 +253,31 @@ actor NetBoxSyncEngine {
         )
     }
 
-    private func stampSuccess() throws {
-        let context = ModelContext(modelContainer)
-        let existing = try context.fetch(FetchDescriptor<SyncProvider>())
-        if let provider = existing.first {
-            provider.lastNetBoxUpdate = Date()
-        } else {
-            context.insert(
-                SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
-            )
+    /// SwiftData fetch/save on this actor can run at Background while boot
+    /// or the dashboard wait at User-initiated — a priority inversion.
+    /// Create the context on a detached user-initiated task instead.
+    private func applyOnStore<Result: Sendable>(
+        _ work: @Sendable @escaping (ModelContext) throws -> Result
+    ) async throws -> Result {
+        let container = modelContainer
+        return try await Task.detached(priority: .userInitiated) {
+            try work(ModelContext(container))
+        }.value
+    }
+
+    private func stampSuccess() async throws {
+        _ = try await applyOnStore { context in
+            let existing = try context.fetch(FetchDescriptor<SyncProvider>())
+            if let provider = existing.first {
+                provider.lastNetBoxUpdate = Date()
+            } else {
+                context.insert(
+                    SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
+                )
+            }
+            try context.save()
+            return true
         }
-        try context.save()
     }
 }
 

@@ -4,6 +4,24 @@
 //
 //  Copyright © 2025–present Omega Networks Limited.
 //
+//  Pulse
+//  The Platform for Unified Leadership in Smart Environments.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
 
 import Foundation
 import OSLog
@@ -503,7 +521,9 @@ enum NetBoxStore {
         let descriptor = FetchDescriptor<T>(
             predicate: #Predicate<T> { unique.contains($0.id) }
         )
-        let rows = try context.fetch(descriptor)
+        let rows = try withUserInitiatedQoS {
+            try context.fetch(descriptor)
+        }
         var map: [Int64: T] = [:]
         map.reserveCapacity(rows.count)
         for row in rows {
@@ -521,13 +541,27 @@ enum NetBoxStore {
         in context: ModelContext
     ) throws -> Int {
         guard allowed else { return -1 }
-        let existing = try context.fetch(FetchDescriptor<T>())
+        // Full-type scan for the delete pass. Promote QoS so SwiftData's
+        // internal queue cannot sit at Background while a User-initiated
+        // caller waits (Instruments hang risk).
+        let existing = try withUserInitiatedQoS {
+            try context.fetch(FetchDescriptor<T>())
+        }
         var deleted = 0
         for row in existing where !ids.contains(row.id) {
             context.delete(row)
             deleted += 1
         }
         return deleted
+    }
+
+    private static func withUserInitiatedQoS<T>(_ work: () throws -> T) rethrows -> T {
+        let previous = Thread.current.qualityOfService
+        if previous.rawValue < QualityOfService.userInitiated.rawValue {
+            Thread.current.qualityOfService = .userInitiated
+        }
+        defer { Thread.current.qualityOfService = previous }
+        return try work()
     }
 }
 
