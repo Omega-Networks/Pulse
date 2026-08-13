@@ -224,6 +224,7 @@ struct InterfacePopover: View {
             reload()
         } catch {
             writeError = error.localizedDescription
+            reload()
         }
     }
 

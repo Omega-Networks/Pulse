@@ -116,3 +116,5 @@ Device and site write methods throw `writesDisabled` unless the policy gate is o
 `Interface.cableId` is the NetBox cable id used to DELETE. A store that predates this field needs a Full Resync before disconnect works.
 
 HTTP error bodies are the server JSON, not `HTTPURLResponse.localizedString`.
+
+Failed writes do **not** stay in Pulse. There is no outbox and no retry queue: a transport or validation error leaves SwiftData on the last authoritative fetch and the editor reverts. Staging a local change would diverge from NetBox and fight the next delta. The operator retries when the instance is reachable.

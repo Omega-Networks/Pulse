@@ -189,11 +189,12 @@ struct InterfacesTable: View {
             editedInterfaces.removeValue(forKey: interface.id)
             return
         }
-        await performWrite {
+        let succeeded = await performWrite {
             try await engine.patchInterface(id: interface.id, description: value)
         }
-        if writeError == nil {
-            editedInterfaces.removeValue(forKey: interface.id)
+        editedInterfaces.removeValue(forKey: interface.id)
+        if !succeeded {
+            loadInterfaces()
         }
     }
 
@@ -246,15 +247,20 @@ struct InterfacesTable: View {
         }
     }
 
-    private func performWrite(_ work: () async throws -> Void) async {
-        guard !isWriting else { return }
+    @discardableResult
+    private func performWrite(_ work: () async throws -> Void) async -> Bool {
+        guard !isWriting else { return false }
         isWriting = true
         defer { isWriting = false }
         do {
             try await work()
             loadInterfaces()
+            return true
         } catch {
             writeError = error.localizedDescription
+            editedInterfaces.removeAll()
+            loadInterfaces()
+            return false
         }
     }
 }
@@ -296,6 +302,7 @@ extension InterfacesTable {
                         Task { await saveDescription(interface, value) }
                     }
                 )
+                .disabled(isWriting)
             }
 
             TableColumn("Enabled") { (interface: InterfaceVO) in
@@ -309,6 +316,7 @@ extension InterfacesTable {
                     )
                 )
                 .labelsHidden()
+                .id("\(interface.id)-enabled-\(interface.enabled)")
                 .disabled(isWriting || netBoxSyncEngine == nil)
             }
 
@@ -426,16 +434,28 @@ struct EditableText: View {
     }
     
     var body: some View {
-        TextField("", text: $temporaryText)
-            .focused($isFocused, equals: true)
-            .onSubmit(submit)
-            .onChange(of: isFocused) { _, focused in
-                if !focused { submit() }
-            }
-            .onTapGesture { isFocused = true }
+        HStack(spacing: 0) {
+            TextField("", text: $temporaryText)
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                .onSubmit(submit)
+                .onChange(of: isFocused) { _, focused in
+                    if !focused { submit() }
+                }
+                .onChange(of: text) { _, newValue in
+                    if newValue != temporaryText {
+                        temporaryText = newValue
+                    }
+                }
 #if os (macOS)
-            .onExitCommand { temporaryText = text; isFocused = false }
+                .onExitCommand { temporaryText = text; isFocused = false }
 #endif
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { isFocused = true }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     private func submit() {

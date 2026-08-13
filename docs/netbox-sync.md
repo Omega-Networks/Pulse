@@ -62,7 +62,9 @@ From a device's Interfaces table or faceplate popover:
 - **Connect…** — pick a free interface at the site (filter by device or name), then POST `/api/dcim/cables/` with `a_terminations` / `b_terminations` `{"object_type":"dcim.interface","object_id":N}`. The open site graph reloads after the write.
 - **Disconnect** — asks first, then DELETE `/api/dcim/cables/{id}/`. If the local row has no cable id (interfaces synced before that field existed), Pulse reads the live interface first. Right-click a row if the button is hard to hit.
 
-Every successful write re-reads the object from NetBox. Validation errors (duplicate cable, missing field) show the server JSON.
+Every successful write re-reads the object from NetBox. If the write never reaches NetBox (offline, 403, validation), Pulse discards the edit and shows the last stored value. There is no queued retry — fix the connection and submit again.
+
+Validation errors (duplicate cable, missing field) show the server JSON.
 
 `custom_fields` are only sent when that key changed. Enable/description/cable writes do not touch them.
 
