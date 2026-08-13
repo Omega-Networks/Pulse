@@ -108,7 +108,7 @@ struct InterfacePopover: View {
                         Button("Disconnect") {
                             requestDisconnect()
                         }
-                        .disabled(isWriting || interface.cableId == nil || netBoxSyncEngine == nil)
+                        .disabled(isWriting || netBoxSyncEngine == nil)
                     } else {
                         Button("Connect…") {
                             beginConnect()
@@ -188,21 +188,21 @@ struct InterfacePopover: View {
     }
 
     private func requestDisconnect() {
-        guard interface.cableId != nil else {
-            writeError = "Cable id is missing. Run Full Resync, then disconnect."
+        guard interface.cableId != nil || interface.connectedEndpointId != nil else {
+            writeError = "This interface has no cable."
             return
         }
         confirmDisconnect = true
     }
 
     private func disconnect() async {
-        guard let cableId = interface.cableId else {
-            writeError = "Cable id is missing. Run Full Resync, then disconnect."
-            return
-        }
         let ends = [interface.id, interface.connectedEndpointId].compactMap { $0 }
         await performWrite {
-            try await engine.deleteCable(id: cableId, refreshing: ends)
+            try await engine.disconnectInterface(
+                id: interface.id,
+                knownCableId: interface.cableId,
+                refreshing: ends
+            )
         }
     }
 

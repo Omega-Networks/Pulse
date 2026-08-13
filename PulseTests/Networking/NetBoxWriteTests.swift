@@ -259,6 +259,55 @@ final class NetBoxWriteTests: XCTestCase {
         XCTAssertTrue(free.allSatisfy { $0.cableId == nil })
     }
 
+    func testDisconnectResolvesCableIdFromInterfaceRetrieve() async throws {
+        let container = try makeContainer()
+        try seedInterface(in: container, extraIDs: [89])
+        let seed = ModelContext(container)
+        let rows = try seed.fetch(FetchDescriptor<Interface>())
+        rows.first { $0.id == 88 }?.connectedEndpointId = 89
+        rows.first { $0.id == 88 }?.cableId = nil
+        try seed.save()
+
+        let fetcher = WriteFetcher()
+        fetcher.getQueue["/api/dcim/interfaces/88/"] = [
+            interfaceJSON(id: 88, enabled: true, description: "", cableID: 9, endpoint: 89),
+            interfaceJSON(id: 88, enabled: true, description: "", cableID: nil),
+        ]
+        fetcher.getBodies["/api/dcim/interfaces/89/"] = interfaceJSON(
+            id: 89, enabled: true, description: "", cableID: nil
+        )
+        fetcher.sendQueue = [
+            NetBoxHTTPResponse(status: 204, body: Data(), etag: nil),
+        ]
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.disconnectInterface(id: 88, knownCableId: nil, refreshing: [88, 89])
+        XCTAssertEqual(fetcher.sends.map(\.method), ["DELETE"])
+        XCTAssertEqual(fetcher.sends.first?.path, "/api/dcim/cables/9/")
+        XCTAssertTrue(
+            try ModelContext(container).fetch(FetchDescriptor<Interface>()).allSatisfy { $0.cableId == nil }
+        )
+    }
+
+    func testDisconnectWithoutCableDoesNotDelete() async throws {
+        let container = try makeContainer()
+        try seedInterface(in: container)
+        let fetcher = WriteFetcher()
+        fetcher.getBodies["/api/dcim/interfaces/88/"] = interfaceJSON(
+            id: 88, enabled: true, description: "", cableID: nil
+        )
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.disconnectInterface(id: 88, knownCableId: nil, refreshing: [88])
+            XCTFail("expected missing cable")
+        } catch let error as NetBoxSyncError {
+            XCTAssertEqual(
+                error,
+                .httpStatus(code: 404, body: "NetBox has no cable on interface 88")
+            )
+        }
+        XCTAssertTrue(fetcher.sends.isEmpty)
+    }
+
     func testDeviceAndSiteWritesStayGated() async throws {
         let container = try makeContainer()
         let fetcher = WriteFetcher()
@@ -382,8 +431,14 @@ private final class WriteFetcher: NetBoxFetching, @unchecked Sendable {
     var sendQueue: [NetBoxHTTPResponse] = []
     var sendError: Error?
     var getBodies: [String: Data] = [:]
+    var getQueue: [String: [Data]] = [:]
 
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
+        if var pages = getQueue[path], !pages.isEmpty {
+            let next = pages.removeFirst()
+            getQueue[path] = pages
+            return next
+        }
         if let body = getBodies[path] {
             return body
         }

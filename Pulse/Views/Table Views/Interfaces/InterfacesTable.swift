@@ -212,8 +212,8 @@ struct InterfacesTable: View {
     }
 
     private func requestDisconnect(_ interface: InterfaceVO) {
-        guard interface.cableId != nil else {
-            writeError = "Cable id is missing. Run Full Resync, then disconnect."
+        guard interface.cableId != nil || interface.connectedEndpointId != nil else {
+            writeError = "This interface has no cable."
             return
         }
         interfaceToDelete = interface
@@ -227,13 +227,13 @@ struct InterfacesTable: View {
     }
 
     private func disconnect(_ interface: InterfaceVO) async {
-        guard let cableId = interface.cableId else {
-            writeError = "Cable id is missing. Run Full Resync, then disconnect."
-            return
-        }
         let ends = [interface.id, interface.connectedEndpointId].compactMap { $0 }
         await performWrite {
-            try await engine.deleteCable(id: cableId, refreshing: ends)
+            try await engine.disconnectInterface(
+                id: interface.id,
+                knownCableId: interface.cableId,
+                refreshing: ends
+            )
         }
     }
 
@@ -320,10 +320,8 @@ extension InterfacesTable {
                         Button("Disconnect") {
                             requestDisconnect(interface)
                         }
-                        .disabled(isWriting || interface.cableId == nil || netBoxSyncEngine == nil)
-                        .help(interface.cableId == nil
-                              ? "Cable id is missing. Run Full Resync, then disconnect."
-                              : "Delete the cable in NetBox after confirmation")
+                        .disabled(isWriting || netBoxSyncEngine == nil)
+                        .help("Delete the cable in NetBox after confirmation")
                     }
                 } else {
                     Button("Connect…") {
@@ -345,6 +343,19 @@ extension InterfacesTable {
         } rows: {
             ForEach(filteredInterfaces) { interface in
                 TableRow(interface)
+                    .contextMenu {
+                        if interface.cableId != nil || interface.connectedEndpointId != nil {
+                            Button("Disconnect cable…", role: .destructive) {
+                                requestDisconnect(interface)
+                            }
+                            .disabled(isWriting || netBoxSyncEngine == nil)
+                        } else {
+                            Button("Connect…") {
+                                beginConnect(interface)
+                            }
+                            .disabled(isWriting || netBoxSyncEngine == nil)
+                        }
+                    }
             }
         }
     }

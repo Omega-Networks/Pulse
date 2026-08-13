@@ -215,6 +215,50 @@ actor NetBoxSyncEngine {
         }
     }
 
+    /// Disconnect even when the local row predates `cableId`. A missing
+    /// id is resolved from a live interface retrieve, then DELETE.
+    func disconnectInterface(
+        id: Int64,
+        knownCableId: Int64?,
+        refreshing interfaceIDs: [Int64]
+    ) async throws {
+        try await performWrite {
+            let cableId = try await self.resolveCableID(interfaceID: id, known: knownCableId)
+            try await self.writer.deleteCable(id: cableId)
+            var ends = Set(interfaceIDs)
+            ends.insert(id)
+            for interfaceID in ends {
+                try await self.applyDeltaItem(
+                    NetBoxDeltaItem(
+                        kind: .interface,
+                        objectID: interfaceID,
+                        action: "update",
+                        changeID: 0,
+                        time: nil
+                    )
+                )
+            }
+        }
+    }
+
+    private func resolveCableID(interfaceID: Int64, known: Int64?) async throws -> Int64 {
+        if let known { return known }
+        let data = try await fetcher.get(path: "/api/dcim/interfaces/\(interfaceID)/", query: [])
+        let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Interface.self, from: data)
+        _ = try await applyOnStore {
+            try NetBoxStore.applyInterfaces(
+                [row], fetchComplete: false, skipped: 0, keeping: [], in: $0
+            )
+        }
+        guard let cableID = row.cableID else {
+            throw NetBoxSyncError.httpStatus(
+                code: 404,
+                body: "NetBox has no cable on interface \(interfaceID)"
+            )
+        }
+        return cableID
+    }
+
     func patchDevice(id: Int64, body: NetBoxWriteBody.DevicePatch) async throws {
         try await performWrite {
             _ = try await self.writer.patchDevice(id: id, body: body)
