@@ -1,5 +1,5 @@
 //
-//  NetboxAddSiteModal.swift
+//  AddSiteWindow.swift
 //  Pulse
 //
 //  Copyright © 2025–present Omega Networks Limited.
@@ -27,335 +27,120 @@ import SwiftUI
 import SwiftData
 
 #if os(macOS)
+/// Create a NetBox site. Only fields the POST sends. NetBox is the
+/// source of truth — a failed write leaves no local row.
 struct AddSiteWindow: View {
-    @Environment(\.presentationMode) var presentationMode
-    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
-    
-    @Environment(SharedLocations.self) private var sharedLocations  // Inject the shared instance
-    
-    @State private var selectedName: String = ""
-    @State private var selectedStatus: String = "Active"
+    @Environment(SharedLocations.self) private var sharedLocations
+
+    @Query(sort: \Region.name) private var regions: [Region]
+    @Query(sort: \SiteGroup.name) private var siteGroups: [SiteGroup]
+    @Query(sort: \Tenant.name) private var tenants: [Tenant]
+
+    @State private var name = ""
+    @State private var status = "active"
+    @State private var regionID: Int64?
+    @State private var groupID: Int64?
+    @State private var tenantID: Int64?
     @State private var isWriting = false
     @State private var writeError: String?
-    @State private var selectedRegion: String = ""
-    @State private var selectedGroup: String = ""
-    @State private var selectedTimeZone: String = "Pacific/Auckland"
-    @State private var selectedDescription: String = ""
-    @State private var selectedTags: String = ""
-    @State private var selectedTenantGroup: String = ""
-    @State private var selectedTenant: String = ""
-    @State private var selectedPhysicalAddress: String = ""
-    //MARK: Variable for storing state of checkbox goes here
-    @State private var sameAsShippingAddress = false
-    @State private var selectedShippingAddress: String = ""
-    @State private var selectedLongitude: Double = 0
-    @State private var selectedLatitude: Double = 0
-    @State private var selectedIdentifier: String = ""
-    @State private var selectedComments: String = ""
-    @State private var selectedDisplay: String = ""
-    @State private var selectedURL: String = ""
-    
-    //Boolean for validating that all mandatory fields are filled
-    @State private var validationFailed: Bool = false
-    //To prevent devices with multiple names
-    @State private var isDuplicateName: Bool = false
-    
-    //SwiftData Queries
-    @Query var tenantGroups: [TenantGroup]
-    @Query var siteGroups: [SiteGroup]
-    @Query var sites: [Site]
-    @Query var tenants: [Tenant]
-    @Query var regions: [Region]
-    
-    var allTenantGroups: [String] {
-        return Array(Set(tenantGroups.compactMap { $0.name })).sorted()
+
+    private var slug: String {
+        NetBoxWriteBody.SiteCreate.slug(from: name)
     }
-    
-    var allSiteGroups: [String] {
-        return Array(Set(siteGroups.compactMap { $0.name })).sorted()
-    }
-    
-    var allTenants: [String] {
-        //MARK: Since tenant groups cannot be populated properly, pulling all Tenants for now
-        return Array(Set(tenants.compactMap { $0.name })).sorted()
-    }
-    
-    var allRegions: [String] {
-        return Array(Set(regions.compactMap { $0.name })).sorted()
-    }
-    
-    let statusArray = [
-        "Active",
-        "Planned"
-    ]
-    
+
     var body: some View {
-        ScrollView {
-            VStack (alignment: .leading) {
-                //MARK: Error message if mandatory fields are not filled, or duplicate names found
-                
-                //TODO: Replace Groups with Sections
-                Form {
-                    Section(header:
-                                Text("Site")
-                        .font(.title)
-                        .fontWeight(.bold)
-                    ) {
-                        
-                        /// Name
-                        TextField("Name*:", text: $selectedName)
-                            .fontWeight(.bold)
-                            .lineLimit(10)
-                            .textFieldStyle(.roundedBorder)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .frame(width: 553)
-                            .border((validationFailed && selectedName.isEmpty) || isDuplicateName ? Color.red : Color.clear, width: 2)
-                            .cornerRadius(5)
-                        
-                        /// Status
-                        Picker(selection: $selectedStatus, label: Text("Status*:")) {
-                            ForEach(statusArray, id: \.self) { status in
-                                Text(status).tag(status)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .fontWeight(.bold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .border(validationFailed && selectedStatus.isEmpty ? Color.red : Color.clear, width: 2)
-                        .cornerRadius(5)
-                        
-                        //TODO: Add nesting to drop down menu for regions
-                        /// Region
-                        Picker(selection: $selectedRegion, label: Text("Region")) {
-                            ForEach(allRegions, id: \.self) { region_netbox in
-                                Text(region_netbox).tag(region_netbox)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .padding(.vertical, 1)
-                        
-                        /// Group
-                        Picker(selection: $selectedGroup, label: Text("Group")) {
-                            ForEach(allSiteGroups, id: \.self) { group in
-                                Text(group).tag(group)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .padding(.vertical, 1)
-                        .onChange(of: selectedGroup) {
-                            print("Site Group name from Picker: \(selectedGroup)")
-                        }
-                        
-                        /// Time Zone
-                        Text("Time Zone: \(selectedTimeZone)")
-                            .fontWeight(.bold)
-                            .padding(.top, 2)
-                        
-                        /// Description
-                        TextField("Description:", text: $selectedDescription)
-                            .lineLimit(10)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 553)
-                            .padding(.vertical, 1)
-                        
-                        /// Tags
-                        TextField("Tags:", text: $selectedTags)
-                            .lineLimit(10)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 553)
-                            .padding(.vertical, 1)
-                    }
-                    
-                    Section(header:
-                                Text("Tenancy")
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .padding(.top, 25)
-                    ) {
-                        /// Tenant Group
-                        Picker(selection: $selectedTenantGroup, label: Text("Tenant Group:")) {
-                            ForEach(allTenantGroups, id: \.self) { tenantGroup in
-                                Text(tenantGroup).tag(tenantGroup)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .padding(.vertical, 1)
-                        
-                        /// Tenant
-                        Picker(selection: $selectedTenant, label: Text("Tenant:")) {
-                            ForEach(allTenants, id: \.self) { tenant in
-                                Text(tenant).tag(tenant)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .padding(.vertical, 1)
-                    }
-                    
-                    Section(header:
-                                Text("Contact Info")
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .padding(.top, 25)
-                    ) {
-                        /// Physical Address
-                        TextField("Physical Address:", text: $selectedPhysicalAddress)
-                            .lineLimit(10)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 553)
-                            .padding(.vertical, 1)
-                        
-                        /// Shipping Address
-                        TextField("Shipping Address:", text: $selectedShippingAddress)
-                            .lineLimit(10)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 553)
-                            .padding(.vertical, 1)
-                        
-                        //TODO : Ensure nothing occurs when checkbox is unticked
-                        Toggle(isOn: $sameAsShippingAddress) {
-                            Text("Same as physical address")
-                        }
-                        .toggleStyle(.checkbox)
-                        .onChange(of: sameAsShippingAddress) {
-                            if sameAsShippingAddress == true {
-                                // When the Toggle is enabled, set the shipping address to be the sfame as the physical address
-                                selectedShippingAddress = sharedLocations.tapAddress ?? ""
-                            } else {
-                                // When the Toggle is disabled, clear the shipping address
-                                selectedShippingAddress = ""
-                            }
-                        }
-                        
-                        /// Latitude
-                        Text("Latitude: \(String(format: "%.8f", sharedLocations.tapLocation?.latitude ?? 0.0))")
-                            .fontWeight(.bold)
-                            .padding(.top, 10)
-                            .textSelection(.enabled)
-                        
-                        Text("Longitude: \(String(format: "%.9f", sharedLocations.tapLocation?.longitude ?? 0.0))")
-                            .fontWeight(.bold)
-                            .padding(.top, 2)
-                            .textSelection(.enabled)
-                        
-                    }
-                    
-                    Section(header:
-                                Text("Custom Fields")
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .padding(.top, 25) 
-                    ) {
-                        /// Identifier
-                        TextField("Identifier:", text: $selectedIdentifier)
-                            .lineLimit(10)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 553)
-                            .padding(.vertical, 1)
-                        
-                        //TODO: Add TextEditor for Comments
-                    }
-                }
-                .padding(.horizontal, 120)
-                
-                HStack {
-                    Spacer()
+        VStack(alignment: .leading, spacing: 16) {
+            Text("New site")
+                .font(.title2)
+                .fontWeight(.bold)
 
-                    VStack(alignment: .trailing, spacing: 6) {
-                        if let writeError {
-                            Text(writeError)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                .frame(maxWidth: 360, alignment: .trailing)
-                        }
-                        Button {
-                            Task { await createSite() }
-                        } label: {
-                            Text(isWriting ? "Creating…" : "Create")
-                                .frame(width: 80)
-                                .foregroundColor(.white)
-                        }
-                        .disabled(isWriting || netBoxSyncEngine == nil)
-                        .help("POST this site to NetBox")
-                        .cornerRadius(5)
-                    }
-                    
-                    /// Cancel
-                    Button {
-                        presentationMode.wrappedValue.dismiss()
-                    } label: {
-                        Text("Cancel")
-                            .frame(width: 80)
-                            .foregroundColor(.white)
-                            .cornerRadius(5)
-                    }
-                    .padding(.trailing, 200)
+            Form {
+                TextField("Name", text: $name)
+                Text("Slug: \(slug.isEmpty ? "—" : slug)")
+                    .foregroundStyle(.secondary)
+                Picker("Status", selection: $status) {
+                    Text("Active").tag("active")
+                    Text("Planned").tag("planned")
                 }
-                .padding(.top, 80)
-                
+                Picker("Region", selection: $regionID) {
+                    Text("—").tag(Optional<Int64>.none)
+                    ForEach(regions) { region in
+                        Text(region.name).tag(Optional(region.id))
+                    }
+                }
+                Picker("Group", selection: $groupID) {
+                    Text("—").tag(Optional<Int64>.none)
+                    ForEach(siteGroups) { group in
+                        Text(group.name).tag(Optional(group.id))
+                    }
+                }
+                Picker("Tenant", selection: $tenantID) {
+                    Text("—").tag(Optional<Int64>.none)
+                    ForEach(tenants) { tenant in
+                        Text(tenant.name).tag(Optional(tenant.id))
+                    }
+                }
+                if let coordinate = sharedLocations.tapLocation {
+                    LabeledContent("Map pin") {
+                        Text(String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude))
+                            .textSelection(.enabled)
+                    }
+                }
+                if let address = sharedLocations.tapAddress, !address.isEmpty {
+                    LabeledContent("Address") {
+                        Text(address)
+                            .textSelection(.enabled)
+                    }
+                }
             }
-            .frame(minWidth: 800, maxWidth: .infinity, minHeight: 800, idealHeight: 1000, maxHeight: .infinity)
-            .padding(1)
-        }
-        .onChange(of: selectedTenantGroup) {
-            // Check if the current tenant is part of the new group
-            if !allTenants.contains(selectedTenant) {
-                // Reset the selected tenant to the first tenant in the new group or to an empty string
-                selectedTenant = ""
+
+            if let writeError {
+                Text(writeError)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(isWriting ? "Creating…" : "Create") {
+                    Task { await create() }
+                }
+                .disabled(isWriting || slug.isEmpty || netBoxSyncEngine == nil)
+                .keyboardShortcut(.defaultAction)
             }
         }
-        .onAppear {
-            if let tapAddress = sharedLocations.tapAddress {
-                self.selectedPhysicalAddress = tapAddress
-            }
-        }
+        .padding(24)
+        .frame(minWidth: 420, minHeight: 360)
     }
 
-    private func createSite() async {
-        let name = selectedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        isDuplicateName = sites.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-        validationFailed = name.isEmpty || selectedStatus.isEmpty
-        guard !validationFailed, !isDuplicateName else { return }
-        guard let engine = netBoxSyncEngine else {
-            writeError = "NetBox sync engine is not available"
-            return
-        }
-        let slug = NetBoxWriteBody.SiteCreate.slug(from: name)
-        guard !slug.isEmpty else {
-            writeError = "Name must contain a letter or number so a slug can be derived."
-            return
-        }
+    private func create() async {
+        guard let engine = netBoxSyncEngine else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !slug.isEmpty else { return }
         isWriting = true
         defer { isWriting = false }
         do {
             try await engine.createSite(
                 NetBoxWriteBody.SiteCreate(
-                    name: name,
+                    name: trimmed,
                     slug: slug,
-                    status: selectedStatus.lowercased(),
-                    timeZone: selectedTimeZone.isEmpty ? nil : selectedTimeZone,
-                    description: selectedDescription.isEmpty ? nil : selectedDescription,
-                    physicalAddress: selectedPhysicalAddress.isEmpty ? nil : selectedPhysicalAddress,
-                    shippingAddress: selectedShippingAddress.isEmpty ? nil : selectedShippingAddress,
+                    status: status,
+                    physicalAddress: sharedLocations.tapAddress.flatMap { $0.isEmpty ? nil : $0 },
                     latitude: sharedLocations.tapLocation?.latitude,
                     longitude: sharedLocations.tapLocation?.longitude,
-                    region: regions.first { $0.name == selectedRegion }?.id,
-                    group: siteGroups.first { $0.name == selectedGroup }?.id,
-                    tenant: tenants.first { $0.name == selectedTenant }?.id
+                    region: regionID,
+                    group: groupID,
+                    tenant: tenantID
                 )
             )
-            presentationMode.wrappedValue.dismiss()
+            dismiss()
         } catch {
             writeError = error.localizedDescription
         }
     }
 }
-
-#else
 #endif
-//
-//#Preview {
-//    AddSiteWindow()
-//}

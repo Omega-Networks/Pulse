@@ -39,7 +39,7 @@ struct DeviceBuilder: View {
                     .font(.title)
                     .fontWeight(.bold)
                     .padding(.top, 5)
-                Text("Drag a role onto the site graph, then name the device.")
+                Text("Optional: drag a role onto the graph to prefill New Device.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
@@ -56,49 +56,56 @@ struct DeviceBuilder: View {
     }
 }
 
-struct ConfigureDeviceSheet: View {
+struct NewDeviceSheet: View {
     let siteId: Int64
-    let roleId: Int64
-    let location: CGPoint?
+    var initialRoleID: Int64?
+    var location: CGPoint?
     var onDismiss: () -> Void
 
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Query(sort: \DeviceRole.name) private var roles: [DeviceRole]
     @Query(sort: \DeviceType.model) private var deviceTypes: [DeviceType]
-    @Query private var roles: [DeviceRole]
 
     @State private var name = ""
-    @State private var selectedTypeID: Int64?
+    @State private var roleID: Int64?
+    @State private var typeID: Int64?
     @State private var status = "active"
     @State private var isWriting = false
     @State private var writeError: String?
 
-    private var roleName: String {
-        roles.first { $0.id == roleId }?.name ?? "role \(roleId)"
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New \(roleName)")
+            Text("New device")
                 .font(.title2)
                 .fontWeight(.bold)
-            TextField("Name", text: $name)
-                .textFieldStyle(.roundedBorder)
-            Picker("Device type", selection: $selectedTypeID) {
-                Text("Select…").tag(Optional<Int64>.none)
-                ForEach(deviceTypes) { type in
-                    Text(type.model ?? "type \(type.id)").tag(Optional(type.id))
+
+            Form {
+                TextField("Name", text: $name)
+                Picker("Role", selection: $roleID) {
+                    Text("Select…").tag(Optional<Int64>.none)
+                    ForEach(roles) { role in
+                        Text(role.name ?? "role \(role.id)").tag(Optional(role.id))
+                    }
+                }
+                Picker("Type", selection: $typeID) {
+                    Text("Select…").tag(Optional<Int64>.none)
+                    ForEach(deviceTypes) { type in
+                        Text(type.model ?? "type \(type.id)").tag(Optional(type.id))
+                    }
+                }
+                Picker("Status", selection: $status) {
+                    Text("Active").tag("active")
+                    Text("Planned").tag("planned")
+                    Text("Offline").tag("offline")
                 }
             }
-            Picker("Status", selection: $status) {
-                Text("Active").tag("active")
-                Text("Planned").tag("planned")
-                Text("Offline").tag("offline")
-            }
+
             if let writeError {
                 Text(writeError)
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.red)
             }
+
             HStack {
                 Spacer()
                 Button("Cancel", action: onDismiss)
@@ -106,16 +113,27 @@ struct ConfigureDeviceSheet: View {
                 Button(isWriting ? "Creating…" : "Create") {
                     Task { await create() }
                 }
-                .disabled(isWriting || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedTypeID == nil || netBoxSyncEngine == nil)
+                .disabled(!canCreate)
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding()
+        .padding(24)
         .frame(minWidth: 420)
+        .onAppear {
+            if roleID == nil { roleID = initialRoleID }
+        }
+    }
+
+    private var canCreate: Bool {
+        !isWriting
+            && netBoxSyncEngine != nil
+            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && roleID != nil
+            && typeID != nil
     }
 
     private func create() async {
-        guard let engine = netBoxSyncEngine, let typeID = selectedTypeID else { return }
+        guard let engine = netBoxSyncEngine, let roleID, let typeID else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         isWriting = true
@@ -130,7 +148,7 @@ struct ConfigureDeviceSheet: View {
                 NetBoxWriteBody.DeviceCreate(
                     name: trimmed,
                     deviceType: typeID,
-                    role: roleId,
+                    role: roleID,
                     site: siteId,
                     status: status,
                     customFields: fields.isEmpty ? nil : fields

@@ -122,8 +122,8 @@ enum NetBoxWriteBody {
         var deviceType: Int64
         var role: Int64
         var site: Int64
-        var status: String?
-        var customFields: [String: JSONValue]?
+        var status: String? = nil
+        var customFields: [String: JSONValue]? = nil
 
         enum CodingKeys: String, CodingKey {
             case name, role, site, status
@@ -136,16 +136,16 @@ enum NetBoxWriteBody {
         var name: String
         var slug: String
         var status: String
-        var timeZone: String?
-        var description: String?
-        var physicalAddress: String?
-        var shippingAddress: String?
-        var latitude: Double?
-        var longitude: Double?
-        var region: Int64?
-        var group: Int64?
-        var tenant: Int64?
-        var customFields: [String: JSONValue]?
+        var timeZone: String? = nil
+        var description: String? = nil
+        var physicalAddress: String? = nil
+        var shippingAddress: String? = nil
+        var latitude: Double? = nil
+        var longitude: Double? = nil
+        var region: Int64? = nil
+        var group: Int64? = nil
+        var tenant: Int64? = nil
+        var customFields: [String: JSONValue]? = nil
 
         enum CodingKeys: String, CodingKey {
             case name, slug, status, description, latitude, longitude, region, group, tenant

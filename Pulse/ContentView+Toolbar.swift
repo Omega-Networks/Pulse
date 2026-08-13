@@ -84,6 +84,13 @@ extension ContentView {
         }
             
         ToolbarItem() {
+            AddButton {
+                openWindow(id: "new-site")
+            }
+            .help("New site in NetBox. Tap the map first to pin coordinates.")
+        }
+
+        ToolbarItem() {
             MapStyleButton(openMapStyles: $openMapStyles, mapStyle: $mapStyle)
         }
 

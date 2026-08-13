@@ -62,7 +62,6 @@ struct SiteView: View {
     
     //Properties for showing the sheet for configuring Devices
     @State private var showingConfigureDeviceSheet = false
-    @State private var showDeviceBuilder = false
     @State private var newDeviceRole: Int64 = 0
     @State private var newDeviceLocation: CGPoint?
     
@@ -174,15 +173,16 @@ struct SiteView: View {
                 print("Error loading site data: \(error)")
             }
         }
-        .popover(isPresented: $showDeviceBuilder, arrowEdge: .leading) {
-            DeviceBuilder()
-        }
         .sheet(isPresented: $showingConfigureDeviceSheet) {
-            ConfigureDeviceSheet(
+            NewDeviceSheet(
                 siteId: siteId,
-                roleId: newDeviceRole,
+                initialRoleID: newDeviceRole == 0 ? nil : newDeviceRole,
                 location: newDeviceLocation,
-                onDismiss: { showingConfigureDeviceSheet = false }
+                onDismiss: {
+                    showingConfigureDeviceSheet = false
+                    newDeviceRole = 0
+                    newDeviceLocation = nil
+                }
             )
             .environment(\.netBoxSyncEngine, netBoxSyncEngine)
         }
@@ -218,14 +218,16 @@ extension SiteView {
         
         ToolbarItemGroup (placement: .primaryAction) {
             Button {
-                showDeviceBuilder.toggle()
+                newDeviceRole = 0
+                newDeviceLocation = nil
+                showingConfigureDeviceSheet = true
             } label: {
-                Image(systemName: "plus.square.on.square")
+                Image(systemName: "plus")
                     .fontWeight(.medium)
                     .font(.title2)
             }
             .buttonStyle(.plain)
-            .help("Add a device — drag a role onto the graph")
+            .help("New device in NetBox")
             .padding(.all, 5.0)
 
             Button {

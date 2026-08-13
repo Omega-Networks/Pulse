@@ -72,6 +72,6 @@ Validation errors (duplicate cable, missing field) show the server JSON.
 
 ## Site and device creation
 
-Tap the map to open **New Site**. Create POSTs `/api/dcim/sites/` (`name`, derived `slug`, `status`, optional address/coords/region/group/tenant). A failed POST leaves no local site.
+**New site** is the map window **+**. Tap the map first if you want coordinates and a reverse-geocoded address; then **+**. The form sends `name`, a slug derived from the name, `status`, and optional region/group/tenant. Coords and address are included only when a map pin exists. A failed POST leaves no local site.
 
-In Site View, the **add device** toolbar button opens the role palette. Drag a role onto the graph, name it, pick a device type, and Create POSTs `/api/dcim/devices/`. Drop coordinates go in `custom_fields.coordinate_x` / `coordinate_y` only.
+**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/`. Dropping a role on the graph opens the same form with that role and the drop point as `coordinate_x` / `coordinate_y`. A failed POST leaves no local device.

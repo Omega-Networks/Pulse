@@ -111,7 +111,7 @@ Views call `NetBoxSyncEngine`. The engine owns `NetBoxWriteService`, which encod
 
 `custom_fields` is omitted unless the caller passes changed keys only. Interface enable/description PATCHes never include it.
 
-Device and site creates are on: `AddSiteWindow` POSTs `/api/dcim/sites/`, and dropping a role on the site graph POSTs `/api/dcim/devices/`. Both re-fetch through `applyDeltaItem`. A write-disabled token is a 403; the server body is shown verbatim (same path as 400 validation). The policy flag can still refuse those methods for tests.
+Site and device create are small forms, not the old unused Add Site / DeviceBuilder flows. Map **+** POSTs `/api/dcim/sites/` (name, derived slug, status, optional region/group/tenant/pin). Site View **+** POSTs `/api/dcim/devices/` (name, role, type, status). Failed POSTs leave no local row. The policy flag can still refuse those methods for tests.
 
 `Interface.cableId` is the NetBox cable id used to DELETE. If it is missing on a connected row (store predates the field), disconnect retrieves the live interface and reads the id from NetBox.
 
