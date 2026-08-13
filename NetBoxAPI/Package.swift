@@ -1,5 +1,11 @@
 // swift-tools-version: 6.0
 //
+// Copyright © 2025–present Omega Networks Limited.
+//
+// This package manifest is GNU Affero GPL v3.0. Generated sources
+// under Sources/NetBoxAPI/ are Apache-2.0 (see NOTICE).
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
 // Isolated module for the generated NetBox client.
 // Pulse already owns a type named `Configuration`; the generated
 // `Client` takes `OpenAPIRuntime.Configuration`. They cannot share
