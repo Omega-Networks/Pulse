@@ -158,14 +158,17 @@ enum NetBoxRecord {
         var type: String?
         var label: String?
         var enabled: Bool
-        var mtu: String
-        var speed: String
+        var mtu: Int?
+        var speed: Int64?
         var interfaceDescription: String
         var poeMode: String?
+        var duplex: String?
+        var occupied: Bool
         var deviceID: Int64?
         var deviceName: String?
         var connectedEndpointID: Int64?
         var connectedEndpointName: String?
+        var connectedEndpointDeviceID: Int64?
         var lagID: Int64?
         var lagName: String?
         var bridgeID: Int64?
@@ -245,15 +248,28 @@ enum NetBoxIngest {
         _ container: KeyedDecodingContainer<K>,
         _ key: K
     ) throws -> (id: Int64?, name: String?) {
+        let endpoint = try firstEndpoint(container, key)
+        return (endpoint.id, endpoint.name)
+    }
+
+    enum EndpointKey: String, CodingKey { case id, name, device }
+
+    /// First `connected_endpoints` entry, including the nested device id
+    /// when NetBox sends it. Missing or empty array → all nils.
+    static func firstEndpoint<K: CodingKey>(
+        _ container: KeyedDecodingContainer<K>,
+        _ key: K
+    ) throws -> (id: Int64?, name: String?, deviceID: Int64?) {
         guard container.contains(key), try container.decodeNil(forKey: key) == false else {
-            return (nil, nil)
+            return (nil, nil, nil)
         }
         var array = try container.nestedUnkeyedContainer(forKey: key)
-        guard !array.isAtEnd else { return (nil, nil) }
-        let nested = try array.nestedContainer(keyedBy: NameKey.self)
+        guard !array.isAtEnd else { return (nil, nil, nil) }
+        let nested = try array.nestedContainer(keyedBy: EndpointKey.self)
         return (
             try nested.decodeIfPresent(Int64.self, forKey: .id),
-            try nested.decodeIfPresent(String.self, forKey: .name)
+            try nested.decodeIfPresent(String.self, forKey: .name),
+            try nestedID(nested, .device)
         )
     }
 
@@ -508,7 +524,7 @@ extension NetBoxRecord.Interface: Decodable {
         case id, name, display, url, created, device, type, label, enabled, mtu, speed, description
         case lastUpdated = "last_updated"
         case connectedEndpoints = "connected_endpoints"
-        case lag, bridge, parent
+        case lag, bridge, parent, duplex, occupied
         case poeMode = "poe_mode"
     }
 
@@ -523,16 +539,19 @@ extension NetBoxRecord.Interface: Decodable {
         type = try NetBoxIngest.choiceValue(container, .type)
         label = try container.decodeIfPresent(String.self, forKey: .label)
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-        mtu = NetBoxIngest.flexibleString(container, .mtu)
-        speed = NetBoxIngest.flexibleString(container, .speed)
+        mtu = NetBoxIngest.flexibleInt64(container, .mtu).map(Int.init)
+        speed = NetBoxIngest.flexibleInt64(container, .speed)
         interfaceDescription = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
         poeMode = try NetBoxIngest.choiceValue(container, .poeMode)
+        duplex = try NetBoxIngest.choiceValue(container, .duplex)
+        occupied = try container.decodeIfPresent(Bool.self, forKey: .occupied) ?? false
         let device = try NetBoxIngest.nestedNamed(container, .device)
         deviceID = device.id
         deviceName = device.name
-        let endpoint = try NetBoxIngest.firstNamed(container, .connectedEndpoints)
+        let endpoint = try NetBoxIngest.firstEndpoint(container, .connectedEndpoints)
         connectedEndpointID = endpoint.id
         connectedEndpointName = endpoint.name
+        connectedEndpointDeviceID = endpoint.deviceID
         let lag = try NetBoxIngest.nestedNamed(container, .lag)
         lagID = lag.id
         lagName = lag.name
@@ -544,8 +563,8 @@ extension NetBoxRecord.Interface: Decodable {
         parentName = parent.name
     }
 
-    func asCacheValue() -> Interface {
-        var value = Interface(id: id)
+    func asCacheValue() -> InterfaceVO {
+        var value = InterfaceVO(id: id)
         value.name = name
         value.display = display
         value.url = url
@@ -558,10 +577,13 @@ extension NetBoxRecord.Interface: Decodable {
         value.speed = speed
         value.interfaceDescription = interfaceDescription
         value.poeMode = poeMode
+        value.duplex = duplex
+        value.occupied = occupied
         value.deviceId = deviceID
         value.deviceName = deviceName
         value.connectedEndpointId = connectedEndpointID
         value.connectedEndpointName = connectedEndpointName
+        value.connectedEndpointDeviceId = connectedEndpointDeviceID
         value.lagId = lagID
         value.lagName = lagName
         value.bridgeId = bridgeID

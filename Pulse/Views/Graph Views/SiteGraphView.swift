@@ -214,7 +214,7 @@ struct SiteGraphView: View {
     }
 #endif
     
-    private func getInterface(id: Int64) async -> Interface? {
+    private func getInterface(id: Int64) async -> InterfaceVO? {
         return await InterfaceCache.shared.getInterface(withId: id)
     }
 

@@ -30,7 +30,7 @@ final class NetBoxMappingTests: XCTestCase {
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Service.self, WebHostTrust.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
@@ -413,7 +413,11 @@ final class NetBoxMappingTests: XCTestCase {
             "type": { "value": "1000base-t", "label": "1000BASE-T" },
             "enabled": true, "mtu": 1500, "speed": 1000000,
             "description": "uplink",
-            "connected_endpoints": [ { "id": 99, "name": "eth1" } ],
+            "duplex": { "value": "full", "label": "Full" },
+            "occupied": true,
+            "connected_endpoints": [
+              { "id": 99, "name": "eth1", "device": { "id": 11 } }
+            ],
             "lag": null, "bridge": null, "parent": null,
             "created": "2024-01-02T03:04:05Z",
             "last_updated": "2024-01-02T03:04:05Z"
@@ -422,13 +426,42 @@ final class NetBoxMappingTests: XCTestCase {
         """.utf8)
         let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Interface.self, from: json)
         XCTAssertEqual(page.skipped, 0)
-        XCTAssertEqual(page.results.first?.mtu, "1500")
-        XCTAssertEqual(page.results.first?.speed, "1000000")
+        XCTAssertEqual(page.results.first?.mtu, 1500)
+        XCTAssertEqual(page.results.first?.speed, 1_000_000)
         XCTAssertEqual(page.results.first?.connectedEndpointID, 99)
+        XCTAssertEqual(page.results.first?.connectedEndpointDeviceID, 11)
         XCTAssertEqual(page.results.first?.deviceID, 10)
+        XCTAssertEqual(page.results.first?.duplex, "full")
+        XCTAssertEqual(page.results.first?.occupied, true)
         let cached = try XCTUnwrap(page.results.first?.asCacheValue())
-        XCTAssertEqual(cached.mtu, "1500")
+        XCTAssertEqual(cached.mtu, 1500)
+        XCTAssertEqual(cached.speed, 1_000_000)
         XCTAssertEqual(cached.connectedEndpointName, "eth1")
+        XCTAssertEqual(cached.connectedEndpointDeviceId, 11)
+        XCTAssertNil(cached.lagId)
+        XCTAssertNil(cached.bridgeId)
+        XCTAssertNil(cached.parentId)
+    }
+
+    func testInterfacePageAcceptsStringMTUAndEmptyEndpoint() throws {
+        let json = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 89, "name": "eth2",
+            "device": { "id": 10, "name": "core-switch-01" },
+            "enabled": false, "mtu": "9000", "speed": "0",
+            "connected_endpoints": [],
+            "lag": null, "bridge": null, "parent": null
+          }
+        ] }
+        """.utf8)
+        let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Interface.self, from: json)
+        XCTAssertEqual(page.skipped, 0)
+        XCTAssertEqual(page.results.first?.mtu, 9000)
+        XCTAssertEqual(page.results.first?.speed, 0)
+        XCTAssertNil(page.results.first?.connectedEndpointID)
+        XCTAssertNil(page.results.first?.connectedEndpointDeviceID)
+        XCTAssertEqual(page.results.first?.occupied, false)
     }
 
     func testStaticDeviceAndBayPagesDecodeWithoutGeneratedCounts() throws {

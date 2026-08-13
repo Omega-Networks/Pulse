@@ -26,7 +26,7 @@
 import SwiftUI
 
 struct InterfaceStatusCell: View {
-    @State var interface: Interface
+    @State var interface: InterfaceVO
     @State private var isHovering: Bool = false
     
     var body: some View {

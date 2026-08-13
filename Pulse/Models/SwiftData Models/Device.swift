@@ -88,6 +88,13 @@ final class Device {
     @Relationship(deleteRule: .cascade, inverse: \Service.device)
     var services: [Service]?
 
+    // NetBox interfaces attached to this device (inverse of Interface.device).
+    // Cascade so deleting a device removes its interface rows; the
+    // server-authoritative stale-delete in the interface sync stage is
+    // the primary cleanup.
+    @Relationship(deleteRule: .cascade, inverse: \Interface.device)
+    var interfaces: [Interface]?
+
 
     //Many-To-One
     var site: Site?

@@ -92,6 +92,7 @@ struct PulseApp: App {
                 SiteGroup.self,
                 Site.self,
                 Device.self,
+                Interface.self,
                 Service.self,
                 WebHostTrust.self,
                 Event.self,

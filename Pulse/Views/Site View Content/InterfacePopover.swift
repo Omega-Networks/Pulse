@@ -28,11 +28,11 @@ import SwiftData
 
 struct InterfacePopover: View {
     @Environment(\.modelContext) private var modelContext
-    @State var interface: Interface
+    @State var interface: InterfaceVO
     private var squareSize: CGFloat = 15
     private var verticalPadding: CGFloat = 5
     
-    public init(interface: Interface) {
+    public init(interface: InterfaceVO) {
         self._interface = State(initialValue: interface)
     }
     
@@ -65,7 +65,7 @@ struct InterfacePopover: View {
                     
                     Spacer()
                     
-                    Text(interface.speed ?? "N/A")
+                    Text(interface.speedLabel)
                 }
                 .padding(.vertical, verticalPadding)
                 

@@ -1,5 +1,5 @@
 //
-//  Interface.swift
+//  InterfaceVO.swift
 //  Pulse
 //
 //  Copyright © 2025–present Omega Networks Limited.
@@ -23,89 +23,76 @@
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
-import OSLog
-import SwiftData
-import UniformTypeIdentifiers
-import SwiftUI
+import Foundation
 
-// MARK: - Core Data
-
-
-//TODO: Make Interface a struct
-/// Managed object subclass for the Interface entity.
-struct Interface: Identifiable, Equatable {
+/// Sendable snapshot of an `Interface` row. Views and `LayoutManager`
+/// consume this; the `@Model` never crosses an actor boundary.
+struct InterfaceVO: Identifiable, Equatable, Sendable {
     var id: Int64
     var name: String = ""
     var display: String?
     var label: String?
     var type: String?
     var enabled: Bool = false
-    var mtu: String?
-    var speed: String?
+    var mtu: Int?
+    var speed: Int64?
     var interfaceDescription: String?
     var created: Date?
     var lastUpdated: Date?
     var url: String?
-    
-    // Relationship IDs
-    var deviceId: Int64?
-    var deviceName: String?
-    
-    var connectedEndpointId: Int64?
-    var connectedEndpointName: String?
-    
-    var lagId: Int64?
-    var lagName: String?
-    
-    var bridgeId: Int64?
-    var bridgeName: String?
-    
-    var parentId: Int64?
-    var parentName: String?
-    
-    // Additional properties
     var poeMode: String?
     var duplex: String?
     var occupied: Bool = false
-    
+
+    var deviceId: Int64?
+    var deviceName: String?
+    var siteId: Int64?
+
+    var connectedEndpointId: Int64?
+    var connectedEndpointName: String?
+    var connectedEndpointDeviceId: Int64?
+    var lagId: Int64?
+    var lagName: String?
+    var bridgeId: Int64?
+    var bridgeName: String?
+    var parentId: Int64?
+    var parentName: String?
+
     init(id: Int64) {
         self.id = id
     }
-}
 
-//MARK: New actor for caching interfaces
-actor InterfaceCache {
-    static let shared = InterfaceCache()
-    private var cache: [Int64: [Interface]] = [:]
-    private var allInterfaces: Set<Int64> = []  // Track all interface IDs
-    
-    private init() {}
-    
-    func getInterfaces(forDeviceId deviceId: Int64) -> [Interface] {
-        return cache[deviceId] ?? []
+    init(model: Interface) {
+        self.id = model.id
+        self.name = model.name
+        self.display = model.display
+        self.label = model.label
+        self.type = model.type
+        self.enabled = model.enabled
+        self.mtu = model.mtu
+        self.speed = model.speed
+        self.interfaceDescription = model.interfaceDescription
+        self.created = model.created
+        self.lastUpdated = model.lastUpdated
+        self.url = model.url
+        self.poeMode = model.poeMode
+        self.duplex = model.duplex
+        self.occupied = model.occupied
+        self.deviceId = model.deviceId
+        self.deviceName = model.deviceName
+        self.siteId = model.siteId
+        self.connectedEndpointId = model.connectedEndpointId
+        self.connectedEndpointName = model.connectedEndpointName
+        self.connectedEndpointDeviceId = model.connectedEndpointDeviceId
+        self.lagId = model.lagId
+        self.lagName = model.lagName
+        self.bridgeId = model.bridgeId
+        self.bridgeName = model.bridgeName
+        self.parentId = model.parentId
+        self.parentName = model.parentName
     }
-    
-    func getInterface(withId id: Int64) -> Interface? {
-        for interfaces in cache.values {
-            if let interface = interfaces.first(where: { $0.id == id }) {
-                return interface
-            }
-        }
-        return nil
-    }
-    
-    func setInterfaces(_ interfaces: [Interface], forDeviceId deviceId: Int64) {
-        cache[deviceId] = interfaces
-        // Track all interface IDs
-        interfaces.forEach { allInterfaces.insert($0.id) }
-        
-        Task { @MainActor in
-            NotificationCenter.default.post(name: .interfacesDidUpdate, object: nil)
-        }
+
+    var speedLabel: String {
+        speed.map(String.init) ?? "N/A"
     }
 }
-
-extension Notification.Name {
-    static let interfacesDidUpdate = Notification.Name("interfacesDidUpdate")
-}
-

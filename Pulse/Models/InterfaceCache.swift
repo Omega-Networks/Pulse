@@ -1,5 +1,5 @@
 //
-//  Edge.swift
+//  InterfaceCache.swift
 //  Pulse
 //
 //  Copyright © 2025–present Omega Networks Limited.
@@ -25,24 +25,39 @@
 
 import Foundation
 
-/**
- A proxy for two InterfaceVO snapshots that represent a network connection
- between two devices.
- A few things to take note of:
- - The source is the Device the Interface is connecting from.
- - The destination is the Device of the Interface's connected endpoint.
- */
-struct Edge: Equatable, Identifiable, Hashable {
-    var id = UUID()
-    var start: InterfaceVO
-    var end: InterfaceVO
+// MARK: - Session cache (removed in the P2 consumer/purge slices)
 
-    static func == (lhs: Edge, rhs: Edge) -> Bool {
-        return (lhs.start.id == rhs.start.id && lhs.end.id == rhs.end.id) ||
-               (lhs.start.id == rhs.end.id && lhs.end.id == rhs.start.id)
+actor InterfaceCache {
+    static let shared = InterfaceCache()
+    private var cache: [Int64: [InterfaceVO]] = [:]
+    private var allInterfaces: Set<Int64> = []
+
+    private init() {}
+
+    func getInterfaces(forDeviceId deviceId: Int64) -> [InterfaceVO] {
+        return cache[deviceId] ?? []
     }
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
+
+    func getInterface(withId id: Int64) -> InterfaceVO? {
+        for interfaces in cache.values {
+            if let interface = interfaces.first(where: { $0.id == id }) {
+                return interface
+            }
+        }
+        return nil
+    }
+
+    func setInterfaces(_ interfaces: [InterfaceVO], forDeviceId deviceId: Int64) {
+        cache[deviceId] = interfaces
+        interfaces.forEach { allInterfaces.insert($0.id) }
+
+        Task { @MainActor in
+            NotificationCenter.default.post(name: .interfacesDidUpdate, object: nil)
+        }
     }
 }
+
+extension Notification.Name {
+    static let interfacesDidUpdate = Notification.Name("interfacesDidUpdate")
+}
+

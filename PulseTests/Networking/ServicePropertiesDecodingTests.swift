@@ -154,7 +154,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
     func testGetServicesWiresDeviceParentAndRetainsVMParent() async throws {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Service.self, WebHostTrust.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
