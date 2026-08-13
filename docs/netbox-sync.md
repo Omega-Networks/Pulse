@@ -70,6 +70,8 @@ Validation errors (duplicate cable, missing field) show the server JSON.
 
 `custom_fields` are only sent when that key changed. Enable/description/cable writes do not touch them.
 
-## Site creation
+## Site and device creation
 
-Add Site is still disabled and never POSTs. Site create is implemented behind a gate; do not enable it from this window.
+Tap the map to open **New Site**. Create POSTs `/api/dcim/sites/` (`name`, derived `slug`, `status`, optional address/coords/region/group/tenant). A failed POST leaves no local site.
+
+In Site View, the **add device** toolbar button opens the role palette. Drag a role onto the graph, name it, pick a device type, and Create POSTs `/api/dcim/devices/`. Drop coordinates go in `custom_fields.coordinate_x` / `coordinate_y` only.

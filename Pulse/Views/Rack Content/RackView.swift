@@ -252,6 +252,10 @@ struct SingleRackView: View {
         .onChange(of: staticDevices) {
             updateRackUnits()
         }
+        .sheet(isPresented: $showDeviceBuilderSheet) {
+            DeviceBuilder()
+                .frame(minWidth: 360, minHeight: 320)
+        }
     }
     
     private func updateRackUnits() {

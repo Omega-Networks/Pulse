@@ -274,6 +274,22 @@ actor NetBoxSyncEngine {
         }
     }
 
+    func createDevice(_ body: NetBoxWriteBody.DeviceCreate) async throws {
+        try await performWrite {
+            let response = try await self.writer.createDevice(body)
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Device.self, from: response.body)
+            try await self.applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .device,
+                    objectID: row.id,
+                    action: "create",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+        }
+    }
+
     func createSite(_ body: NetBoxWriteBody.SiteCreate) async throws {
         try await performWrite {
             let response = try await self.writer.createSite(body)

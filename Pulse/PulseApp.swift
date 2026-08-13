@@ -213,6 +213,7 @@ struct PulseApp: App {
             if showContentView {
                 AddSiteWindow()
                     .environment(sharedLocations)
+                    .environment(\.netBoxSyncEngine, netBoxSyncEngine)
                     .modelContainer(modelContainer)
             }
         }

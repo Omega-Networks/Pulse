@@ -33,6 +33,7 @@ struct SiteView: View {
     //MARK: All properties for SiteView
     @Environment(\.openWindow) var openWindow
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     
     // Query for the site and its devices
     @SceneStorage("selected-site-id") var storedSiteId: String = ""
@@ -61,6 +62,7 @@ struct SiteView: View {
     
     //Properties for showing the sheet for configuring Devices
     @State private var showingConfigureDeviceSheet = false
+    @State private var showDeviceBuilder = false
     @State private var newDeviceRole: Int64 = 0
     @State private var newDeviceLocation: CGPoint?
     
@@ -172,6 +174,18 @@ struct SiteView: View {
                 print("Error loading site data: \(error)")
             }
         }
+        .popover(isPresented: $showDeviceBuilder, arrowEdge: .leading) {
+            DeviceBuilder()
+        }
+        .sheet(isPresented: $showingConfigureDeviceSheet) {
+            ConfigureDeviceSheet(
+                siteId: siteId,
+                roleId: newDeviceRole,
+                location: newDeviceLocation,
+                onDismiss: { showingConfigureDeviceSheet = false }
+            )
+            .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+        }
     }
 }
 
@@ -203,6 +217,17 @@ extension SiteView {
         }
         
         ToolbarItemGroup (placement: .primaryAction) {
+            Button {
+                showDeviceBuilder.toggle()
+            } label: {
+                Image(systemName: "plus.square.on.square")
+                    .fontWeight(.medium)
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            .help("Add a device — drag a role onto the graph")
+            .padding(.all, 5.0)
+
             Button {
                 withAnimation {
                     DispatchQueue.main.async {

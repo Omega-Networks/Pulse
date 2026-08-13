@@ -30,11 +30,14 @@ import SwiftData
 struct AddSiteWindow: View {
     @Environment(\.presentationMode) var presentationMode
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     
     @Environment(SharedLocations.self) private var sharedLocations  // Inject the shared instance
     
     @State private var selectedName: String = ""
-    @State private var selectedStatus: String = ""
+    @State private var selectedStatus: String = "Active"
+    @State private var isWriting = false
+    @State private var writeError: String?
     @State private var selectedRegion: String = ""
     @State private var selectedGroup: String = ""
     @State private var selectedTimeZone: String = "Pacific/Auckland"
@@ -261,17 +264,21 @@ struct AddSiteWindow: View {
                     Spacer()
 
                     VStack(alignment: .trailing, spacing: 6) {
-                        Text("Site create is implemented but gated off. This window never POSTs.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if let writeError {
+                            Text(writeError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: 360, alignment: .trailing)
+                        }
                         Button {
+                            Task { await createSite() }
                         } label: {
-                            Text("Create")
+                            Text(isWriting ? "Creating…" : "Create")
                                 .frame(width: 80)
                                 .foregroundColor(.white)
                         }
-                        .disabled(true)
-                        .help("Site create is gated off and never POSTs")
+                        .disabled(isWriting || netBoxSyncEngine == nil)
+                        .help("POST this site to NetBox")
                         .cornerRadius(5)
                     }
                     
@@ -303,6 +310,45 @@ struct AddSiteWindow: View {
             if let tapAddress = sharedLocations.tapAddress {
                 self.selectedPhysicalAddress = tapAddress
             }
+        }
+    }
+
+    private func createSite() async {
+        let name = selectedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        isDuplicateName = sites.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        validationFailed = name.isEmpty || selectedStatus.isEmpty
+        guard !validationFailed, !isDuplicateName else { return }
+        guard let engine = netBoxSyncEngine else {
+            writeError = "NetBox sync engine is not available"
+            return
+        }
+        let slug = NetBoxWriteBody.SiteCreate.slug(from: name)
+        guard !slug.isEmpty else {
+            writeError = "Name must contain a letter or number so a slug can be derived."
+            return
+        }
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            try await engine.createSite(
+                NetBoxWriteBody.SiteCreate(
+                    name: name,
+                    slug: slug,
+                    status: selectedStatus.lowercased(),
+                    timeZone: selectedTimeZone.isEmpty ? nil : selectedTimeZone,
+                    description: selectedDescription.isEmpty ? nil : selectedDescription,
+                    physicalAddress: selectedPhysicalAddress.isEmpty ? nil : selectedPhysicalAddress,
+                    shippingAddress: selectedShippingAddress.isEmpty ? nil : selectedShippingAddress,
+                    latitude: sharedLocations.tapLocation?.latitude,
+                    longitude: sharedLocations.tapLocation?.longitude,
+                    region: regions.first { $0.name == selectedRegion }?.id,
+                    group: siteGroups.first { $0.name == selectedGroup }?.id,
+                    tenant: tenants.first { $0.name == selectedTenant }?.id
+                )
+            )
+            presentationMode.wrappedValue.dismiss()
+        } catch {
+            writeError = error.localizedDescription
         }
     }
 }

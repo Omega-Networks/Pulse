@@ -39,6 +39,10 @@ struct DeviceBuilder: View {
                     .font(.title)
                     .fontWeight(.bold)
                     .padding(.top, 5)
+                Text("Drag a role onto the site graph, then name the device.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
                 
                 LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(deviceRoles) { deviceRole in
@@ -47,6 +51,94 @@ struct DeviceBuilder: View {
                 }
                 .padding()
             }
+        }
+        .frame(minWidth: 320, minHeight: 280)
+    }
+}
+
+struct ConfigureDeviceSheet: View {
+    let siteId: Int64
+    let roleId: Int64
+    let location: CGPoint?
+    var onDismiss: () -> Void
+
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Query(sort: \DeviceType.model) private var deviceTypes: [DeviceType]
+    @Query private var roles: [DeviceRole]
+
+    @State private var name = ""
+    @State private var selectedTypeID: Int64?
+    @State private var status = "active"
+    @State private var isWriting = false
+    @State private var writeError: String?
+
+    private var roleName: String {
+        roles.first { $0.id == roleId }?.name ?? "role \(roleId)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("New \(roleName)")
+                .font(.title2)
+                .fontWeight(.bold)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+            Picker("Device type", selection: $selectedTypeID) {
+                Text("Select…").tag(Optional<Int64>.none)
+                ForEach(deviceTypes) { type in
+                    Text(type.model ?? "type \(type.id)").tag(Optional(type.id))
+                }
+            }
+            Picker("Status", selection: $status) {
+                Text("Active").tag("active")
+                Text("Planned").tag("planned")
+                Text("Offline").tag("offline")
+            }
+            if let writeError {
+                Text(writeError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onDismiss)
+                    .keyboardShortcut(.cancelAction)
+                Button(isWriting ? "Creating…" : "Create") {
+                    Task { await create() }
+                }
+                .disabled(isWriting || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedTypeID == nil || netBoxSyncEngine == nil)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(minWidth: 420)
+    }
+
+    private func create() async {
+        guard let engine = netBoxSyncEngine, let typeID = selectedTypeID else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isWriting = true
+        defer { isWriting = false }
+        var fields: [String: NetBoxWriteBody.JSONValue] = [:]
+        if let location {
+            fields[NetBoxCustomFields.coordinateX] = .double(location.x)
+            fields[NetBoxCustomFields.coordinateY] = .double(location.y)
+        }
+        do {
+            try await engine.createDevice(
+                NetBoxWriteBody.DeviceCreate(
+                    name: trimmed,
+                    deviceType: typeID,
+                    role: roleId,
+                    site: siteId,
+                    status: status,
+                    customFields: fields.isEmpty ? nil : fields
+                )
+            )
+            onDismiss()
+        } catch {
+            writeError = error.localizedDescription
         }
     }
 }

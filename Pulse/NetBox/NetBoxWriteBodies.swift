@@ -106,7 +106,6 @@ enum NetBoxWriteBody {
         }
     }
 
-    /// Designed-in. Not sent unless `NetBoxWritePolicy.deviceAndSiteWritesEnabled`.
     struct DevicePatch: Encodable, Equatable, Sendable {
         var name: String?
         var status: String?
@@ -118,7 +117,21 @@ enum NetBoxWriteBody {
         }
     }
 
-    /// Designed-in. Not sent unless `NetBoxWritePolicy.deviceAndSiteWritesEnabled`.
+    struct DeviceCreate: Encodable, Equatable, Sendable {
+        var name: String
+        var deviceType: Int64
+        var role: Int64
+        var site: Int64
+        var status: String?
+        var customFields: [String: JSONValue]?
+
+        enum CodingKeys: String, CodingKey {
+            case name, role, site, status
+            case deviceType = "device_type"
+            case customFields = "custom_fields"
+        }
+    }
+
     struct SiteCreate: Encodable, Equatable, Sendable {
         var name: String
         var slug: String
@@ -126,6 +139,7 @@ enum NetBoxWriteBody {
         var timeZone: String?
         var description: String?
         var physicalAddress: String?
+        var shippingAddress: String?
         var latitude: Double?
         var longitude: Double?
         var region: Int64?
@@ -137,7 +151,14 @@ enum NetBoxWriteBody {
             case name, slug, status, description, latitude, longitude, region, group, tenant
             case timeZone = "time_zone"
             case physicalAddress = "physical_address"
+            case shippingAddress = "shipping_address"
             case customFields = "custom_fields"
+        }
+
+        static func slug(from name: String) -> String {
+            let lowered = name.lowercased()
+            let dashed = lowered.replacingOccurrences(of: " ", with: "-")
+            return dashed.filter { $0.isLetter || $0.isNumber || $0 == "-" }
         }
     }
 }

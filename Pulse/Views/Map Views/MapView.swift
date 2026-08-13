@@ -411,6 +411,9 @@ struct MapView: View {
                 if let address = address {
                     sharedLocations.tapAddress = address
                 }
+                #if os(macOS)
+                openWindow(id: "new-site")
+                #endif
             }
         }
     }

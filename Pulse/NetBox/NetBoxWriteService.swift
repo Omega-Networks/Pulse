@@ -33,7 +33,7 @@ struct NetBoxWritePolicy: Sendable, Equatable {
     var sendIfMatch: Bool
 
     static let shipped = NetBoxWritePolicy(
-        deviceAndSiteWritesEnabled: false,
+        deviceAndSiteWritesEnabled: true,
         sendIfMatch: false
     )
 }
@@ -79,6 +79,17 @@ struct NetBoxWriteService: Sendable {
     ) async throws -> NetBoxHTTPResponse {
         try requireDeviceAndSiteWrites()
         return try await patch(path: "/api/dcim/devices/\(id)/", body: body)
+    }
+
+    func createDevice(_ body: NetBoxWriteBody.DeviceCreate) async throws -> NetBoxHTTPResponse {
+        try requireDeviceAndSiteWrites()
+        return try await fetcher.send(
+            NetBoxHTTPRequest(
+                method: "POST",
+                path: "/api/dcim/devices/",
+                body: try NetBoxWriteJSON.encode(body)
+            )
+        )
     }
 
     func createSite(_ body: NetBoxWriteBody.SiteCreate) async throws -> NetBoxHTTPResponse {

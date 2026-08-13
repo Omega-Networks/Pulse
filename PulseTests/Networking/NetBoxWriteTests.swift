@@ -80,6 +80,26 @@ final class NetBoxWriteTests: XCTestCase {
             NetBoxWriteBody.SiteCreate(name: "Lab", slug: "lab", status: "active")
         )
         assertJSON(site, ["name": "Lab", "slug": "lab", "status": "active"])
+
+        let created = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.DeviceCreate(
+                name: "core-1",
+                deviceType: 8,
+                role: 6,
+                site: 4,
+                status: "active",
+                customFields: [NetBoxCustomFields.coordinateX: .double(10)]
+            )
+        )
+        assertJSON(created, [
+            "custom_fields": [NetBoxCustomFields.coordinateX: 10],
+            "device_type": 8,
+            "name": "core-1",
+            "role": 6,
+            "site": 4,
+            "status": "active",
+        ])
+        XCTAssertEqual(NetBoxWriteBody.SiteCreate.slug(from: "Lab Site 1"), "lab-site-1")
     }
 
     func testShippedPolicyDoesNotSendIfMatch() async throws {
@@ -311,7 +331,11 @@ final class NetBoxWriteTests: XCTestCase {
     func testDeviceAndSiteWritesStayGated() async throws {
         let container = try makeContainer()
         let fetcher = WriteFetcher()
-        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            writePolicy: NetBoxWritePolicy(deviceAndSiteWritesEnabled: false, sendIfMatch: false)
+        )
         do {
             try await engine.createSite(
                 NetBoxWriteBody.SiteCreate(name: "Lab", slug: "lab", status: "active")
@@ -336,6 +360,49 @@ final class NetBoxWriteTests: XCTestCase {
             )
         }
         XCTAssertTrue(fetcher.sends.isEmpty)
+    }
+
+    func testCreateSiteAndDevicePostWhenEnabled() async throws {
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 4))
+        seed.insert(DeviceRole(id: 6))
+        seed.insert(DeviceType(id: 8))
+        try seed.save()
+
+        let fetcher = WriteFetcher()
+        fetcher.sendQueue = [
+            NetBoxHTTPResponse(
+                status: 201,
+                body: Data(#"{"id":12,"name":"Lab","slug":"lab","status":{"value":"active"}}"#.utf8),
+                etag: nil
+            ),
+            NetBoxHTTPResponse(
+                status: 201,
+                body: Data(#"{"id":30,"name":"core-1","site":{"id":4},"role":{"id":6},"device_type":{"id":8}}"#.utf8),
+                etag: nil
+            ),
+        ]
+        fetcher.getBodies["/api/dcim/sites/12/"] = Data(
+            #"{"id":12,"name":"Lab","slug":"lab","status":{"value":"active"}}"#.utf8
+        )
+        fetcher.getBodies["/api/dcim/devices/30/"] = Data(
+            #"{"id":30,"name":"core-1","site":{"id":4},"role":{"id":6},"device_type":{"id":8}}"#.utf8
+        )
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.createSite(
+            NetBoxWriteBody.SiteCreate(name: "Lab", slug: "lab", status: "active")
+        )
+        try await engine.createDevice(
+            NetBoxWriteBody.DeviceCreate(
+                name: "core-1", deviceType: 8, role: 6, site: 4, status: "active"
+            )
+        )
+        XCTAssertEqual(fetcher.sends.map(\.method), ["POST", "POST"])
+        XCTAssertEqual(fetcher.sends.map(\.path), ["/api/dcim/sites/", "/api/dcim/devices/"])
+        XCTAssertTrue(
+            try ModelContext(container).fetch(FetchDescriptor<Device>()).contains { $0.id == 30 }
+        )
     }
 
     func testConflictDescriptionAndLiveBodyHelper() {
