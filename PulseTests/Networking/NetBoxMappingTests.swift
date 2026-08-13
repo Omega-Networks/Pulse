@@ -545,7 +545,7 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).count, 2)
     }
 
-    func testInterfaceMissingSiteIsOutOfScope() throws {
+    func testInterfaceWithDeviceButNoSiteIsStored() throws {
         let container = try makeContainer()
         let context = ModelContext(container)
         context.insert(Device(id: 10))
@@ -555,12 +555,26 @@ final class NetBoxMappingTests: XCTestCase {
             [interfaceRecord(id: 1, deviceID: 10)],
             fetchComplete: true,
             skipped: 0,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertEqual(result.upserted, 1)
+        XCTAssertEqual(result.outOfScope, 0)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).first?.siteId, 0)
+    }
+
+    func testInterfaceWithoutDeviceIsOutOfScope() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let result = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 99)],
+            fetchComplete: true,
+            skipped: 0,
             keeping: [],
             in: context
         )
         XCTAssertEqual(result.upserted, 0)
         XCTAssertEqual(result.outOfScope, 1)
-        XCTAssertTrue(result.didDelete)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Interface>()).isEmpty)
     }
 

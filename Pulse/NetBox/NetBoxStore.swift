@@ -519,21 +519,25 @@ enum NetBoxStore {
         var accepted: [NetBoxRecord.Interface] = []
         var acceptedIDs = Set<Int64>()
         var siteByDevice: [Int64: Int64] = [:]
+        var missingDeviceIDs = Set<Int64>()
         var outOfScope = 0
         for record in records {
-            guard let deviceID = record.deviceID,
-                  let device = devices[deviceID],
-                  let siteID = device.site?.id
-            else {
-                logger.error(
-                    "Interface \(record.id) device \(record.deviceID ?? -1) unresolved or has no site; dropping as out of scope"
-                )
+            guard let deviceID = record.deviceID, let device = devices[deviceID] else {
+                if let deviceID = record.deviceID {
+                    missingDeviceIDs.insert(deviceID)
+                }
                 outOfScope += 1
                 continue
             }
             accepted.append(record)
             acceptedIDs.insert(record.id)
-            siteByDevice[deviceID] = siteID
+            siteByDevice[deviceID] = device.site?.id ?? 0
+        }
+        if !missingDeviceIDs.isEmpty {
+            let sample = missingDeviceIDs.sorted().prefix(5).map(String.init).joined(separator: ", ")
+            logger.error(
+                "Dropped \(outOfScope) interfaces whose device is not in the store (\(missingDeviceIDs.count) devices, e.g. \(sample)). Filtered or not yet synced."
+            )
         }
 
         try upsert(accepted, in: context) { record, model in

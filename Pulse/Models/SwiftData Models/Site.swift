@@ -52,6 +52,7 @@ final class Site {
     var status: String? // New property for status
     //Enables SiteRow to be updated in real time
     var highestSeverityStored: Int = -1
+    var highestUnacknowledgedSeverityStored: Int = -1
     
     @Relationship(inverse: \Device.site)
     var devices: [Device]? = []
@@ -92,16 +93,23 @@ final class Site {
     
     // MARK: - Severity Properties
     
-    var highestSeverity: Int {
-        if monitoredDevices.isEmpty { return -2 }
-        if activeEvents.isEmpty { return -1 }
-        return activeEvents.compactMap { Int($0.severity) }.max() ?? -1
-    }
-    
-    var highestUnacknowledgedSeverity: Int {
-        if monitoredDevices.isEmpty { return -1 }
-        if unacknowledgedActiveEvents.isEmpty { return -1 }
-        return unacknowledgedActiveEvents.compactMap { Int($0.severity) }.max() ?? -1
+    /// Map pins and lists read these stored fields. Walking `Event.rClock`
+    /// from a live `@Query` after Delete All traps in SwiftData (invalidated
+    /// backing data). Recompute from events at ingest, never in `body`.
+    var highestSeverity: Int { highestSeverityStored }
+
+    var highestUnacknowledgedSeverity: Int { highestUnacknowledgedSeverityStored }
+
+    func refreshSeverityFromEvents() {
+        if monitoredDevices.isEmpty {
+            highestSeverityStored = -2
+            highestUnacknowledgedSeverityStored = -1
+            return
+        }
+        let active = activeEvents
+        highestSeverityStored = active.compactMap { Int($0.severity) }.max() ?? -1
+        highestUnacknowledgedSeverityStored =
+            unacknowledgedActiveEvents.compactMap { Int($0.severity) }.max() ?? -1
     }
     
     // MARK: - Visual Properties

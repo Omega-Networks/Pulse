@@ -1,6 +1,6 @@
 # NetBox sync (operator)
 
-Pulse mirrors a subset of NetBox into local SwiftData on every launch and when you press **Sync Data** in Settings → Database. Devices, sites, and the other inventory types block the launch screen; **interfaces stream afterwards**. Sites open with whatever interfaces have already landed. A “Synchronising interfaces…” indicator in the toolbar means topology edges may still be filling in. After a failed interface walk, freshness is not stamped and the next launch retries the full interface pull.
+Pulse mirrors a subset of NetBox into local SwiftData on every launch and when you press **Sync Data** in Settings → Database. Interfaces are a stage of that same full pull (after devices and services). The launch screen stays up until the interface walk finishes. After a failed walk, freshness is not stamped and the next launch retries. Incremental changelog sync (P3) will replace this one-time full interface pull.
 
 ## Token
 

@@ -358,11 +358,6 @@ struct SiteGraphView: View {
         }
         .task(id: siteId) {
             await computeEdges()
-            while case .syncing = RequestStatusManager.shared.currentStatus[.netbox] {
-                try? await Task.sleep(for: .seconds(2))
-                await computeEdges()
-            }
-            await computeEdges()
         }
     }
 }

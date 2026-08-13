@@ -167,18 +167,16 @@ final class NetBoxSyncEngineTests: XCTestCase {
         XCTAssertTrue(deviceQuery.contains { $0.name == "role_id__n" && $0.value == "30" })
     }
 
-    func testInterfaceWalkUsesRoleExcludeAndRunsAfterInventoryReady() async throws {
+    func testInterfaceWalkIsPartOfFullSyncAndUsesRoleExclude() async throws {
         let container = try makeContainer()
         let fetcher = MockNetBoxFetcher()
         fetcher.emptySuccess = true
         let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
-        var readyAtCount = -1
-        try await engine.fullSync(onInventoryReady: {
-            readyAtCount = fetcher.paths.count
-        })
+        try await engine.fullSync()
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/interfaces/"))
-        XCTAssertGreaterThanOrEqual(readyAtCount, 0)
-        XCTAssertFalse(fetcher.paths.prefix(readyAtCount).contains("/api/dcim/interfaces/"))
+        let servicesIndex = try XCTUnwrap(fetcher.paths.firstIndex(of: "/api/ipam/services/"))
+        let interfaceIndex = try XCTUnwrap(fetcher.paths.firstIndex(of: "/api/dcim/interfaces/"))
+        XCTAssertGreaterThan(interfaceIndex, servicesIndex)
         let query = try XCTUnwrap(fetcher.queries["/api/dcim/interfaces/"])
         XCTAssertTrue(query.contains { $0.name == "device_role_id__n" && $0.value == "29" })
         XCTAssertTrue(query.contains { $0.name == "device_role_id__n" && $0.value == "30" })

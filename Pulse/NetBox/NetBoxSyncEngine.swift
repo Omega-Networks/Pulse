@@ -50,23 +50,15 @@ actor NetBoxSyncEngine {
     }
 
     /// Tenant groups → roles → types → tenants → regions → site groups →
-    /// sites → racks → devices → services, then streaming interfaces.
-    /// `onInventoryReady` fires after services so boot can leave the
-    /// loading screen while interfaces continue. Stamp still waits for
-    /// the interface walk.
-    func fullSync(
-        progress: (@Sendable (Int, String) -> Void)? = nil,
-        onInventoryReady: (@Sendable () async -> Void)? = nil
-    ) async throws {
+    /// sites → racks → devices → services → interfaces. Boot and Settings
+    /// → Sync Data both wait for every stage, including interfaces.
+    func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         if let inFlight {
             try await inFlight.value
             return
         }
         let task = Task(priority: .userInitiated) {
-            try await self.performFullSync(
-                progress: progress,
-                onInventoryReady: onInventoryReady
-            )
+            try await self.performFullSync(progress: progress)
         }
         inFlight = task
         defer { inFlight = nil }
@@ -78,10 +70,7 @@ actor NetBoxSyncEngine {
         }
     }
 
-    private func performFullSync(
-        progress: (@Sendable (Int, String) -> Void)?,
-        onInventoryReady: (@Sendable () async -> Void)?
-    ) async throws {
+    private func performFullSync(progress: (@Sendable (Int, String) -> Void)?) async throws {
         let stages: [(String, () async throws -> Void)] = [
             ("Synchronising Tenant Groups...", { try await self.syncTenantGroups() }),
             ("Synchronising Device Roles...", { try await self.syncDeviceRoles() }),
@@ -93,17 +82,13 @@ actor NetBoxSyncEngine {
             ("Synchronising Racks...", { try await self.syncRacks() }),
             ("Synchronising Devices...", { try await self.syncDevices() }),
             ("Synchronising Services...", { try await self.syncServices() }),
+            ("Synchronising Interfaces...", { try await self.syncInterfaces() }),
         ]
         for (index, stage) in stages.enumerated() {
             progress?(index, stage.0)
             try await stage.1()
         }
-        await onInventoryReady?()
-        try await syncInterfaces()
         try await stampSuccess()
-        await MainActor.run {
-            RequestStatusManager.shared.clearSyncing(.netbox)
-        }
     }
 
     // MARK: - Types
@@ -256,12 +241,6 @@ actor NetBoxSyncEngine {
     }
 
     private func syncInterfaces() async throws {
-        await MainActor.run {
-            RequestStatusManager.shared.updateStatus(
-                .netbox,
-                .syncing("Synchronising interfaces…")
-            )
-        }
         let extra = filter.excludedRoleQueryAsInts.map {
             URLQueryItem(name: "device_role_id__n", value: String($0))
         }

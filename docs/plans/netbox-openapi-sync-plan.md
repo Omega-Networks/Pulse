@@ -193,6 +193,7 @@ The pre-push audit found this plan's tracked copy had lost §8 (overwritten at b
 3. **Interface page cap is 60_000** (1M devices × 50 IF / 1000 + 20% slack). Other types stay at 100.
 4. **Consumers use `FetchDescriptor` + `InterfaceVO`**, not site-scoped `@Query`. Table edit UI stays ephemeral on VO copies (writes are P4).
 5. **`ProviderModelActor` is kept** — `UpdateModal` still calls it for Zabbix event updates.
+6. **Interface sync is a launch-blocking full-sync stage** (owner reversal of the background-phase plan). Settings → Sync Data runs the same path. P3 removes the latency.
 
 ## Sources
 

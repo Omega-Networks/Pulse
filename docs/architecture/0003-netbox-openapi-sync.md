@@ -51,7 +51,9 @@ Ingest streams `/api/dcim/interfaces/` page-by-page (`streamDecoded`, `maxPages`
 
 Unresolved device or a device with no site is **out of scope**: logged, not stored, not counted as `skipped`. Only poisoned JSON increments `skipped` and gates delete. The interface list query sends `device_role_id__n` from `NetBoxFilterConfiguration`; there is no `manufacturer_id__n` on this endpoint, so manufacturer-excluded leftovers drop as out of scope.
 
-The first interface walk after upgrade is a background phase. Boot leaves the loading screen when the 10-type inventory is ready. A `.syncing` status on `RequestStatusManager` covers the rest. `lastNetBoxUpdate` still stamps only after interfaces succeed.
+The interface walk is a full-sync stage after services, on the launch progress bar and on Settings → Sync Data. P3 will replace the one-time full pull with changelog deltas. `lastNetBoxUpdate` stamps only after interfaces succeed.
+
+Delete All includes `Interface`. Map pin colour reads stored severity fields on `Site` / `Device` (`refreshSeverityFromEvents` at event ingest and after boot sync) so `body` never walks `Event.rClock` after a wipe.
 
 `InterfaceCache` and `.interfacesDidUpdate` are gone. Consumers load `InterfaceVO` via an indexed `FetchDescriptor`. `SiteGraphView` and `LayoutManager` share `SiteTopologyEdges` (one per-site fetch + undirected join). Duplicate cable rendering (once per end) is collapsed to a single edge — accepted visual change.
 

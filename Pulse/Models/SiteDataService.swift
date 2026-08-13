@@ -354,6 +354,8 @@ actor SiteDataService {
         do {
             try context.save()
             logger.debug("Successfully saved context")
+            refreshSeverities(in: context)
+            try? context.save()
             
             // Map devices for newly inserted events
             if !insertedEventIds.isEmpty {
@@ -494,9 +496,29 @@ actor SiteDataService {
             }
             
             logger.debug("Event sync completed successfully")
+            let refreshContext = ModelContext(modelContainer)
+            refreshSeverities(in: refreshContext)
+            try? refreshContext.save()
             
         } catch {
             logger.error("Failed to sync events: \(error.localizedDescription)")
+        }
+    }
+
+    func refreshSeverities() {
+        let context = ModelContext(modelContainer)
+        refreshSeverities(in: context)
+        try? context.save()
+    }
+
+    private func refreshSeverities(in context: ModelContext) {
+        let devices = (try? context.fetch(FetchDescriptor<Device>())) ?? []
+        for device in devices {
+            device.refreshSeverityFromEvents()
+        }
+        let sites = (try? context.fetch(FetchDescriptor<Site>())) ?? []
+        for site in sites {
+            site.refreshSeverityFromEvents()
         }
     }
 
