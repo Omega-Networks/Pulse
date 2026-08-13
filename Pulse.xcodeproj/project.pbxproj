@@ -140,6 +140,9 @@
 		A11CAFE0000000000000NB1C /* NetBoxListDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB0D /* NetBoxListDecoder.swift */; };
 		A11CAFE0000000000000NB1D /* NetBoxStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB0E /* NetBoxStore.swift */; };
 		A11CAFE0000000000000NB1E /* NetBoxMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB0F /* NetBoxMappingTests.swift */; };
+		A11CAFE0000000000000NB53 /* NetBoxFetching.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB50 /* NetBoxFetching.swift */; };
+		A11CAFE0000000000000NB54 /* NetBoxSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB51 /* NetBoxSyncEngine.swift */; };
+		A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */; };
 		A11CAFE0000000000000NB26 /* NetBoxAPI in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB27 /* NetBoxAPI */; };
 		A11CAFE0000000000000NB22 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB20 /* OpenAPIRuntime */; };
 		A11CAFE0000000000000NB23 /* OpenAPIURLSession in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB21 /* OpenAPIURLSession */; };
@@ -448,6 +451,9 @@
 		A11CAFE0000000000000NB0D /* NetBoxListDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxListDecoder.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB0E /* NetBoxStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxStore.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB0F /* NetBoxMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxMappingTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB50 /* NetBoxFetching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxFetching.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB51 /* NetBoxSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxSyncEngine.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxSyncEngineTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -745,6 +751,7 @@
 				A11CAFE0000000000000NB09 /* NetBoxFilterConfigurationTests.swift */,
 				A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */,
 				A11CAFE0000000000000NB0F /* NetBoxMappingTests.swift */,
+				A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -761,6 +768,8 @@
 				A11CAFE0000000000000NB0C /* NetBoxMapping.swift */,
 				A11CAFE0000000000000NB0D /* NetBoxListDecoder.swift */,
 				A11CAFE0000000000000NB0E /* NetBoxStore.swift */,
+				A11CAFE0000000000000NB50 /* NetBoxFetching.swift */,
+				A11CAFE0000000000000NB51 /* NetBoxSyncEngine.swift */,
 			);
 			path = NetBox;
 			sourceTree = "<group>";
@@ -1346,6 +1355,8 @@
 				A11CAFE0000000000000NB1B /* NetBoxMapping.swift in Sources */,
 				A11CAFE0000000000000NB1C /* NetBoxListDecoder.swift in Sources */,
 				A11CAFE0000000000000NB1D /* NetBoxStore.swift in Sources */,
+				A11CAFE0000000000000NB53 /* NetBoxFetching.swift in Sources */,
+				A11CAFE0000000000000NB54 /* NetBoxSyncEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1361,6 +1372,7 @@
 				A11CAFE0000000000000NB18 /* NetBoxFilterConfigurationTests.swift in Sources */,
 				A11CAFE0000000000000NB19 /* NetBoxPageIteratorTests.swift in Sources */,
 				A11CAFE0000000000000NB1E /* NetBoxMappingTests.swift in Sources */,
+				A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */,
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
 				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
 				B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */,

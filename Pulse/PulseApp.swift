@@ -43,10 +43,9 @@ class InitializationState: ObservableObject {
     @Published var contentViewReady = false
     @Published var startExitAnimation = false
     @Published var isConfigured = false
-    /// Nine NetBox / Zabbix sync calls plus TipKit configuration. Matches the
-    /// number of `updateProgress` calls inside `verifyContainer` so the bar fills
-    /// to 100% when the real work completes.
-    let totalSteps = 10.0
+    /// Ten NetBox types plus TipKit. Matches the last `updateProgress` step
+    /// inside `verifyContainer` so the bar fills to 100% when work completes.
+    let totalSteps = 11.0
     
     /**
       Updates the initialization progress and step description.
@@ -77,6 +76,7 @@ struct PulseApp: App {
 
     let notificationHandler = NotificationHandler()
     let modelContainer: ModelContainer
+    let netBoxSyncEngine: NetBoxSyncEngine
     var clusteringService: ClusteringService?
     var monitorService: PowerSenseMonitorService?
 
@@ -101,6 +101,8 @@ struct PulseApp: App {
                 SSHCredential.self,
                 KnownHost.self
             )
+
+            netBoxSyncEngine = NetBoxSyncEngine(modelContainer: modelContainer)
 
             // Initialize clustering service with model container
             clusteringService = try ClusteringService(modelContainer: modelContainer)
@@ -139,6 +141,7 @@ struct PulseApp: App {
                         .environment(sharedLocations)
                         .environment(clusteringService)
                         .environment(monitorService)
+                        .environment(\.netBoxSyncEngine, netBoxSyncEngine)
                         .modelContainer(modelContainer)
                         .task {
                             await initializePowerSense()
@@ -200,6 +203,7 @@ struct PulseApp: App {
 
         Settings {
             SettingsView()
+                .environment(\.netBoxSyncEngine, netBoxSyncEngine)
                 .modelContainer(modelContainer)
         }
 
@@ -269,46 +273,32 @@ struct PulseApp: App {
         }
         
         // Drive the progress bar from the work that actually happens. Each
-        // updateProgress call sets the label for the step that's about to run, so
-        // the user sees "Synchronising X" while X is in flight, then advances when
-        // it completes. ProviderModelActor isolates the SwiftData I/O to its own
-        // executor; the main thread stays free, so no priority inversions.
-        let modelActor = ProviderModelActor(modelContainer: modelContainer)
-
+        // updateProgress call sets the label for the step that's about to run.
+        // NetBoxSyncEngine is the single NetBox owner; boot and Sync Dashboard
+        // share it so they cannot race.
         do {
-            initState.updateProgress(0, "Synchronising Device Roles...")
-            try await modelActor.getDeviceRoles()
+            try await netBoxSyncEngine.fullSync { step, label in
+                Task { @MainActor in
+                    initState.updateProgress(step, label)
+                }
+            }
 
-            initState.updateProgress(1, "Synchronising Device Types...")
-            try await modelActor.getDeviceTypes()
-
-            initState.updateProgress(2, "Synchronising Tenants...")
-            try await modelActor.getTenants()
-
-            initState.updateProgress(3, "Synchronising Regions...")
-            try await modelActor.getRegions()
-
-            initState.updateProgress(4, "Synchronising Site Groups...")
-            try await modelActor.getSiteGroups()
-
-            initState.updateProgress(5, "Synchronising Sites...")
-            try await modelActor.getSites()
-
-            initState.updateProgress(6, "Synchronising Racks...")
-            try await modelActor.getRacks()
-
-            initState.updateProgress(7, "Synchronising Devices...")
-            try await modelActor.getDevices()
-
-            initState.updateProgress(8, "Synchronising Services...")
-            try await modelActor.getServices()
-
-            initState.updateProgress(9, "Setting up Tips...")
+            initState.updateProgress(10, "Setting up Tips...")
             tipManager.configure()
 
-            initState.updateProgress(10, "Ready")
+            initState.updateProgress(11, "Ready")
         } catch {
-            print("Sync failed (likely due to missing credentials): \(error)")
+            logger.error("NetBox sync failed: \(error.localizedDescription)")
+            if let netboxError = error as? NetBoxSyncError {
+                await netboxError.publish()
+            } else {
+                await MainActor.run {
+                    RequestStatusManager.shared.updateStatus(
+                        .netbox,
+                        .unknownError(error.localizedDescription)
+                    )
+                }
+            }
             initState.currentStep = "Running in Offline Mode"
             initState.showWelcome = true
             try? await Task.sleep(for: .seconds(2))

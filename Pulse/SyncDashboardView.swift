@@ -41,6 +41,7 @@ struct SyncDashboardView: View {
     // MARK: - Environment & State Properties
     
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     @Query var syncProvider: [SyncProvider]
     
     // MARK: - UI State
@@ -473,54 +474,26 @@ extension SyncDashboardView {
             }
         }
 
-        let container = modelContext.container
+        let engine = netBoxSyncEngine ?? NetBoxSyncEngine(modelContainer: modelContext.container)
 
-        await Task.detached(priority: .background) {
-            let modelActor = ProviderModelActor(modelContainer: container)
-
-            do {
-                // Execute all operations sequentially
-                try await modelActor.getDeviceRoles()
-                try await modelActor.getDeviceTypes()
-                try await modelActor.getTenants()
-//                try await modelActor.getRegions()
-                try await modelActor.getSiteGroups()
-                try await modelActor.getSites()
-                try await modelActor.getRacks()
-                try await modelActor.getDevices()
-                try await modelActor.getServices()
-
-                // Only show success if all operations complete
-                await MainActor.run {
-                    RequestStatusManager.shared.updateStatus(.netbox, .success(code: 200, message: "All data synchronized successfully"))
-                }
-
-            } catch let error as NetboxRequestError {
-                print("NetBox error occurred: \(error)")
-                await MainActor.run {
-                    switch error {
-                    case .failure(let code, let message):
-                        RequestStatusManager.shared.updateStatus(.netbox, .dataError(code: code, message: message))
-                    case .networkError(let error):
-                        RequestStatusManager.shared.updateStatus(.netbox, .connectionError(error.localizedDescription))
-                    case .decodingError:
-                        RequestStatusManager.shared.updateStatus(.netbox, .dataError(code: 0, message: "Failed to decode response"))
-                    case .success:
-                        break // Should never happen in error case
-                    }
-                }
-                // Exit function on error
-                return
-
-            } catch {
-                print("Unknown error occurred: \(error)")
-                await MainActor.run {
-                    RequestStatusManager.shared.updateStatus(.netbox, .unknownError(error.localizedDescription))
-                }
-                // Exit function on error
-                return
+        do {
+            try await engine.fullSync()
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .success(code: 200, message: "All data synchronized successfully")
+                )
             }
-        }.value
+        } catch let error as NetBoxSyncError {
+            await error.publish()
+        } catch {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .unknownError(error.localizedDescription)
+                )
+            }
+        }
 
         await updateCounts()
     }
