@@ -27,17 +27,31 @@ if ! command -v "$GENERATOR" >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 is required to normalize servers: and scan for the lab host" >&2
+  exit 1
+fi
+
 AUTH_SCHEME="Token"
 if [[ "$NETBOX_TOKEN" == nbt_* ]]; then
   AUTH_SCHEME="Bearer"
 fi
 
+# Token must not appear on curl's argv (`ps` can read it). curl -H @file
+# reads the header from a 0600 temp file that we shred on exit.
+AUTH_HEADER_FILE="$(mktemp "${TMPDIR:-/tmp}/netbox-auth.XXXXXX")"
+cleanup() { rm -f "$AUTH_HEADER_FILE"; }
+trap cleanup EXIT
+chmod 600 "$AUTH_HEADER_FILE"
+printf 'Authorization: %s %s\n' "$AUTH_SCHEME" "$NETBOX_TOKEN" > "$AUTH_HEADER_FILE"
+
 echo "Fetching schema from ${NETBOX_URL}/api/schema/ …"
 curl -fsS \
-  -H "Authorization: ${AUTH_SCHEME} ${NETBOX_TOKEN}" \
+  -H @"$AUTH_HEADER_FILE" \
   -H "Accept: application/vnd.oai.openapi" \
   "${NETBOX_URL%/}/api/schema/" \
   -o "$RAW"
+rm -f "$AUTH_HEADER_FILE"
 
 echo "Filtering + generating into $OUT …"
 mkdir -p "$OUT"
