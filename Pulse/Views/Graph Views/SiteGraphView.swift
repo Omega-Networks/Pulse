@@ -214,29 +214,12 @@ struct SiteGraphView: View {
     }
 #endif
     
-    private func getInterface(id: Int64) async -> InterfaceVO? {
-        return await InterfaceCache.shared.getInterface(withId: id)
-    }
-
     private func computeEdges() async {
-        var newEdges: [Edge] = []
-        
-        for device in devices {
-            let interfaces = await InterfaceCache.shared.getInterfaces(forDeviceId: device.id)
-            
-            for interface in interfaces {
-                if let connectedEndpointId = interface.connectedEndpointId {
-                    if let connectedEndpoint = await getInterface(id: connectedEndpointId) {
-                        let edge = Edge(start: interface, end: connectedEndpoint)
-                        newEdges.append(edge)
-                    }
-                }
-            }
-        }
-        
+        let newEdges = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext))
+            .map(SiteTopologyEdges.derive) ?? []
         await MainActor.run {
             self.computedEdges = newEdges
-            self.needsEdgeUpdate = false  // Reset update flag
+            self.needsEdgeUpdate = false
         }
     }
     
@@ -373,10 +356,13 @@ struct SiteGraphView: View {
                     #endif
                 )
         }
-        .onReceive(NotificationCenter.default.publisher(for: .interfacesDidUpdate)) { _ in
-            Task {
+        .task(id: siteId) {
+            await computeEdges()
+            while case .syncing = RequestStatusManager.shared.currentStatus[.netbox] {
+                try? await Task.sleep(for: .seconds(2))
                 await computeEdges()
             }
+            await computeEdges()
         }
     }
 }

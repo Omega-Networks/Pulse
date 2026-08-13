@@ -166,6 +166,8 @@
 		B17E050100000000000000B1 /* Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A1 /* Service.swift */; };
 		B17E051100000000000000B1 /* Interface.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051100000000000000A1 /* Interface.swift */; };
 		B17E051200000000000000B1 /* InterfaceVO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051200000000000000A1 /* InterfaceVO.swift */; };
+		B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051300000000000000A1 /* SiteTopologyEdges.swift */; };
+		A11CAFE0000000000000NB73 /* SiteTopologyEdgesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */; };
 		A11CAFE0000000000000NB71 /* NetBoxInterfaceSchemaMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */; };
 		B17E050200000000000000B1 /* WebHostTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A1 /* WebHostTrust.swift */; };
 		B17E050300000000000000B1 /* WebAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A1 /* WebAudit.swift */; };
@@ -383,6 +385,8 @@
 		B17E050100000000000000A1 /* Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Service.swift; sourceTree = "<group>"; };
 		B17E051100000000000000A1 /* Interface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interface.swift; sourceTree = "<group>"; };
 		B17E051200000000000000A1 /* InterfaceVO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceVO.swift; sourceTree = "<group>"; };
+		B17E051300000000000000A1 /* SiteTopologyEdges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteTopologyEdges.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteTopologyEdgesTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxInterfaceSchemaMigrationTests.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A1 /* WebHostTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrust.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A1 /* WebAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAudit.swift; sourceTree = "<group>"; };
@@ -759,6 +763,7 @@
 				A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */,
 				A11CAFE0000000000000NB0F /* NetBoxMappingTests.swift */,
 				A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */,
+				A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */,
 				A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */,
 				A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */,
 			);
@@ -955,6 +960,7 @@
 			children = (
 				C961919F2ACA5711000198DB /* Edge.swift */,
 				B17E051200000000000000A1 /* InterfaceVO.swift */,
+				B17E051300000000000000A1 /* SiteTopologyEdges.swift */,
 			);
 			path = "Graph Models";
 			sourceTree = "<group>";
@@ -1251,6 +1257,7 @@
 				067FD0852ECC67B700146D44 /* MockSpatialTypes.swift in Sources */,
 				C96191A02ACA5711000198DB /* Edge.swift in Sources */,
 				B17E051200000000000000B1 /* InterfaceVO.swift in Sources */,
+				B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */,
 				C961919B2ACA56D4000198DB /* SearchBar.swift in Sources */,
 				411226102C167CAF003C6C65 /* DeviceDetails.swift in Sources */,
 				410A5D532C1FD393005A073C /* DetailSheet.swift in Sources */,
@@ -1384,6 +1391,7 @@
 				A11CAFE0000000000000NB19 /* NetBoxPageIteratorTests.swift in Sources */,
 				A11CAFE0000000000000NB1E /* NetBoxMappingTests.swift in Sources */,
 				A11CAFE0000000000000NB71 /* NetBoxInterfaceSchemaMigrationTests.swift in Sources */,
+				A11CAFE0000000000000NB73 /* SiteTopologyEdgesTests.swift in Sources */,
 				A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */,
 				A11CAFE0000000000000NB63 /* NetBoxAuthorizationTests.swift in Sources */,
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,

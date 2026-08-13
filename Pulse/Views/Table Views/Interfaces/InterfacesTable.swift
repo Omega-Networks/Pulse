@@ -119,12 +119,13 @@ struct InterfacesTable: View {
                 }
         }
         .task {
-            await loadInterfaces()
+            loadInterfaces()
         }
     }
     
-    private func loadInterfaces() async {
-        interfaces = await InterfaceCache.shared.getInterfaces(forDeviceId: device.id)
+    private func loadInterfaces() {
+        let deviceId = device.id
+        interfaces = (try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)) ?? []
     }
 }
 

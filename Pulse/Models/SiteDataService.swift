@@ -97,41 +97,7 @@ actor SiteDataService {
     // Coordinator function that handles all loading
     func loadAllSiteData(for siteId: Int64) async throws {
         try await getStaticDevices(for: siteId)
-        try await getInterfaces(for: siteId)
         try await getItems(for: siteId)
-    }
-    
-    //     MARK: - Loading Interfaces and Items
-    
-    func getInterfaces(for siteId: Int64) async throws {
-        let localContext = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Device>(
-            predicate: #Predicate<Device> { device in
-                device.site?.id == siteId
-            }
-        )
-        let deviceIds = try localContext.fetch(descriptor).map(\.id)
-
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for deviceId in deviceIds {
-                group.addTask {
-                    let (rows, skipped) = try await NetBoxPageIterator.fetchDecoded(
-                        path: "/api/dcim/interfaces/",
-                        extraQuery: [URLQueryItem(name: "device_id", value: String(deviceId))],
-                        as: NetBoxRecord.Interface.self,
-                        using: self.fetcher
-                    )
-                    if skipped > 0 {
-                        self.logger.error("Skipped \(skipped) interfaces for device \(deviceId)")
-                    }
-                    await InterfaceCache.shared.setInterfaces(
-                        rows.map { $0.asCacheValue() },
-                        forDeviceId: deviceId
-                    )
-                }
-            }
-            try await group.waitForAll()
-        }
     }
     
     //MARK: - WIP: loadItems function with TaskGroup

@@ -166,18 +166,16 @@ struct DeviceFaceplate: View {
         )
         .frame(height: 80)
         .task {
-            await loadInterfaces()
+            loadInterfaces()
         }
         .onChange(of: deviceId) {
-            Task.detached(priority: .background) {
-                await loadInterfaces()
-            }
+            loadInterfaces()
         }
     }
     
     // MARK: - Helper Methods
-    private func loadInterfaces() async {
-        interfaces = await InterfaceCache.shared.getInterfaces(forDeviceId: deviceId)
+    private func loadInterfaces() {
+        interfaces = (try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)) ?? []
     }
     
     private func formattedInterfaceName(_ name: String) -> String {
