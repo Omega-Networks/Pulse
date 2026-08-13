@@ -37,7 +37,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         let json = Data("""
         {
           "id": 7,
-          "url": "https://netbox.omega.net.nz/api/ipam/services/7/",
+          "url": "https://netbox.example.com/api/ipam/services/7/",
           "display": "SSH (TCP/22)",
           "parent_object_type": "dcim.device",
           "parent_object_id": 6023,
@@ -55,7 +55,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         XCTAssertEqual(service.id, 7)
         XCTAssertEqual(service.name, "SSH")
         XCTAssertEqual(service.display, "SSH (TCP/22)")
-        XCTAssertEqual(service.url, "https://netbox.omega.net.nz/api/ipam/services/7/")
+        XCTAssertEqual(service.url, "https://netbox.example.com/api/ipam/services/7/")
         XCTAssertEqual(service.serviceDescription, "Secure shell access")
 
         // Nested protocol object.
@@ -85,7 +85,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         let json = Data("""
         {
           "id": 91,
-          "url": "https://netbox.omega.net.nz/api/ipam/services/91/",
+          "url": "https://netbox.example.com/api/ipam/services/91/",
           "display": "HTTPS (TCP/443)",
           "parent_object_type": "virtualization.virtualmachine",
           "parent_object_id": 4410,
