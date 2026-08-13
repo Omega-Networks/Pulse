@@ -26,10 +26,41 @@
 import Foundation
 import OSLog
 
-/// GET-only transport for list ingest. Returns raw JSON so `NetBoxListDecoder`
-/// can skip a poisoned element without aborting the page.
+/// One HTTP hop. Writes send a JSON body; GET/DELETE leave `body` nil.
+struct NetBoxHTTPRequest: Sendable, Equatable {
+    var method: String
+    var path: String
+    var query: [URLQueryItem] = []
+    var body: Data?
+    var ifMatch: String?
+}
+
+/// Success response. Callers that need the ETag read `etag`; ingest uses `body`.
+struct NetBoxHTTPResponse: Sendable, Equatable {
+    var status: Int
+    var body: Data
+    var etag: String?
+}
+
+/// Transport for list ingest and MACD writes. `get` returns raw JSON so
+/// `NetBoxListDecoder` can skip a poisoned element without aborting the page.
 protocol NetBoxFetching: Sendable {
     func get(path: String, query: [URLQueryItem]) async throws -> Data
+    func send(_ request: NetBoxHTTPRequest) async throws -> NetBoxHTTPResponse
+}
+
+extension NetBoxFetching {
+    /// Mocks that only implement `get` can still be constructed. Writes fail closed.
+    func send(_ request: NetBoxHTTPRequest) async throws -> NetBoxHTTPResponse {
+        guard request.method.uppercased() == "GET" else {
+            throw NetBoxSyncError.httpStatus(
+                code: 405,
+                body: "Write transport not implemented"
+            )
+        }
+        let data = try await get(path: request.path, query: request.query)
+        return NetBoxHTTPResponse(status: 200, body: data, etag: nil)
+    }
 }
 
 enum NetBoxSyncError: Error, Equatable {
@@ -40,6 +71,7 @@ enum NetBoxSyncError: Error, Equatable {
     case transport(String)
     case emptyPageWithNext
     case pageLimitExceeded
+    case writesDisabled(String)
 
     static func == (lhs: NetBoxSyncError, rhs: NetBoxSyncError) -> Bool {
         switch (lhs, rhs) {
@@ -57,6 +89,8 @@ enum NetBoxSyncError: Error, Equatable {
             return true
         case (.pageLimitExceeded, .pageLimitExceeded):
             return true
+        case (.writesDisabled(let a), .writesDisabled(let b)):
+            return a == b
         default:
             return false
         }
@@ -82,7 +116,7 @@ enum NetBoxSyncError: Error, Equatable {
                 .netbox,
                 .authenticationFailure(code: 0, message: localizedDescription)
             )
-        case .missingServerURL, .invalidServerURL, .emptyPageWithNext, .pageLimitExceeded:
+        case .missingServerURL, .invalidServerURL, .emptyPageWithNext, .pageLimitExceeded, .writesDisabled:
             RequestStatusManager.shared.updateStatus(
                 .netbox,
                 .dataError(code: 0, message: localizedDescription)
@@ -100,6 +134,8 @@ extension NetBoxSyncError: LocalizedError {
             return "NetBox API token is not configured"
         case .invalidServerURL(let value):
             return "NetBox server URL is invalid: \(value)"
+        case .httpStatus(let code, let body) where code == 412:
+            return "NetBox conflict (412): \(body)"
         case .httpStatus(let code, let body):
             return "NetBox HTTP \(code): \(body)"
         case .transport(let message):
@@ -108,16 +144,22 @@ extension NetBoxSyncError: LocalizedError {
             return "NetBox returned an empty page that still claimed a next page"
         case .pageLimitExceeded:
             return "NetBox pagination exceeded the page safety limit"
+        case .writesDisabled(let message):
+            return message
         }
     }
 }
 
-/// Live GET using `Configuration.shared` per request (URL and token are
+/// Live HTTP using `Configuration.shared` per request (URL and token are
 /// runtime-mutable). Same Token / Bearer rule as `NetBoxAuthMiddleware`.
 struct NetBoxLiveFetcher: NetBoxFetching {
     private let logger = Logger(subsystem: "netbox", category: "http")
 
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
+        try await send(NetBoxHTTPRequest(method: "GET", path: path, query: query)).body
+    }
+
+    func send(_ request: NetBoxHTTPRequest) async throws -> NetBoxHTTPResponse {
         let server = await Configuration.shared.getNetboxApiServer()
         let token = await Configuration.shared.getNetboxApiToken()
         let authorization = try NetBoxAuthorization.headerValue(for: token)
@@ -126,28 +168,37 @@ struct NetBoxLiveFetcher: NetBoxFetching {
         let base = serverURL.absoluteString.hasSuffix("/")
             ? String(serverURL.absoluteString.dropLast())
             : serverURL.absoluteString
-        let suffix = path.hasPrefix("/") ? path : "/" + path
+        let suffix = request.path.hasPrefix("/") ? request.path : "/" + request.path
         guard var components = URLComponents(string: base + suffix) else {
             throw NetBoxSyncError.invalidServerURL(server)
         }
-        if !query.isEmpty {
-            components.queryItems = query
+        if !request.query.isEmpty {
+            components.queryItems = request.query
         }
         guard let url = components.url else {
             throw NetBoxSyncError.invalidServerURL(server)
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = request.method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        urlRequest.setValue(authorization, forHTTPHeaderField: "Authorization")
+        if let body = request.body {
+            urlRequest.httpBody = body
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        if let ifMatch = request.ifMatch {
+            urlRequest.setValue(ifMatch, forHTTPHeaderField: "If-Match")
+        }
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await URLSession.shared.data(for: urlRequest)
         } catch {
-            logger.error("NetBox GET \(url.absoluteString, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            logger.error(
+                "NetBox \(request.method, privacy: .public) \(url.absoluteString, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+            )
             throw NetBoxSyncError.transport(error.localizedDescription)
         }
 
@@ -155,12 +206,28 @@ struct NetBoxLiveFetcher: NetBoxFetching {
             throw NetBoxSyncError.transport("Invalid response type")
         }
         guard (200...299).contains(http.statusCode) else {
-            logger.error("NetBox GET \(url.absoluteString, privacy: .public) status \(http.statusCode)")
+            logger.error(
+                "NetBox \(request.method, privacy: .public) \(url.absoluteString, privacy: .public) status \(http.statusCode)"
+            )
             throw NetBoxSyncError.httpStatus(
                 code: http.statusCode,
-                body: HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+                body: Self.bodyString(data)
             )
         }
-        return data
+        return NetBoxHTTPResponse(
+            status: http.statusCode,
+            body: data,
+            etag: http.value(forHTTPHeaderField: "ETag")
+        )
+    }
+
+    /// Surface the server JSON verbatim. `HTTPURLResponse.localizedString`
+    /// is not NetBox's validation body.
+    static func bodyString(_ data: Data) -> String {
+        if data.isEmpty { return "" }
+        if let string = String(data: data, encoding: .utf8), !string.isEmpty {
+            return string
+        }
+        return "\(data.count) bytes"
     }
 }

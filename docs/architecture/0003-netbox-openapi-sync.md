@@ -31,7 +31,7 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 | **P1 (this ADR)** | Generated GET client, boot + dashboard + on-demand site loads, ingest DTOs, delete gate, Add Site disabled, operator stub |
 | **P2 (this amendment)** | Persisted `Interface` `@Model`, streaming ingest, `InterfaceVO` edges, drop `InterfaceCache` |
 | **P3 (this amendment)** | Changelog watermark, boot delta pass, weekly safety mirror |
-| **P4** | MACD writes, real Add Site, ETag |
+| **P4 (this amendment)** | Interface/cable writes, gated device/site, last-write-wins |
 
 ## Structural enforcement
 
@@ -70,7 +70,7 @@ Delete All includes `Interface`. Map pin colour reads stored severity fields on 
 | Gate 1 — lab count parity, skip+delete, network kill, Add Site disabled | In progress (lab) |
 | Gate 2 — offline interfaces | Lab 2026-08-13: startup sync, offline site open, edge parity (minus accepted dedupe), Delete All signed off. Owner waived proxy capture, P1-store upgrade, Instruments, headless re-run. Cables deferred. |
 | Gate 3 — changelog converge | Not yet (lab; blocks P3 merge) |
-| Gate 4 — write round-trips | Not yet |
+| Gate 4 — write round-trips | Not yet (lab; blocks P4 merge) |
 
 ## Delete All and SwiftData
 
@@ -100,3 +100,18 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 - 2026-08-13 — P2: persisted `Interface`, streaming ingest, out-of-scope vs skipped, VO edges, cache deleted. Gate 2 still lab.
 - 2026-08-13 — P2 lab: owner signed startup/offline/edges/Delete All. Site-open interface HTTP already removed. Cables into SwiftData deferred.
 - 2026-08-13 — P3: `lastObjectChangeId`/`Time` are NetBox server values, advanced only after a fully applied delta. Boot uses delta when the watermark is present and retained; full mirror on empty store, missing watermark, 404 watermark, or weekly safety. Settings → Full Resync is always a mirror. Unknown `changed_object_type` is skipped. `dcim.cable` re-fetches both interface ends.
+- 2026-08-13 — P4: hand-written write bodies (generated `PatchedWritable*Request` is not Encodable; client not regenerated). Interface PATCH (enabled/description) and cable POST/DELETE are live. Device/site methods exist and refuse. `If-Match` is off (weak ETag). Post-write re-fetch uses the delta-apply path. Add Site stays disabled and never POSTs.
+
+## Writes (P4 amendment)
+
+Views call `NetBoxSyncEngine`. The engine owns `NetBoxWriteService`, which encodes `NetBoxWriteBody` values and sends them through `NetBoxFetching.send`. Generated write types stay unused. After a 2xx the engine re-fetches the object (both interface ends for a cable) through `applyDeltaItem` — the write response is not applied locally.
+
+`NetBoxWritePolicy.shipped` is last-write-wins: no `If-Match`. NetBox 4.6 emits `ETag: W/"<last_updated>"`. RFC 7232 strong comparison never matches a weak validator; do not turn `sendIfMatch` on until the lab proves both the 412 path and a successful match. 412 still surfaces as `NetBox conflict (412): <server body>`.
+
+`custom_fields` is omitted unless the caller passes changed keys only. Interface enable/description PATCHes never include it.
+
+Device and site write methods throw `writesDisabled` unless the policy gate is on. Add Site remains a disabled button. A write-disabled token is a 403; the server body is shown verbatim (same path as 400 validation).
+
+`Interface.cableId` is the NetBox cable id used to DELETE. A store that predates this field needs a Full Resync before disconnect works.
+
+HTTP error bodies are the server JSON, not `HTTPURLResponse.localizedString`.

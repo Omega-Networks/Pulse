@@ -51,10 +51,15 @@ import UniformTypeIdentifiers
  */
 struct InterfacesTable: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     @State var device: Device
     
     @State var selection = Set<Int64>()
     @State private var interfaces: [InterfaceVO] = []
+    @State private var isWriting = false
+    @State private var writeError: String?
+    @State private var connectFrom: InterfaceVO?
+    @State private var siteCandidates: [InterfaceVO] = []
     
     @State var sortOrder: [KeyPathComparator<InterfaceVO>] = [
         .init(\.id, order: SortOrder.forward)
@@ -121,11 +126,96 @@ struct InterfacesTable: View {
         .task {
             loadInterfaces()
         }
+        .sheet(item: $connectFrom) { source in
+            ConnectInterfaceSheet(
+                source: source,
+                candidates: siteCandidates.filter {
+                    $0.id != source.id && $0.cableId == nil && $0.connectedEndpointId == nil
+                },
+                onCancel: { connectFrom = nil },
+                onConnect: { target in
+                    Task { await connect(source, to: target) }
+                }
+            )
+        }
+        .alert("NetBox write failed", isPresented: Binding(
+            get: { writeError != nil },
+            set: { if !$0 { writeError = nil } }
+        )) {
+            Button("OK", role: .cancel) { writeError = nil }
+        } message: {
+            Text(writeError ?? "")
+        }
     }
     
     private func loadInterfaces() {
         let deviceId = device.id
         interfaces = (try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)) ?? []
+    }
+
+    private func beginConnect(_ interface: InterfaceVO) {
+        let siteId = interface.siteId ?? device.site?.id
+        if let siteId {
+            siteCandidates = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)) ?? []
+        } else {
+            siteCandidates = []
+        }
+        connectFrom = interface
+    }
+
+    private func saveDescription(_ interface: InterfaceVO, _ value: String) async {
+        let next = value.isEmpty ? "" : value
+        let current = interface.interfaceDescription ?? ""
+        guard next != current else { return }
+        await performWrite {
+            try await engine.patchInterface(id: interface.id, description: next)
+        }
+    }
+
+    private func setEnabled(_ interface: InterfaceVO, _ enabled: Bool) async {
+        guard enabled != interface.enabled else { return }
+        await performWrite {
+            try await engine.patchInterface(id: interface.id, enabled: enabled)
+        }
+    }
+
+    private func connect(_ source: InterfaceVO, to target: InterfaceVO) async {
+        connectFrom = nil
+        await performWrite {
+            try await engine.createCable(from: source.id, to: target.id)
+        }
+    }
+
+    private func disconnect(_ interface: InterfaceVO) async {
+        guard let cableId = interface.cableId else {
+            writeError = "Cable id is missing. Run Full Resync, then disconnect."
+            return
+        }
+        let ends = [interface.id, interface.connectedEndpointId].compactMap { $0 }
+        await performWrite {
+            try await engine.deleteCable(id: cableId, refreshing: ends)
+        }
+    }
+
+    private var engine: NetBoxSyncEngine {
+        get throws {
+            guard let netBoxSyncEngine else {
+                throw NetBoxSyncError.writesDisabled("NetBox sync engine is not available")
+            }
+            return netBoxSyncEngine
+        }
+    }
+
+    private func performWrite(_ work: () async throws -> Void) async {
+        guard !isWriting else { return }
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            try await work()
+            loadInterfaces()
+        } catch {
+            writeError = error.localizedDescription
+        }
     }
 }
 
@@ -152,10 +242,50 @@ extension InterfacesTable {
             
             
             TableColumn("Description") { (interface: InterfaceVO) in
-                EditableText(text: Binding(
-                    get: { editedInterfaces[interface.id]?.interfaceDescription ?? interface.interfaceDescription ?? "" },
-                    set: { editedInterfaces[interface.id, default: interface].interfaceDescription = $0.isEmpty ? nil : $0 }
-                ))
+                EditableText(
+                    text: Binding(
+                        get: { editedInterfaces[interface.id]?.interfaceDescription ?? interface.interfaceDescription ?? "" },
+                        set: { editedInterfaces[interface.id, default: interface].interfaceDescription = $0.isEmpty ? nil : $0 }
+                    ),
+                    onSubmitted: { value in
+                        Task { await saveDescription(interface, value) }
+                    }
+                )
+            }
+
+            TableColumn("Enabled") { (interface: InterfaceVO) in
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { interface.enabled },
+                        set: { newValue in
+                            Task { await setEnabled(interface, newValue) }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .disabled(isWriting || netBoxSyncEngine == nil)
+            }
+
+            TableColumn("Cable") { (interface: InterfaceVO) in
+                if interface.cableId != nil || interface.connectedEndpointId != nil {
+                    HStack {
+                        Text(interface.connectedEndpointName ?? "—")
+                            .lineLimit(1)
+                        Button("Disconnect") {
+                            Task { await disconnect(interface) }
+                        }
+                        .disabled(isWriting || interface.cableId == nil || netBoxSyncEngine == nil)
+                        .help(interface.cableId == nil
+                              ? "Cable id is missing. Run Full Resync, then disconnect."
+                              : "Delete the cable in NetBox")
+                    }
+                } else {
+                    Button("Connect…") {
+                        beginConnect(interface)
+                    }
+                    .disabled(isWriting || netBoxSyncEngine == nil)
+                }
             }
             
             TableColumn("Type") { (interface: InterfaceVO) in
@@ -228,21 +358,66 @@ extension InterfacesTable {
  */
 struct EditableText: View {
     @Binding var text: String
+    var onSubmitted: ((String) -> Void)?
     
     @State private var temporaryText: String
     @FocusState private var isFocused: Bool
     
-    init(text: Binding<String>) {
+    init(text: Binding<String>, onSubmitted: ((String) -> Void)? = nil) {
         self._text = text
+        self.onSubmitted = onSubmitted
         self.temporaryText = text.wrappedValue
     }
     
     var body: some View {
-        TextField("", text: $temporaryText, onCommit: { text = temporaryText })
+        TextField("", text: $temporaryText, onCommit: {
+            text = temporaryText
+            onSubmitted?(temporaryText)
+        })
             .focused($isFocused, equals: true)
             .onTapGesture { isFocused = true }
 #if os (macOS)
             .onExitCommand { temporaryText = text; isFocused = false }
 #endif
+    }
+}
+
+struct ConnectInterfaceSheet: View {
+    let source: InterfaceVO
+    let candidates: [InterfaceVO]
+    var onCancel: () -> Void
+    var onConnect: (InterfaceVO) -> Void
+    @State private var selected: Int64?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Connect \(source.name)")
+                .font(.headline)
+            if candidates.isEmpty {
+                Text("No free interfaces at this site.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("To", selection: $selected) {
+                    Text("Select…").tag(Optional<Int64>.none)
+                    ForEach(candidates) { vo in
+                        Text("\(vo.deviceName ?? "device") \(vo.name)")
+                            .tag(Optional(vo.id))
+                    }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Connect") {
+                    if let id = selected, let target = candidates.first(where: { $0.id == id }) {
+                        onConnect(target)
+                    }
+                }
+                .disabled(selected == nil)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(minWidth: 360)
     }
 }

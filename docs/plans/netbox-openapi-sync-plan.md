@@ -195,6 +195,14 @@ The pre-push audit found this plan's tracked copy had lost §8 (overwritten at b
 5. **`ProviderModelActor` is kept** — `UpdateModal` still calls it for Zabbix event updates.
 6. **Interface sync is a launch-blocking full-sync stage** (owner reversal of the background-phase plan). Settings → Sync Data runs the same path. P3 removes the latency.
 
+## 11. P4 as-built amendments (2026-08-13)
+
+1. **Hand-written `Encodable` bodies.** The P0 spike's fallback is the ship: generated `PatchedWritable*Request` is not Encodable. The client was not regenerated. Tests pin the exact JSON for interface PATCH, cable POST, and the gated device/site bodies.
+2. **`If-Match` is off.** 4.6 emits a weak ETag. Last-write-wins until the lab proves both 412 and a successful match. The flag is `NetBoxWritePolicy.sendIfMatch`.
+3. **Add Site stays disabled** and never POSTs. `createSite` / `patchDevice` throw `writesDisabled` under the shipped policy.
+4. **`Interface.cableId`** is persisted so disconnect can DELETE. Stores from before this field need a Full Resync first.
+5. **Writes go through `NetBoxSyncEngine`.** The write response is discarded; the engine re-fetches via `applyDeltaItem`. HTTP error bodies are the server JSON.
+
 ## Sources
 
 NetBox REST API docs (netboxlabs.com/docs/netbox/integrations/rest-api/); NetBox change-logging docs and `core/ObjectChange` model docs; NetBox configuration docs (`CHANGELOG_RETENTION`); NetBox v4.0/v4.1/v4.6 release notes; netbox-community/netbox source (`settings.py` SPECTACULAR_SETTINGS, `core/api/serializers_/change_logging.py`, `core/filtersets.py`, `core/signals.py`, `dcim/api/serializers_/cables.py`, `netbox/api/fields.py`); NetBox issues/PRs #15894, #17709, #18451, #21356, #21937; apple/swift-openapi-generator README + Configuring-the-generator (filtering) + issues #569/#613 (large specs); apple/swift-openapi-runtime `Configuration.swift` (DateTranscoder); swift-foundation issue #963 (fractional-seconds strictness); Swift Package Index (generator 1.13.0, urlsession transport 1.3.1). Codebase findings: agent review transcripts, 2026-08-12, against working tree at commit-time snapshot.

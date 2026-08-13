@@ -28,7 +28,12 @@ import SwiftData
 
 struct InterfacePopover: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     @State var interface: InterfaceVO
+    @State private var isWriting = false
+    @State private var writeError: String?
+    @State private var connectFrom: InterfaceVO?
+    @State private var siteCandidates: [InterfaceVO] = []
     private var squareSize: CGFloat = 15
     private var verticalPadding: CGFloat = 5
     
@@ -45,7 +50,6 @@ struct InterfacePopover: View {
                     
                     Spacer()
                     
-                    
                     Label {
                         Text(interface.name)
                     } icon: {
@@ -53,7 +57,7 @@ struct InterfacePopover: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: squareSize, height: squareSize)
-                            .foregroundColor(Color.gray)
+                            .foregroundColor(interface.enabled ? .green : .red)
                         
                     }
                 }
@@ -68,34 +72,24 @@ struct InterfacePopover: View {
                     Text(interface.speedLabel)
                 }
                 .padding(.vertical, verticalPadding)
-                
-//                HStack {
-//                    Text("Connected Endpoint Device") //TODO: Change it to either uplink or downlink depending on relationship
-//                        .foregroundColor(.gray)
-//                    
-//                    Spacer()
-//                    
-//                    Label {
-//                        Text(interface.connectedEndpointX?.device?.name ?? "N/A")
-//                    } icon: {
-//                        if interface.connectedEndpointX?.device != nil {
-//                            Image(interface.connectedEndpointX?.device?.symbolName ?? "")
-//                                .resizable()
-//                                .aspectRatio(contentMode: .fit)
-//                                .frame(width: self.squareSize, height: self.squareSize)
-//                                .foregroundColor(.primary)
-//                                .background(.black)
-//                        } else {
-//                            Image(systemName: "")
-//                                .resizable()
-//                                .aspectRatio(contentMode: .fit)
-//                                .frame(width: self.squareSize, height: self.squareSize)
-//                                .foregroundColor(.clear)
-//                        }
-//                    }
-//                    
-//                }
-//                .padding(.vertical, verticalPadding)
+
+                HStack {
+                    Text("Enabled")
+                        .foregroundColor(.gray)
+                    Spacer()
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { interface.enabled },
+                            set: { newValue in
+                                Task { await setEnabled(newValue) }
+                            }
+                        )
+                    )
+                    .labelsHidden()
+                    .disabled(isWriting || netBoxSyncEngine == nil)
+                }
+                .padding(.vertical, verticalPadding)
                 
                 HStack {
                     Text("Connected Endpoint")
@@ -103,7 +97,23 @@ struct InterfacePopover: View {
                     
                     Spacer()
                     
-//                    Text(interface.connectedEndpointX?.name ?? "N/A")
+                    Text(interface.connectedEndpointName ?? "—")
+                }
+                .padding(.vertical, verticalPadding)
+
+                HStack {
+                    Spacer()
+                    if interface.cableId != nil || interface.connectedEndpointId != nil {
+                        Button("Disconnect") {
+                            Task { await disconnect() }
+                        }
+                        .disabled(isWriting || interface.cableId == nil || netBoxSyncEngine == nil)
+                    } else {
+                        Button("Connect…") {
+                            beginConnect()
+                        }
+                        .disabled(isWriting || netBoxSyncEngine == nil)
+                    }
                 }
                 .padding(.vertical, verticalPadding)
                 
@@ -113,20 +123,103 @@ struct InterfacePopover: View {
                     
                     Spacer()
                     
-                    Label {
-                        Text(interface.name)
-                    } icon: {
-                        Image(systemName: "square")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: squareSize, height: squareSize)
-                    }
+                    Text(interface.type ?? interface.name)
                 }
                 .padding(.vertical, verticalPadding)
             }
         }
         .padding(20)
-        .frame(width: 400, height: 250)
+        .frame(width: 400, height: 280)
+        .sheet(item: $connectFrom) { source in
+            ConnectInterfaceSheet(
+                source: source,
+                candidates: siteCandidates.filter {
+                    $0.id != source.id && $0.cableId == nil && $0.connectedEndpointId == nil
+                },
+                onCancel: { connectFrom = nil },
+                onConnect: { target in
+                    Task { await connect(to: target) }
+                }
+            )
+        }
+        .alert("NetBox write failed", isPresented: Binding(
+            get: { writeError != nil },
+            set: { if !$0 { writeError = nil } }
+        )) {
+            Button("OK", role: .cancel) { writeError = nil }
+        } message: {
+            Text(writeError ?? "")
+        }
+    }
+
+    private func beginConnect() {
+        if let siteId = interface.siteId {
+            siteCandidates = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)) ?? []
+        } else {
+            siteCandidates = []
+        }
+        connectFrom = interface
+    }
+
+    private func setEnabled(_ enabled: Bool) async {
+        guard enabled != interface.enabled else { return }
+        await performWrite {
+            try await engine.patchInterface(id: interface.id, enabled: enabled)
+        }
+    }
+
+    private func connect(to target: InterfaceVO) async {
+        connectFrom = nil
+        await performWrite {
+            try await engine.createCable(from: interface.id, to: target.id)
+        }
+    }
+
+    private func disconnect() async {
+        guard let cableId = interface.cableId else {
+            writeError = "Cable id is missing. Run Full Resync, then disconnect."
+            return
+        }
+        let ends = [interface.id, interface.connectedEndpointId].compactMap { $0 }
+        await performWrite {
+            try await engine.deleteCable(id: cableId, refreshing: ends)
+        }
+    }
+
+    private var engine: NetBoxSyncEngine {
+        get throws {
+            guard let netBoxSyncEngine else {
+                throw NetBoxSyncError.writesDisabled("NetBox sync engine is not available")
+            }
+            return netBoxSyncEngine
+        }
+    }
+
+    private func performWrite(_ work: () async throws -> Void) async {
+        guard !isWriting else { return }
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            try await work()
+            reload()
+        } catch {
+            writeError = error.localizedDescription
+        }
+    }
+
+    private func reload() {
+        let id = interface.id
+        if let deviceId = interface.deviceId,
+           let fresh = try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)
+            .first(where: { $0.id == id }) {
+            interface = fresh
+            return
+        }
+        if let siteId = interface.siteId,
+           let fresh = try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)
+            .first(where: { $0.id == id }) {
+            interface = fresh
+        }
     }
 }
 

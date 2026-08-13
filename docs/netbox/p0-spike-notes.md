@@ -42,7 +42,7 @@ Generated `Client.init` takes an unqualified `Configuration`. Pulse already has 
 
 ## Generation
 
-- 29 operations (list+retrieve + status only). Write verbs were dropped: generated `PatchedWritable*Request` types do not conform to `Encodable` (empty `oneOf ()` in the NetBox 4.6.2 schema). P4 must solve that before regenerating writes.
+- 29 operations (list+retrieve + status only). Write verbs were dropped: generated `PatchedWritable*Request` types do not conform to `Encodable` (empty `oneOf ()` in the NetBox 4.6.2 schema). P4 took the fallback: hand-written `Encodable` bodies for the small write surface, pinned by tests. The client was not regenerated.
 - `Client.swift` 18 287 lines; `Types.swift` 28 837 lines. Isolated in local package `NetBoxAPI`.
 - macOS Debug `xcodebuild` with generated client: **BUILD SUCCEEDED** (~50 s wall including regen; not a clean-from-zero measurement). Incremental after touching the factory is recorded in the P1 PR. No separate-module escalation for speed — the package exists because of the `Configuration` name collision.
 - Filter CLI drops `components.securitySchemes`; the regenerate script restores `cookieAuth` / `tokenAuth` so the vendored document is generate-ready offline.

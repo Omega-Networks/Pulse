@@ -186,6 +186,7 @@ struct PulseApp: App {
             if showContentView {
                 if let target {
                     SiteView(siteId: target.siteID)
+                        .environment(\.netBoxSyncEngine, netBoxSyncEngine)
                         .modelContainer(modelContainer)
                 }
             }

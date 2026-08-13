@@ -13,7 +13,15 @@ In Settings, enter the NetBox API URL (must be `https://` with a host) and a tok
 - Tokens that do **not** start with `nbt_` are sent as `Authorization: Token …` (v1).
 - Tokens that start with `nbt_` are sent as `Authorization: Bearer …` (v2).
 
-P1 is read-only. A write-enabled token is not required. Writes (P4) will need `write_enabled` and a dedicated service account.
+Use a **dedicated service account**. Read-only tokens still work for sync. Writes (interface enable/description, cable connect/disconnect) need:
+
+- `write_enabled` on the token
+- model/action-scoped permissions: `dcim.interface` change, `dcim.cable` add/delete
+- v1 `Token …` or v2 `Bearer nbt_…` (same as read)
+
+A token without write permission returns 403; Pulse shows NetBox's body and does not change local data. Device and site writes exist in the service but are gated off — Add Site never POSTs.
+
+Pulse does **not** send `If-Match`. Concurrent edits last-write-wins. A 412 from the server is shown as a conflict, not applied.
 
 ## Filters
 
@@ -45,6 +53,19 @@ export NETBOX_TOKEN=…          # shell only; never commit
 
 The script fails if the instance host is still present in the vendored YAML or generated Swift. Review the spec diff before committing.
 
+## Writes
+
+From a device's Interfaces table or faceplate popover:
+
+- Edit a description and press Return — PATCH `/api/dcim/interfaces/{id}/` with `description` only
+- Toggle Enabled — PATCH with `enabled` only
+- **Connect…** — POST `/api/dcim/cables/` with `a_terminations` / `b_terminations` `{"object_type":"dcim.interface","object_id":N}`
+- **Disconnect** — DELETE `/api/dcim/cables/{id}/` (needs a stored cable id; run **Full Resync** once if disconnect is disabled)
+
+Every successful write re-reads the object from NetBox. Validation errors (duplicate cable, missing field) show the server JSON.
+
+`custom_fields` are only sent when that key changed. Enable/description/cable writes do not touch them.
+
 ## Site creation
 
-Add Site is disabled. The previous control never POSTed. Writes land in P4.
+Add Site is still disabled and never POSTs. Site create is implemented behind a gate; do not enable it from this window.

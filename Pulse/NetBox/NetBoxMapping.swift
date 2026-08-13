@@ -170,6 +170,7 @@ enum NetBoxRecord {
         var connectedEndpointID: Int64?
         var connectedEndpointName: String?
         var connectedEndpointDeviceID: Int64?
+        var cableID: Int64?
         var lagID: Int64?
         var lagName: String?
         var bridgeID: Int64?
@@ -547,7 +548,7 @@ extension NetBoxRecord.Interface: Decodable {
         case id, name, display, url, created, device, type, label, enabled, mtu, speed, description
         case lastUpdated = "last_updated"
         case connectedEndpoints = "connected_endpoints"
-        case lag, bridge, parent, duplex, occupied
+        case lag, bridge, parent, duplex, occupied, cable
         case poeMode = "poe_mode"
     }
 
@@ -575,6 +576,7 @@ extension NetBoxRecord.Interface: Decodable {
         connectedEndpointID = endpoint.id
         connectedEndpointName = endpoint.name
         connectedEndpointDeviceID = endpoint.deviceID
+        cableID = try NetBoxIngest.nestedID(container, .cable)
         let lag = try NetBoxIngest.nestedNamed(container, .lag)
         lagID = lag.id
         lagName = lag.name

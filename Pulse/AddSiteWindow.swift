@@ -261,7 +261,7 @@ struct AddSiteWindow: View {
                     Spacer()
 
                     VStack(alignment: .trailing, spacing: 6) {
-                        Text("Site creation is not available yet.")
+                        Text("Site create is implemented but gated off. This window never POSTs.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Button {
@@ -271,7 +271,7 @@ struct AddSiteWindow: View {
                                 .foregroundColor(.white)
                         }
                         .disabled(true)
-                        .help("Site creation is not available yet")
+                        .help("Site create is gated off and never POSTs")
                         .cornerRadius(5)
                     }
                     

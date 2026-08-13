@@ -51,6 +51,7 @@ struct InterfaceVO: Identifiable, Equatable, Sendable {
     var connectedEndpointId: Int64?
     var connectedEndpointName: String?
     var connectedEndpointDeviceId: Int64?
+    var cableId: Int64?
     var lagId: Int64?
     var lagName: String?
     var bridgeId: Int64?
@@ -84,6 +85,7 @@ struct InterfaceVO: Identifiable, Equatable, Sendable {
         self.connectedEndpointId = model.connectedEndpointId
         self.connectedEndpointName = model.connectedEndpointName
         self.connectedEndpointDeviceId = model.connectedEndpointDeviceId
+        self.cableId = model.cableId
         self.lagId = model.lagId
         self.lagName = model.lagName
         self.bridgeId = model.bridgeId

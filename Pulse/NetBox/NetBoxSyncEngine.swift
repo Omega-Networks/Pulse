@@ -29,24 +29,34 @@ import OSLog
 import SwiftData
 import SwiftUI
 
-/// Single owner of NetBox read-sync. Boot and Sync Dashboard both call
-/// `fullSync()`. Overlapping callers join the in-flight pass. `lastNetBoxUpdate`
-/// is stamped only after every type applies successfully.
+/// Single owner of NetBox read-sync and MACD writes. Boot and Sync
+/// Dashboard both call `fullSync()`. Overlapping callers join the
+/// in-flight pass. `lastNetBoxUpdate` is stamped only after every type
+/// applies successfully. Writes wait for that pass, then re-fetch
+/// through the delta-apply path — no speculative local state.
 actor NetBoxSyncEngine {
     private let modelContainer: ModelContainer
     private let fetcher: any NetBoxFetching
     private let filter: NetBoxFilterConfiguration
+    private let writePolicy: NetBoxWritePolicy
     private let logger = Logger(subsystem: "netbox", category: "sync")
     private var inFlight: Task<Void, Error>?
+    private var writes: Task<Void, Error>?
 
     init(
         modelContainer: ModelContainer,
         fetcher: any NetBoxFetching = NetBoxLiveFetcher(),
-        filter: NetBoxFilterConfiguration = .default
+        filter: NetBoxFilterConfiguration = .default,
+        writePolicy: NetBoxWritePolicy = .shipped
     ) {
         self.modelContainer = modelContainer
         self.fetcher = fetcher
         self.filter = filter
+        self.writePolicy = writePolicy
+    }
+
+    private var writer: NetBoxWriteService {
+        NetBoxWriteService(fetcher: fetcher, policy: writePolicy)
     }
 
     /// Weekly safety full mirror. Changelog misses out-of-request-context edits.
@@ -54,6 +64,7 @@ actor NetBoxSyncEngine {
 
     /// Boot entry: delta when a watermark is usable, otherwise a full mirror.
     func sync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
+        try? await writes?.value
         if let inFlight {
             try await inFlight.value
             return
@@ -73,6 +84,7 @@ actor NetBoxSyncEngine {
 
     /// Settings → Sync Data. Always a full mirror, then a fresh watermark.
     func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
+        try? await writes?.value
         if let inFlight {
             try await inFlight.value
             return
@@ -156,6 +168,102 @@ actor NetBoxSyncEngine {
             return .full("safety interval")
         }
         return .delta(watermark)
+    }
+
+    // MARK: - Writes
+
+    func patchInterface(id: Int64, enabled: Bool? = nil, description: String? = nil) async throws {
+        try await performWrite {
+            let body = NetBoxWriteBody.InterfacePatch(
+                enabled: enabled,
+                description: description
+            )
+            _ = try await self.writer.patchInterface(id: id, body: body)
+            try await self.applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .interface,
+                    objectID: id,
+                    action: "update",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+        }
+    }
+
+    func createCable(from a: Int64, to b: Int64) async throws {
+        try await performWrite {
+            let created = try await self.writer.createCable(.connecting(a, to: b))
+            try await self.refreshCableInterfaces(id: created.id)
+        }
+    }
+
+    func deleteCable(id: Int64, refreshing interfaceIDs: [Int64]) async throws {
+        try await performWrite {
+            try await self.writer.deleteCable(id: id)
+            for interfaceID in interfaceIDs {
+                try await self.applyDeltaItem(
+                    NetBoxDeltaItem(
+                        kind: .interface,
+                        objectID: interfaceID,
+                        action: "update",
+                        changeID: 0,
+                        time: nil
+                    )
+                )
+            }
+        }
+    }
+
+    func patchDevice(id: Int64, body: NetBoxWriteBody.DevicePatch) async throws {
+        try await performWrite {
+            _ = try await self.writer.patchDevice(id: id, body: body)
+            try await self.applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .device,
+                    objectID: id,
+                    action: "update",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+        }
+    }
+
+    func createSite(_ body: NetBoxWriteBody.SiteCreate) async throws {
+        try await performWrite {
+            let response = try await self.writer.createSite(body)
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Site.self, from: response.body)
+            try await self.applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .site,
+                    objectID: row.id,
+                    action: "create",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+        }
+    }
+
+    private func performWrite(_ work: @escaping @Sendable () async throws -> Void) async throws {
+        if let inFlight {
+            try await inFlight.value
+        }
+        let previous = writes
+        let task = Task {
+            try? await previous?.value
+            try await work()
+        }
+        writes = task
+        do {
+            try await task.value
+        } catch {
+            if let syncError = error as? NetBoxSyncError {
+                await syncError.publish()
+            }
+            throw error
+        }
     }
 
     // MARK: - Types

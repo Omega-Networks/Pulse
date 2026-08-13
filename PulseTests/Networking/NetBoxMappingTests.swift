@@ -60,6 +60,7 @@ final class NetBoxMappingTests: XCTestCase {
             connectedEndpointID: nil,
             connectedEndpointName: nil,
             connectedEndpointDeviceID: nil,
+            cableID: nil,
             lagID: nil,
             lagName: nil,
             bridgeID: nil,
@@ -589,6 +590,7 @@ final class NetBoxMappingTests: XCTestCase {
             "description": "uplink",
             "duplex": { "value": "full", "label": "Full" },
             "occupied": true,
+            "cable": { "id": 44, "url": "c", "display": "c-44" },
             "connected_endpoints": [
               { "id": 99, "name": "eth1", "device": { "id": 11 } }
             ],
@@ -608,6 +610,7 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertEqual(page.results.first?.duplex, "full")
         XCTAssertEqual(page.results.first?.occupied, true)
         XCTAssertEqual(page.results.first?.connectedEndpointName, "eth1")
+        XCTAssertEqual(page.results.first?.cableID, 44)
         XCTAssertNil(page.results.first?.lagID)
         XCTAssertNil(page.results.first?.bridgeID)
         XCTAssertNil(page.results.first?.parentID)
@@ -631,6 +634,7 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertEqual(page.results.first?.speed, 0)
         XCTAssertNil(page.results.first?.connectedEndpointID)
         XCTAssertNil(page.results.first?.connectedEndpointDeviceID)
+        XCTAssertNil(page.results.first?.cableID)
         XCTAssertEqual(page.results.first?.occupied, false)
     }
 

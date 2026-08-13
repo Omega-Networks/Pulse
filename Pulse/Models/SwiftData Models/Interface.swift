@@ -62,6 +62,8 @@ final class Interface {
     var connectedEndpointId: Int64?
     var connectedEndpointName: String?
     var connectedEndpointDeviceId: Int64?
+    /// NetBox cable id for disconnect. Nil when the interface is free.
+    var cableId: Int64?
     var lagId: Int64?
     var lagName: String?
     var bridgeId: Int64?

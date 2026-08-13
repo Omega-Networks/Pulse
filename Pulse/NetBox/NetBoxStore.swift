@@ -581,6 +581,7 @@ enum NetBoxStore {
             model.connectedEndpointId = record.connectedEndpointID
             model.connectedEndpointName = record.connectedEndpointName
             model.connectedEndpointDeviceId = record.connectedEndpointDeviceID
+            model.cableId = record.cableID
             model.lagId = record.lagID
             model.lagName = record.lagName
             model.bridgeId = record.bridgeID
