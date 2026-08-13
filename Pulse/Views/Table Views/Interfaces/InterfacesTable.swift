@@ -126,6 +126,9 @@ struct InterfacesTable: View {
         .task {
             loadInterfaces()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
+            loadInterfaces()
+        }
         .sheet(item: $connectFrom) { source in
             ConnectInterfaceSheet(
                 source: source,
@@ -437,26 +440,62 @@ struct ConnectInterfaceSheet: View {
     var onCancel: () -> Void
     var onConnect: (InterfaceVO) -> Void
     @State private var selected: Int64?
+    @State private var filter = ""
+
+    private var grouped: [(device: String, rows: [InterfaceVO])] {
+        let visible = candidates.filter { vo in
+            guard !filter.isEmpty else { return true }
+            let haystack = "\(vo.deviceName ?? "") \(vo.name) \(vo.interfaceDescription ?? "")"
+            return haystack.localizedCaseInsensitiveContains(filter)
+        }
+        let byDevice = Dictionary(grouping: visible) { $0.deviceName ?? "Unknown device" }
+        return byDevice.keys.sorted().map { name in
+            let rows = (byDevice[name] ?? []).sorted {
+                $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+            return (name, rows)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Connect \(source.name)")
+            Text("Connect \(source.deviceName.map { "\($0) " } ?? "")\(source.name)")
                 .font(.headline)
+            Text("Creates a cable in NetBox to the free interface you pick.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
             if candidates.isEmpty {
                 Text("No free interfaces at this site.")
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
-                Picker("To", selection: $selected) {
-                    Text("Select…").tag(Optional<Int64>.none)
-                    ForEach(candidates) { vo in
-                        Text("\(vo.deviceName ?? "device") \(vo.name)")
-                            .tag(Optional(vo.id))
+                TextField("Filter device or interface", text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                List(selection: $selected) {
+                    ForEach(grouped, id: \.device) { group in
+                        Section(group.device) {
+                            ForEach(group.rows) { vo in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(vo.name)
+                                    if let description = vo.interfaceDescription, !description.isEmpty {
+                                        Text(description)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .tag(vo.id)
+                            }
+                        }
                     }
                 }
+                #if os(macOS)
+                .listStyle(.bordered(alternatesRowBackgrounds: true))
+                #endif
             }
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
                 Button("Connect") {
                     if let id = selected, let target = candidates.first(where: { $0.id == id }) {
                         onConnect(target)
@@ -467,6 +506,6 @@ struct ConnectInterfaceSheet: View {
             }
         }
         .padding()
-        .frame(minWidth: 360)
+        .frame(minWidth: 480, minHeight: 420)
     }
 }

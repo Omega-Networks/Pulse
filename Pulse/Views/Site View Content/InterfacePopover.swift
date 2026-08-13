@@ -131,6 +131,9 @@ struct InterfacePopover: View {
         }
         .padding(20)
         .frame(width: 400, height: 280)
+        .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
+            reload()
+        }
         .sheet(item: $connectFrom) { source in
             ConnectInterfaceSheet(
                 source: source,

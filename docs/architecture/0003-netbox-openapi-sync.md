@@ -70,7 +70,7 @@ Delete All includes `Interface`. Map pin colour reads stored severity fields on 
 | Gate 1 — lab count parity, skip+delete, network kill, Add Site disabled | In progress (lab) |
 | Gate 2 — offline interfaces | Lab 2026-08-13: startup sync, offline site open, edge parity (minus accepted dedupe), Delete All signed off. Owner waived proxy capture, P1-store upgrade, Instruments, headless re-run. Cables deferred. |
 | Gate 3 — changelog converge | Not yet (lab; blocks P3 merge) |
-| Gate 4 — write round-trips | Not yet (lab; blocks P4 merge) |
+| Gate 4 — write round-trips | Lab 2026-08-13: interface enable/description (including clear) and cable create/delete signed. Disconnect confirms first. Owner deferred further cable UI. 412, validation-body, custom_fields changelog diff, and read-only token not signed. `If-Match` stays off. |
 
 ## Delete All and SwiftData
 
@@ -101,6 +101,7 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 - 2026-08-13 — P2 lab: owner signed startup/offline/edges/Delete All. Site-open interface HTTP already removed. Cables into SwiftData deferred.
 - 2026-08-13 — P3: `lastObjectChangeId`/`Time` are NetBox server values, advanced only after a fully applied delta. Boot uses delta when the watermark is present and retained; full mirror on empty store, missing watermark, 404 watermark, or weekly safety. Settings → Full Resync is always a mirror. Unknown `changed_object_type` is skipped. `dcim.cable` re-fetches both interface ends.
 - 2026-08-13 — P4: hand-written write bodies (generated `PatchedWritable*Request` is not Encodable; client not regenerated). Interface PATCH (enabled/description) and cable POST/DELETE are live. Device/site methods exist and refuse. `If-Match` is off (weak ETag). Post-write re-fetch uses the delta-apply path. Add Site stays disabled and never POSTs.
+- 2026-08-13 — P4 lab: description/enable/clear and cable connect/disconnect signed. Empty description sends `""`. Disconnect asks first. Successful writes post `netBoxStoreDidApply` so the open site graph reloads.
 
 ## Writes (P4 amendment)
 

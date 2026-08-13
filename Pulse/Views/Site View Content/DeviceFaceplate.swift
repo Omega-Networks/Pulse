@@ -171,6 +171,9 @@ struct DeviceFaceplate: View {
         .onChange(of: deviceId) {
             loadInterfaces()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
+            loadInterfaces()
+        }
     }
     
     // MARK: - Helper Methods

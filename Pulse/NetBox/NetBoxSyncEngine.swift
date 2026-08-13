@@ -258,6 +258,9 @@ actor NetBoxSyncEngine {
         writes = task
         do {
             try await task.value
+            await MainActor.run {
+                NotificationCenter.default.post(name: .netBoxStoreDidApply, object: nil)
+            }
         } catch {
             if let syncError = error as? NetBoxSyncError {
                 await syncError.publish()
@@ -744,6 +747,12 @@ private actor AcceptedInterfaceIDs {
 }
 
 // MARK: - Environment
+
+extension Notification.Name {
+    /// Posted on the main actor after a successful write has been
+    /// re-fetched into SwiftData. Site graph, faceplate, and tables reload.
+    static let netBoxStoreDidApply = Notification.Name("netbox.storeDidApply")
+}
 
 private struct NetBoxSyncEngineKey: EnvironmentKey {
     static let defaultValue: NetBoxSyncEngine? = nil

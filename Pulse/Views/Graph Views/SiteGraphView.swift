@@ -359,6 +359,9 @@ struct SiteGraphView: View {
         .task(id: siteId) {
             await computeEdges()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
+            Task { await computeEdges() }
+        }
     }
 }
 
