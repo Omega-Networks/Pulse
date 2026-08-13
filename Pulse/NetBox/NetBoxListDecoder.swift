@@ -78,6 +78,14 @@ enum NetBoxListDecoder {
         )
     }
 
+    static func decodeObject<Element: Decodable>(
+        _ type: Element.Type,
+        from data: Data,
+        decoder: JSONDecoder = makeDecoder()
+    ) throws -> Element {
+        try decoder.decode(Element.self, from: data)
+    }
+
     static func describe(_ error: Error) -> String {
         switch error {
         case let DecodingError.keyNotFound(key, context):

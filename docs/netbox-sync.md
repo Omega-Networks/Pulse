@@ -1,6 +1,10 @@
 # NetBox sync (operator)
 
-Pulse mirrors a subset of NetBox into local SwiftData on every launch and when you press **Sync Data** in Settings → Database. Interfaces are a stage of that same full pull (after devices and services). The launch screen stays up until the interface walk finishes. After a failed walk, freshness is not stamped and the next launch retries. Incremental changelog sync (P3) will replace this one-time full interface pull.
+Pulse mirrors a subset of NetBox into local SwiftData. The **first** launch (and any launch with no changelog watermark) does a full pull, including interfaces. After that, boot applies `/api/core/object-changes/` since the last applied change id. Settings → Database → **Full Resync** still does a complete mirror.
+
+A watermark older than NetBox’s retained changelog (default 90 days — `CHANGELOG_RETENTION` must exceed the longest expected offline gap) or a wiped store with a leftover watermark forces a full mirror. A weekly safety mirror covers edits made without request context (shell, migrations).
+
+After a failed delta, the watermark does not move; the next run retries from the same id.
 
 ## Token
 
@@ -25,7 +29,7 @@ Changing these is configuration, not a code edit. A Settings UI comes later.
 
 ## Forced resync
 
-Settings → Database → **Sync Data**. That is a full pull. There is no incremental changelog pass yet (P3).
+Settings → Database → **Full Resync**. That is a complete pull and resets the changelog watermark to the latest object-change id. Ordinary launches apply deltas only.
 
 **Delete All Data** wipes NetBox (and Event) rows on a side context so the open map and event toolbar are not left holding deleted models. If it crashes with `Event.rClock` / “backing data could no longer be found”, rebuild this branch (commit `47684d2` or later). A later change will replace the store file instead of deleting row-by-row.
 

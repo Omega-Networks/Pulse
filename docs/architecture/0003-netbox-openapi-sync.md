@@ -30,7 +30,7 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 |---|---|
 | **P1 (this ADR)** | Generated GET client, boot + dashboard + on-demand site loads, ingest DTOs, delete gate, Add Site disabled, operator stub |
 | **P2 (this amendment)** | Persisted `Interface` `@Model`, streaming ingest, `InterfaceVO` edges, drop `InterfaceCache` |
-| **P3** | Changelog watermark, delta pass |
+| **P3 (this amendment)** | Changelog watermark, boot delta pass, weekly safety mirror |
 | **P4** | MACD writes, real Add Site, ETag |
 
 ## Structural enforcement
@@ -69,7 +69,7 @@ Delete All includes `Interface`. Map pin colour reads stored severity fields on 
 |---|---|
 | Gate 1 — lab count parity, skip+delete, network kill, Add Site disabled | In progress (lab) |
 | Gate 2 — offline interfaces | Lab 2026-08-13: startup sync, offline site open, edge parity (minus accepted dedupe), Delete All signed off. Owner waived proxy capture, P1-store upgrade, Instruments, headless re-run. Cables deferred. |
-| Gate 3 — changelog converge | Not yet |
+| Gate 3 — changelog converge | Not yet (lab; blocks P3 merge) |
 | Gate 4 — write round-trips | Not yet |
 
 ## Delete All and SwiftData
@@ -99,3 +99,4 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 - 2026-08-13 — Transport: `NetBoxLiveFetcher` ratified for P1; factory/middleware retained for the generated path; one `NetBoxAuthorization` rule. Store apply hops to user-initiated QoS.
 - 2026-08-13 — P2: persisted `Interface`, streaming ingest, out-of-scope vs skipped, VO edges, cache deleted. Gate 2 still lab.
 - 2026-08-13 — P2 lab: owner signed startup/offline/edges/Delete All. Site-open interface HTTP already removed. Cables into SwiftData deferred.
+- 2026-08-13 — P3: `lastObjectChangeId`/`Time` are NetBox server values, advanced only after a fully applied delta. Boot uses delta when the watermark is present and retained; full mirror on empty store, missing watermark, 404 watermark, or weekly safety. Settings → Full Resync is always a mirror. Unknown `changed_object_type` is skipped. `dcim.cable` re-fetches both interface ends.

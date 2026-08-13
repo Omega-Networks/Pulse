@@ -123,6 +123,10 @@ struct SyncDashboardView: View {
                 LabeledContent("Racks:", value: String(racks.count))
                 LabeledContent("Devices:", value: String(devices.count))
                 LabeledContent("Interfaces:", value: String(interfaces.count))
+                if let provider = syncProvider.first {
+                    LabeledContent("Changelog watermark:", value: watermarkLabel(provider))
+                    LabeledContent("Last delta:", value: provider.lastDeltaSummary ?? "—")
+                }
             }
             .id(contextDidSaveDate)
             HStack {
@@ -157,12 +161,12 @@ struct SyncDashboardView: View {
                 
                 /// Button for fetching data from NetBox
                 ///
-                Button(isMonitoringEnabled ? "Syncing" : "Sync Data") {
+                Button(isMonitoringEnabled ? "Syncing" : "Full Resync") {
                     Task.detached(priority: .background) {
                         await syncData()
                     }
                 }
-                .frame(width: 100)
+                .frame(width: 120)
                 .buttonStyle(.borderedProminent)
                 .disabled(isMonitoringEnabled)
                 .padding(4)
@@ -313,10 +317,25 @@ struct SyncDashboardView: View {
                 print("\(model) data deleted successfully.")
             }
             try context.save()
+            let providers = try context.fetch(FetchDescriptor<SyncProvider>())
+            for provider in providers {
+                provider.resetWatermark()
+            }
+            try context.save()
             print("All data deleted successfully.")
         } catch {
             print("Failed to delete all data: \(error)")
         }
+    }
+
+    private func watermarkLabel(_ provider: SyncProvider) -> String {
+        guard let id = provider.lastObjectChangeId else { return "none" }
+        if let time = provider.lastObjectChangeTime {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            return "#\(id) (\(formatter.localizedString(for: time, relativeTo: Date())))"
+        }
+        return "#\(id)"
     }
     
     
