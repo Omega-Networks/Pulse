@@ -30,12 +30,28 @@ import SwiftData
 final class SyncProvider {
     var lastNetBoxUpdate: Date?
     var lastZabbixUpdate: Date?
-    
+
     var userNotifiedNetBox: Bool = false
     var userNotifiedZabbix: Bool = false
-    
+
+    /// Latest fully-applied `/api/core/object-changes/` id. NetBox
+    /// server values only — never `Date()` / a local guess.
+    var lastObjectChangeId: Int64?
+    var lastObjectChangeTime: Date?
+    /// Client clock of the last successful full mirror. Used only for
+    /// the weekly safety interval, not as a changelog cursor.
+    var lastFullMirrorAt: Date?
+    var lastDeltaSummary: String?
+
     init(lastNetBoxUpdate: Date, lastZabbixUpdate: Date) {
         self.lastNetBoxUpdate = lastNetBoxUpdate
         self.lastZabbixUpdate = lastZabbixUpdate
+    }
+
+    func resetWatermark() {
+        lastObjectChangeId = nil
+        lastObjectChangeTime = nil
+        lastFullMirrorAt = nil
+        lastDeltaSummary = nil
     }
 }

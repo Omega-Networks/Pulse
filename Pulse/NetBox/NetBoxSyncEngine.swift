@@ -49,9 +49,29 @@ actor NetBoxSyncEngine {
         self.filter = filter
     }
 
-    /// Tenant groups → roles → types → tenants → regions → site groups →
-    /// sites → racks → devices → services → interfaces. Boot and Settings
-    /// → Sync Data both wait for every stage, including interfaces.
+    /// Weekly safety full mirror. Changelog misses out-of-request-context edits.
+    static let safetyMirrorInterval: TimeInterval = 7 * 24 * 60 * 60
+
+    /// Boot entry: delta when a watermark is usable, otherwise a full mirror.
+    func sync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
+        if let inFlight {
+            try await inFlight.value
+            return
+        }
+        let task = Task(priority: .userInitiated) {
+            try await self.performBootSync(progress: progress)
+        }
+        inFlight = task
+        defer { inFlight = nil }
+        do {
+            try await task.value
+        } catch {
+            logger.error("NetBox sync failed: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    /// Settings → Sync Data. Always a full mirror, then a fresh watermark.
     func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         if let inFlight {
             try await inFlight.value
@@ -59,6 +79,7 @@ actor NetBoxSyncEngine {
         }
         let task = Task(priority: .userInitiated) {
             try await self.performFullSync(progress: progress)
+            try await self.stampFullSuccess()
         }
         inFlight = task
         defer { inFlight = nil }
@@ -88,7 +109,53 @@ actor NetBoxSyncEngine {
             progress?(index, stage.0)
             try await stage.1()
         }
-        try await stampSuccess()
+    }
+
+    private func performBootSync(progress: (@Sendable (Int, String) -> Void)?) async throws {
+        let plan = try await applyOnStore { context in
+            try Self.decideSync(in: context)
+        }
+        switch plan {
+        case .full(let reason):
+            logger.info("NetBox full mirror (\(reason, privacy: .public))")
+            try await performFullSync(progress: progress)
+            try await stampFullSuccess()
+        case .delta(let watermarkID):
+            if await changelogRecordMissing(id: watermarkID) {
+                logger.error("Watermark \(watermarkID) is gone; forcing full mirror")
+                try await performFullSync(progress: progress)
+                try await stampFullSuccess()
+                return
+            }
+            progress?(0, "Applying NetBox changes...")
+            try await performDelta(after: watermarkID)
+        }
+    }
+
+    private enum SyncPlan: Sendable {
+        case full(String)
+        case delta(Int64)
+    }
+
+    private static func decideSync(in context: ModelContext) throws -> SyncPlan {
+        var devicePeek = FetchDescriptor<Device>()
+        devicePeek.fetchLimit = 1
+        var sitePeek = FetchDescriptor<Site>()
+        sitePeek.fetchLimit = 1
+        let devices = try context.fetch(devicePeek)
+        let sites = try context.fetch(sitePeek)
+        let provider = try context.fetch(FetchDescriptor<SyncProvider>()).first
+        if devices.isEmpty && sites.isEmpty {
+            return .full("empty store")
+        }
+        guard let watermark = provider?.lastObjectChangeId else {
+            return .full("no watermark")
+        }
+        if let lastFull = provider?.lastFullMirrorAt,
+           Date().timeIntervalSince(lastFull) >= safetyMirrorInterval {
+            return .full("safety interval")
+        }
+        return .delta(watermark)
     }
 
     // MARK: - Types
@@ -302,19 +369,262 @@ actor NetBoxSyncEngine {
         }.value
     }
 
-    private func stampSuccess() async throws {
-        _ = try await applyOnStore { context in
-            let existing = try context.fetch(FetchDescriptor<SyncProvider>())
-            if let provider = existing.first {
-                provider.lastNetBoxUpdate = Date()
-            } else {
-                context.insert(
-                    SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
+    // MARK: - Delta
+
+    private func changelogRecordMissing(id: Int64) async -> Bool {
+        do {
+            _ = try await fetcher.get(path: "/api/core/object-changes/\(id)/", query: [])
+            return false
+        } catch NetBoxSyncError.httpStatus(let code, _) where code == 404 {
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func performDelta(after watermarkID: Int64) async throws {
+        let extra = [
+            URLQueryItem(name: "id__gt", value: String(watermarkID)),
+            URLQueryItem(name: "ordering", value: "id"),
+        ]
+        let (rows, skipped) = try await fetchAll(
+            path: "/api/core/object-changes/",
+            extraQuery: extra,
+            as: NetBoxRecord.ObjectChange.self
+        )
+        if skipped > 0 {
+            throw NetBoxSyncError.dataError("Changelog page skipped \(skipped) elements")
+        }
+        let planned = NetBoxDelta.coalesce(rows)
+        for unknown in rows where NetBoxChangeKind(objectType: unknown.changedObjectType) == nil {
+            logger.error(
+                "Skipping unknown changelog type \(unknown.changedObjectType, privacy: .public) id \(unknown.changedObjectID)"
+            )
+        }
+        var touchedDeviceSites = false
+        for item in planned.items {
+            try await applyDeltaItem(item)
+            if item.kind == .device { touchedDeviceSites = true }
+        }
+        if let water = planned.highWater {
+            try await stampDeltaSuccess(
+                id: water.id,
+                time: water.time,
+                summary: "applied \(planned.items.count) objects"
+            )
+        } else {
+            try await stampDeltaSuccess(
+                id: watermarkID,
+                time: nil,
+                summary: "no changes"
+            )
+        }
+        if touchedDeviceSites {
+            await SiteDataService(modelContainer: modelContainer).refreshSeverities()
+        }
+    }
+
+    private func applyDeltaItem(_ item: NetBoxDeltaItem) async throws {
+        if item.action == "delete" {
+            try await deleteObject(kind: item.kind, id: item.objectID)
+            return
+        }
+        if item.kind == .cable {
+            try await refreshCableInterfaces(id: item.objectID)
+            return
+        }
+        do {
+            let data = try await fetcher.get(
+                path: "\(item.kind.retrievePath)\(item.objectID)/",
+                query: []
+            )
+            try await upsertRetrieved(kind: item.kind, data: data)
+        } catch NetBoxSyncError.httpStatus(let code, _) where code == 404 {
+            try await deleteObject(kind: item.kind, id: item.objectID)
+        }
+    }
+
+    private func refreshCableInterfaces(id: Int64) async throws {
+        let data: Data
+        do {
+            data = try await fetcher.get(path: "/api/dcim/cables/\(id)/", query: [])
+        } catch NetBoxSyncError.httpStatus(let code, _) where code == 404 {
+            return
+        }
+        let cable = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: data)
+        for interfaceID in cable.interfaceIDs {
+            try await applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .interface,
+                    objectID: interfaceID,
+                    action: "update",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+        }
+    }
+
+    private func upsertRetrieved(kind: NetBoxChangeKind, data: Data) async throws {
+        switch kind {
+        case .tenantGroup:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.TenantGroup.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyTenantGroups([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .deviceRole:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.DeviceRole.self, from: data)
+            guard filter.includesDeviceRole(id: Int(row.id)) else {
+                try await deleteObject(kind: .deviceRole, id: row.id)
+                return
+            }
+            _ = try await applyOnStore {
+                try NetBoxStore.applyDeviceRoles([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .deviceType:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.DeviceType.self, from: data)
+            guard filter.includesDeviceType(manufacturerID: Int(row.manufacturerID)) else {
+                try await deleteObject(kind: .deviceType, id: row.id)
+                return
+            }
+            _ = try await applyOnStore {
+                try NetBoxStore.applyDeviceTypes([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .tenant:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Tenant.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyTenants([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .region:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Region.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyRegions([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .siteGroup:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.SiteGroup.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applySiteGroups([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .site:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Site.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applySites([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .rack:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Rack.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyRacks([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .device:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Device.self, from: data)
+            guard filter.includesDevice(
+                manufacturerID: row.manufacturerID.map(Int.init),
+                roleID: Int(row.roleID)
+            ) else {
+                try await deleteObject(kind: .device, id: row.id)
+                return
+            }
+            _ = try await applyOnStore {
+                try NetBoxStore.applyDevices([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .interface:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Interface.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyInterfaces(
+                    [row], fetchComplete: false, skipped: 0, keeping: [], in: $0
                 )
             }
+        case .service:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Service.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyServices([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .cable:
+            break
+        }
+    }
+
+    private func deleteObject(kind: NetBoxChangeKind, id: Int64) async throws {
+        _ = try await applyOnStore { context -> Int in
+            switch kind {
+            case .tenantGroup: return try NetBoxStore.deleteIDs(TenantGroup.self, ids: [id], in: context)
+            case .deviceRole: return try NetBoxStore.deleteIDs(DeviceRole.self, ids: [id], in: context)
+            case .deviceType: return try NetBoxStore.deleteIDs(DeviceType.self, ids: [id], in: context)
+            case .tenant: return try NetBoxStore.deleteIDs(Tenant.self, ids: [id], in: context)
+            case .region: return try NetBoxStore.deleteIDs(Region.self, ids: [id], in: context)
+            case .siteGroup: return try NetBoxStore.deleteIDs(SiteGroup.self, ids: [id], in: context)
+            case .site: return try NetBoxStore.deleteIDs(Site.self, ids: [id], in: context)
+            case .rack: return try NetBoxStore.deleteIDs(Rack.self, ids: [id], in: context)
+            case .device: return try NetBoxStore.deleteIDs(Device.self, ids: [id], in: context)
+            case .interface: return try NetBoxStore.deleteIDs(Interface.self, ids: [id], in: context)
+            case .service: return try NetBoxStore.deleteIDs(Service.self, ids: [id], in: context)
+            case .cable: return 0
+            }
+        }
+    }
+
+    private func latestChangelogCursor() async throws -> (id: Int64, time: Date?)? {
+        let (rows, _) = try await NetBoxPageIterator.fetchDecoded(
+            path: "/api/core/object-changes/",
+            extraQuery: [
+                URLQueryItem(name: "ordering", value: "-id"),
+                URLQueryItem(name: "limit", value: "1"),
+            ],
+            as: NetBoxRecord.ObjectChange.self,
+            using: fetcher,
+            maxPages: 1
+        )
+        guard let first = rows.first else { return nil }
+        return (first.id, first.time)
+    }
+
+    private func stampFullSuccess() async throws {
+        let cursor = try? await latestChangelogCursor()
+        _ = try await applyOnStore { context in
+            let now = Date()
+            let provider = try Self.upsertProvider(in: context)
+            provider.lastNetBoxUpdate = now
+            provider.lastFullMirrorAt = now
+            if let cursor {
+                provider.lastObjectChangeId = cursor.id
+                provider.lastObjectChangeTime = cursor.time
+            } else if provider.lastObjectChangeId == nil {
+                provider.lastObjectChangeId = 0
+            }
+            provider.lastDeltaSummary = "full mirror"
             try context.save()
             return true
         }
+    }
+
+    private func stampDeltaSuccess(id: Int64, time: Date?, summary: String) async throws {
+        _ = try await applyOnStore { context in
+            let provider = try Self.upsertProvider(in: context)
+            provider.lastNetBoxUpdate = Date()
+            provider.lastObjectChangeId = id
+            if let time {
+                provider.lastObjectChangeTime = time
+            }
+            provider.lastDeltaSummary = summary
+            try context.save()
+            return true
+        }
+    }
+
+    private static func upsertProvider(in context: ModelContext) throws -> SyncProvider {
+        let existing = try context.fetch(FetchDescriptor<SyncProvider>())
+        if let provider = existing.first {
+            return provider
+        }
+        let created = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
+        context.insert(created)
+        return created
+    }
+}
+
+private extension NetBoxSyncError {
+    static func dataError(_ message: String) -> NetBoxSyncError {
+        .httpStatus(code: 0, body: message)
     }
 }
 

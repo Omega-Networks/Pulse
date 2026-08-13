@@ -131,6 +131,7 @@ enum NetBoxRecord {
         var roleID: Int64
         var typeID: Int64
         var rackID: Int64?
+        var manufacturerID: Int64?
     }
 
     struct Service: Sendable, Equatable {
@@ -175,6 +176,20 @@ enum NetBoxRecord {
         var bridgeName: String?
         var parentID: Int64?
         var parentName: String?
+    }
+
+    struct ObjectChange: Sendable, Equatable {
+        var id: Int64
+        var time: Date?
+        var action: String
+        var changedObjectType: String
+        var changedObjectID: Int64
+        var requestID: String?
+    }
+
+    struct Cable: Sendable, Equatable {
+        var id: Int64
+        var interfaceIDs: [Int64]
     }
 
     struct StaticDevice: Sendable, Equatable {
@@ -465,7 +480,15 @@ extension NetBoxRecord.Device: Decodable {
         roleID = role
         typeID = type
         rackID = try NetBoxIngest.nestedID(container, .rack)
+        if container.contains(.deviceType), try container.decodeNil(forKey: .deviceType) == false {
+            let typeContainer = try container.nestedContainer(keyedBy: ManufacturerKey.self, forKey: .deviceType)
+            manufacturerID = try NetBoxIngest.nestedID(typeContainer, .manufacturer)
+        } else {
+            manufacturerID = nil
+        }
     }
+
+    private enum ManufacturerKey: String, CodingKey { case manufacturer }
 }
 
 extension NetBoxRecord.Service: Decodable {
@@ -656,6 +679,137 @@ extension NetBoxRecord.DeviceBay: Decodable {
     }
 }
 
+extension NetBoxRecord.ObjectChange: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, time, action
+        case changedObjectType = "changed_object_type"
+        case changedObjectID = "changed_object_id"
+        case requestID = "request_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        time = try container.decodeIfPresent(Date.self, forKey: .time)
+        action = try NetBoxIngest.choiceValue(container, .action) ?? ""
+        changedObjectType = try container.decode(String.self, forKey: .changedObjectType)
+        changedObjectID = try container.decode(Int64.self, forKey: .changedObjectID)
+        requestID = try container.decodeIfPresent(String.self, forKey: .requestID)
+    }
+}
+
+extension NetBoxRecord.Cable: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id
+        case aTerminations = "a_terminations"
+        case bTerminations = "b_terminations"
+    }
+
+    enum TerminationKey: String, CodingKey {
+        case objectType = "object_type"
+        case objectID = "object_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        var ids: [Int64] = []
+        ids.append(contentsOf: Self.interfaceIDs(container, .aTerminations))
+        ids.append(contentsOf: Self.interfaceIDs(container, .bTerminations))
+        interfaceIDs = ids
+    }
+
+    private static func interfaceIDs(
+        _ container: KeyedDecodingContainer<CodingKeys>,
+        _ key: CodingKeys
+    ) -> [Int64] {
+        guard let rows = try? container.decode([Failable<Termination>].self, forKey: key) else {
+            return []
+        }
+        return rows.compactMap { row in
+            guard let value = row.value, value.objectType == "dcim.interface" else { return nil }
+            return value.objectID
+        }
+    }
+
+    private struct Termination: Decodable {
+        var objectType: String
+        var objectID: Int64
+        enum CodingKeys: String, CodingKey {
+            case objectType = "object_type"
+            case objectID = "object_id"
+        }
+    }
+
+    private struct Failable<T: Decodable>: Decodable {
+        var value: T?
+        init(from decoder: Decoder) throws {
+            value = try? T(from: decoder)
+        }
+    }
+}
+
+extension NetBoxRecord.TenantGroup: Decodable {
+    enum CodingKeys: String, CodingKey { case id, name, created, last_updated }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .last_updated)
+    }
+}
+
+extension NetBoxRecord.DeviceRole: Decodable {
+    enum CodingKeys: String, CodingKey { case id, name, created, last_updated, color }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .last_updated)
+        colour = try container.decodeIfPresent(String.self, forKey: .color)
+    }
+}
+
+extension NetBoxRecord.DeviceType: Decodable {
+    enum CodingKeys: String, CodingKey { case id, model, created, last_updated, manufacturer, u_height }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .last_updated)
+        uHeight = try container.decodeIfPresent(Double.self, forKey: .u_height).map(Float.init)
+        manufacturerID = try NetBoxIngest.nestedID(container, .manufacturer) ?? 0
+    }
+}
+
+extension NetBoxRecord.Region: Decodable {
+    enum CodingKeys: String, CodingKey { case id, name, created, last_updated, site_count, parent }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .last_updated)
+        siteCount = try container.decodeIfPresent(Int64.self, forKey: .site_count) ?? 0
+        parentID = try NetBoxIngest.nestedID(container, .parent)
+    }
+}
+
+extension NetBoxRecord.SiteGroup: Decodable {
+    enum CodingKeys: String, CodingKey { case id, name, created, last_updated, parent }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .last_updated)
+        parentID = try NetBoxIngest.nestedID(container, .parent)
+    }
+}
+
 enum NetBoxMapping {
     static func tenantGroup(_ value: Components.Schemas.TenantGroup) -> NetBoxRecord.TenantGroup {
         NetBoxRecord.TenantGroup(
@@ -777,7 +931,8 @@ enum NetBoxMapping {
             siteID: Int64(value.site.id),
             roleID: Int64(value.role.id),
             typeID: Int64(value.device_type.id),
-            rackID: value.rack.map { Int64($0.value1.id) }
+            rackID: value.rack.map { Int64($0.value1.id) },
+            manufacturerID: Int64(value.device_type.manufacturer.id)
         )
     }
 

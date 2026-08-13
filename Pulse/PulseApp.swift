@@ -278,7 +278,7 @@ struct PulseApp: App {
         // NetBoxSyncEngine is the single NetBox owner; boot and Sync Dashboard
         // share it so they cannot race.
         do {
-            try await netBoxSyncEngine.fullSync { step, label in
+            try await netBoxSyncEngine.sync { step, label in
                 Task { @MainActor in
                     initState.updateProgress(step, label)
                 }

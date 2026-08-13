@@ -44,6 +44,25 @@ enum NetBoxStore {
         fetchComplete && skipped == 0
     }
 
+    /// Per-id delete for changelog `action=delete`. Missing ids are a no-op.
+    @discardableResult
+    static func deleteIDs<T: PersistentModel & NetBoxIdentified>(
+        _ type: T.Type,
+        ids: [Int64],
+        in context: ModelContext
+    ) throws -> Int {
+        let existing = try fetchByIDs(type, ids: ids, in: context)
+        var deleted = 0
+        for row in existing.values {
+            context.delete(row)
+            deleted += 1
+        }
+        if deleted > 0 {
+            try context.save()
+        }
+        return deleted
+    }
+
     // MARK: - Tenant groups
 
     static func applyTenantGroups(
@@ -680,7 +699,7 @@ extension NetBoxRecord.Device: NetBoxRecordID {}
 extension NetBoxRecord.Service: NetBoxRecordID {}
 extension NetBoxRecord.Interface: NetBoxRecordID {}
 
-private protocol NetBoxIdentified: AnyObject {
+protocol NetBoxIdentified: AnyObject {
     var id: Int64 { get }
 }
 
