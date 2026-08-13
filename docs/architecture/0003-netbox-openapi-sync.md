@@ -55,7 +55,7 @@ The interface walk is a full-sync stage after services, on the launch progress b
 
 Delete All includes `Interface`. Map pin colour reads stored severity fields on `Site` / `Device` (`refreshSeverityFromEvents` at event ingest and after boot sync) so `body` never walks `Event.rClock` after a wipe.
 
-`InterfaceCache` and `.interfacesDidUpdate` are gone. Consumers load `InterfaceVO` via an indexed `FetchDescriptor`. `SiteGraphView` and `LayoutManager` share `SiteTopologyEdges` (one per-site fetch + undirected join). Duplicate cable rendering (once per end) is collapsed to a single edge — accepted visual change.
+`InterfaceCache` and `.interfacesDidUpdate` are gone. Site open does not call `/api/dcim/interfaces/` — `SiteDataService.loadAllSiteData` is static devices + Zabbix items only. Consumers load `InterfaceVO` via an indexed `FetchDescriptor`. `SiteGraphView` and `LayoutManager` share `SiteTopologyEdges` (one local per-site fetch + undirected join). Duplicate cable rendering (once per end) is collapsed to a single edge — accepted visual change. Cables themselves are not a SwiftData type; that is a later revision.
 
 `deleteStale` still full-table-scans the type (P1 pattern). Fine at the 12K lab if measured. At tens of millions of rows that scan is P2 debt; do not invent a new delete primitive here.
 
@@ -68,7 +68,7 @@ Delete All includes `Interface`. Map pin colour reads stored severity fields on 
 | Gate | Status |
 |---|---|
 | Gate 1 — lab count parity, skip+delete, network kill, Add Site disabled | In progress (lab) |
-| Gate 2 — offline interfaces | Not yet (lab; blocks P2 merge) |
+| Gate 2 — offline interfaces | Lab 2026-08-13: startup sync, offline site open, edge parity (minus accepted dedupe), Delete All signed off. Owner waived proxy capture, P1-store upgrade, Instruments, headless re-run. Cables deferred. |
 | Gate 3 — changelog converge | Not yet |
 | Gate 4 — write round-trips | Not yet |
 
@@ -98,3 +98,4 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 - 2026-08-13 — Delete All / SwiftData invalidation: P1 stop-crash recorded; store-replace and severity-as-data named as the real design.
 - 2026-08-13 — Transport: `NetBoxLiveFetcher` ratified for P1; factory/middleware retained for the generated path; one `NetBoxAuthorization` rule. Store apply hops to user-initiated QoS.
 - 2026-08-13 — P2: persisted `Interface`, streaming ingest, out-of-scope vs skipped, VO edges, cache deleted. Gate 2 still lab.
+- 2026-08-13 — P2 lab: owner signed startup/offline/edges/Delete All. Site-open interface HTTP already removed. Cables into SwiftData deferred.

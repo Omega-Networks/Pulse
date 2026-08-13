@@ -94,7 +94,9 @@ actor SiteDataService {
         }
     }
     
-    // Coordinator function that handles all loading
+    /// Rack fillers (static devices / bays) and Zabbix items for this site.
+    /// Does **not** fetch interfaces — those live in SwiftData from the
+    /// boot / Settings full sync (`NetBoxSyncEngine.syncInterfaces`).
     func loadAllSiteData(for siteId: Int64) async throws {
         try await getStaticDevices(for: siteId)
         try await getItems(for: siteId)
