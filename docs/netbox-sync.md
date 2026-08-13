@@ -27,7 +27,7 @@ Changing these is configuration, not a code edit. A Settings UI comes later.
 
 Settings → Database → **Sync Data**. That is a full pull. There is no incremental changelog pass yet (P3).
 
-**Delete All Data** removes Events and Services first, then devices and the rest of the NetBox models, then saves. The event toolbar must not be holding deleted rows.
+**Delete All Data** wipes NetBox (and Event) rows on a side context so the open map and event toolbar are not left holding deleted models. If it crashes with `Event.rClock` / “backing data could no longer be found”, rebuild this branch (commit `47684d2` or later). A later change will replace the store file instead of deleting row-by-row.
 
 ## Regenerating the client
 

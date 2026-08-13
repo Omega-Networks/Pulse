@@ -22,6 +22,7 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 3. **Ingest DTOs, not generated list types.** Generated `Tenant` / `Site` / `Rack` / `Device` / `Service` / `Interface` types require unused counts and nested `display_url` that lab JSON omits. `NetBoxRecord.*` decodes the stored fields only. A skipped element is logged with the missing key; `skipped > 0` blocks that type's delete pass.
 4. **Filter configuration.** `NetBoxFilterConfiguration.default` holds today's exclude / static-role IDs. Fetch and delete share that object. A Settings control is later work; do not scatter new literals.
 5. **No writes in P1.** Add Site is disabled with an honest message. Site create is P4.
+6. **Delete All must not invalidate live `@Query` graphs.** See *Delete All and SwiftData* below.
 
 ## What ships when
 
@@ -47,6 +48,20 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 | Gate 3 — changelog converge | Not yet |
 | Gate 4 — write round-trips | Not yet |
 
+## Delete All and SwiftData
+
+Lab: Settings → Database → Delete All Data, with the map window still open, trapped in `Event.rClock.getter` (`BackingData.swift`: model instance invalidated). The log had already printed “All data deleted successfully.” Map pins and the toolbar event counter still walked `Device.events` / `@Query [Event]` and read persisted fields on tombstoned rows.
+
+**P1 (as-built, `47684d2`):** wipe on a **side** `ModelContext` so the UI context merges a refetch; skip events whose `modelContext` is nil before touching `rClock` / `severity`. That is a tactical stop-crash. `modelContext != nil` is not a documented validity API. A side-context save can still invalidate objects already registered on the main context; the guards are load-bearing.
+
+**Do not treat this as the finished design.** Follow-ups, in order of how much they remove the class of bug:
+
+1. **Delete All = replace the store** (preferred for a true wipe). Tear down the persistent store and hand SwiftUI a new `ModelContainer`. No tombstones, no relationship walks, watermark reset is free. Requires swapping the environment container while windows are open.
+2. **Stop deriving UI from live `Event` models at render time.** EventCounter should snapshot `[(severity, count)]` on save. Site/device pin colour should be stored fields updated at event ingest (P3 already wants severity recompute). Then deleting events cannot crash `body`.
+3. Keep the side-context wipe + `isStoreBacked` only until (1) or (2) ships.
+
+Do not “fix” this by deleting Events later in the type list or by hoping `@Query` drops its array before the next render.
+
 ## Alternatives rejected
 
 - **Build plugin.** Hand-maintained pbxproj; generation must be reviewable in git.
@@ -56,3 +71,4 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 ## Revision history
 
 - 2026-08-13 — P1 accepted. Ingest-DTO lesson recorded after generated types skipped lab tenants, sites, racks, devices, and services.
+- 2026-08-13 — Delete All / SwiftData invalidation: P1 stop-crash recorded; store-replace and severity-as-data named as the real design.
