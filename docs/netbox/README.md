@@ -29,7 +29,7 @@ export GENERATOR=/path/to/swift-openapi-generator   # 1.13.0
 ./Scripts/regenerate-netbox-client.sh
 ```
 
-The script refuses to run if either env var is unset. Do not put a token in the script, in this file, or in a commit message.
+The script refuses to run if either env var is unset. After generate it rewrites `servers:` to an empty URL and **exits non-zero** if the `NETBOX_URL` host still appears in the filtered spec or generated Swift. Do not put a token or a lab hostname in the script, in this file, or in a commit message.
 
 After regenerating: diff the filtered spec and the generated Swift, then rebuild. Schema churn across 4.x minors is expected — treat the compiler errors as the upgrade checklist.
 

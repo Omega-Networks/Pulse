@@ -64,6 +64,66 @@ fi
   --output-directory "$OUT" \
   "$FILTERED"
 
+# Public-repo gate. NetBox may emit the instance URL in `servers:`; another
+# instance may embed it in examples. A human review is not the control.
+# Rewrite servers to an empty URL, then refuse to finish if the lab host
+# still appears in anything this script writes.
+python3 - "$FILTERED" "$OUT" "$NETBOX_URL" <<'PY'
+import re
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+filtered = Path(sys.argv[1])
+out_dir = Path(sys.argv[2])
+lab = urlparse(sys.argv[3])
+host = (lab.hostname or "").lower()
+if not host:
+    sys.exit("error: NETBOX_URL has no hostname")
+
+text = filtered.read_text()
+normalized = (
+    "servers:\n"
+    "- url: ''\n"
+    "  description: NetBox\n"
+)
+if re.search(r"^servers:\n", text, re.M):
+    text = re.sub(
+        r"^servers:\n(?:- url:.*\n(?:  .*\n)*)",
+        normalized,
+        text,
+        count=1,
+        flags=re.M,
+    )
+else:
+    text = re.sub(r"^(paths:\n)", normalized + r"\1", text, count=1, flags=re.M)
+filtered.write_text(text)
+
+needles = {host}
+if lab.netloc:
+    needles.add(lab.netloc.lower())
+# Full URL minus trailing slash, so https://host/api is also caught.
+if lab.geturl():
+    needles.add(lab.geturl().rstrip("/").lower())
+
+leaks = []
+paths = [filtered, *sorted(out_dir.glob("*.swift"))]
+for path in paths:
+    body = path.read_text()
+    lower = body.lower()
+    for needle in needles:
+        if needle and needle in lower:
+            for i, line in enumerate(body.splitlines(), 1):
+                if needle in line.lower():
+                    leaks.append(f"{path}:{i}:{line.strip()}")
+
+if leaks:
+    print("error: lab instance URL survived vendoring:", file=sys.stderr)
+    for leak in leaks:
+        print(f"  {leak}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 echo "Wrote:"
 wc -l "$OUT"/*.swift
-echo "Done. Review the diff of docs/netbox/openapi-filtered.yaml and Pulse/NetBox/Generated/."
+echo "servers: normalized; no lab host in vendored outputs."

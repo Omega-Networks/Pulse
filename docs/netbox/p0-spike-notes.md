@@ -1,6 +1,6 @@
 # P0 spike notes — 2026-08-13
 
-Against lab `https://netbox.omega.net.nz`. Token was env-sourced; not recorded here.
+Against the operator's lab instance. Token was env-sourced; hostname and token are not recorded here.
 
 ## Instance
 
