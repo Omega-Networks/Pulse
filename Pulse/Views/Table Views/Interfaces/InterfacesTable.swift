@@ -26,28 +26,10 @@
 import Foundation
 import SwiftUI
 import SwiftData
-import UniformTypeIdentifiers
 
-//TODO: Update documentation for InterfacesTable
 /**
- A view representing a table of network interfaces for a specific device.
- 
- The `InterfacesTable` view displays a sortable and editable table of network interface objects associated with a given device. It supports drag-and-drop operations for reordering interfaces and allows for editing properties such as the interface's label and description.
- 
- - Properties:
- - `device`: The `Device` object whose interfaces are being displayed.
- - `sortedInterfaces`: An array of `Interface` objects sorted by their IDs.
- - `selection`: Tracks the selected interfaces in the table.
- - `interfaces`: An array of `Interface` objects fetched from the database, filtered by the device ID.
- - `isEditing`: A Boolean value indicating whether the table is in editing mode.
- - `editedInterfaces`: A dictionary holding the interfaces being edited, keyed by their IDs.
- - `droppedInterface`: The interface on which another interface is dropped.
- 
- - Initialization:
- Initializes the view with a given device, setting up the necessary state and queries.
- 
- - View body:
- The main view consists of a `Table` displaying the sorted interfaces, with columns for various attributes like name, label, description, and status. It supports drag-and-drop functionality and includes a drop destination for interfaces.
+ Table of a device's interfaces. Description and enabled write through
+ `NetBoxSyncEngine`; cable connect/disconnect does the same.
  */
 struct InterfacesTable: View {
     @Environment(\.modelContext) private var modelContext
@@ -83,43 +65,10 @@ struct InterfacesTable: View {
         }
     }
     
-    // Properties for editing Interface objects
-    @State private var isEditing = false
     @State private var editedInterfaces: [Int64: InterfaceVO] = [:]
-    
-    // Property for tracking the dragged interface
-    @State private var targetedInterface: InterfaceVO?
-    @State private var interfaceToDelete: InterfaceVO?
-    @State private var showDeleteConfirmation = false
-    
-    //New array for storing new Interfaces
-    @State private var newInterfaces: [InterfaceVO]  = []
-    
-    //    @State private var dataLoaded = false
-    
+
     var body: some View {
-        VStack {
-            HStack {
-                Spacer()
-            }
-            ///Main table view
-            tableView
-                .onDrag {
-                    let selectedRows = selection.map { Int($0) }
-                    do {
-                        let data = try JSONEncoder().encode(selectedRows)
-                        let itemProvider = NSItemProvider()
-                        itemProvider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier, visibility: .all) { completion in
-                            completion(data, nil)
-                            return nil
-                        }
-                        return itemProvider
-                    } catch {
-                        print("Failed to encode selected rows: \(error)")
-                        return NSItemProvider()
-                    }
-                }
-        }
+        tableView
         .task {
             loadInterfaces()
         }
@@ -367,24 +316,6 @@ extension InterfacesTable {
                     }
             }
         }
-    }
-    
-    private func deleteButtonInTable(for interface: InterfaceVO) -> some View {
-        Button(action: {
-            self.interfaceToDelete = interface
-            self.showDeleteConfirmation = true
-        }) {
-            Image(systemName: "trash")
-                .foregroundColor(.red)
-        }
-    }
-    
-    private var cancelButton: some View {
-        Button("Cancel") {
-            editedInterfaces.removeAll()
-            isEditing = false
-        }
-        .keyboardShortcut(.cancelAction)
     }
     
     /**

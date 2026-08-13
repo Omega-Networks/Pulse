@@ -25,9 +25,6 @@
 
 import Foundation
 import SwiftData
-import OSLog
-import UniformTypeIdentifiers
-import SwiftUI
 
 @Model
 final class DeviceRole {
@@ -36,62 +33,12 @@ final class DeviceRole {
     var created: Date?
     var lastUpdated: Date?
     var colour: String?
-    
+
     @Relationship(inverse: \Device.deviceRole)
-        var devices: [Device]?
-    
+    var devices: [Device]?
+
     init(id: Int64) {
         self.id = id
     }
-
-    var allowedDeviceTypes: [String] {
-        var allowedDeviceTypesArray: [String] = []
-        
-        for device in devices ?? [] {
-            if let deviceType = device.deviceType {
-                if let display = deviceType.model {
-                    allowedDeviceTypesArray.append(display)
-                }
-            }
-        }
-        let uniqueAllowedDeviceTypes = Array(Set(allowedDeviceTypesArray)).sorted()
-        return uniqueAllowedDeviceTypes
-    }
-    
-    #if os(macOS)
-    var record: DeviceRoleRecord {
-        DeviceRoleRecord(deviceRole: self)
-    }
-    #endif
-
 }
-
-#if os(macOS)
-struct DeviceRoleRecord: Codable, Transferable {
-    let id: Int64
-    let name: String
-    let created: Date
-    let lastUpdated: Date
-    let allowedDeviceTypes: [String]
-    
-    init(deviceRole: DeviceRole) {
-        self.id = deviceRole.id
-        self.name = deviceRole.name ?? ""
-        self.created = deviceRole.created ?? Date()
-        self.lastUpdated = deviceRole.lastUpdated ?? Date()
-        self.allowedDeviceTypes = deviceRole.allowedDeviceTypes
-    }
-    
-    static var transferRepresentation: some TransferRepresentation {
-        CodableRepresentation(contentType: .deviceRoleRecord)
-    }
-}
-
-extension UTType {
-    static var deviceRoleRecord: UTType {
-        UTType(exportedAs: "omega-networks.Pulse.DeviceRoleRecord")
-    }
-}
-
-#endif
 

@@ -61,12 +61,6 @@ struct SiteGraphView: View {
     
     @Query var devices: [Device]
     @Binding var selectedDevice: Device?
-    //New binding property for opening the configure device sheet
-#if os(macOS)
-    @Binding var showingConfigureDeviceSheet: Bool
-    @Binding var newDeviceRole: Int64
-    @Binding var newDeviceLocation: CGPoint?
-#endif
     
     @State private var imageCentres: [Int64: CGPoint] = [:]
     @State private var nodeToDrag: (device: Device, offset: CGSize)? = nil
@@ -192,10 +186,7 @@ struct SiteGraphView: View {
          isInPopover: Bool,
          labelsEnabled: Binding<Bool>,
          saveCoordinates: Binding<Bool>,
-         isHorizontalLayout: Binding<Bool>,
-         showingConfigureDeviceSheet: Binding<Bool>,
-         newDeviceRole: Binding<Int64>,
-         newDeviceLocation: Binding<CGPoint?>) {
+         isHorizontalLayout: Binding<Bool>) {
         
         self.siteId = siteId
         self._selectedDevice = selectedDevice
@@ -204,9 +195,6 @@ struct SiteGraphView: View {
         self._enableGestures = enableGestures
         self._saveCoordinates = saveCoordinates
         self._isHorizontalLayout = isHorizontalLayout
-        self._showingConfigureDeviceSheet = showingConfigureDeviceSheet
-        self._newDeviceRole = newDeviceRole
-        self._newDeviceLocation = newDeviceLocation
         
         self._devices = Query(filter: #Predicate<Device> { device in
             device.site?.id == siteId
@@ -275,13 +263,6 @@ struct SiteGraphView: View {
                         }
                     }
                     #if os(macOS)
-                        .dropDestination(for: DeviceRoleRecord.self) { records, location in
-                            for record in records {
-                                showingConfigureDeviceSheet = true
-                                updateNewDeviceRole(record.id, location)
-                            }
-                            return true
-                        }
                         .background()
                         .onTapGesture {
                             if isInPopover {
@@ -346,14 +327,6 @@ struct SiteGraphView: View {
                                 saveCoordinates = false
                             }
                         }
-                    #if os(macOS)
-                        .onChange(of: newDeviceRole) { oldValue, newValue in
-                            print("SiteView - newDeviceRole changed from \(oldValue) to \(newValue)")
-                        }
-                        .onChange(of: newDeviceLocation) { oldValue, newValue in
-                            print("SiteView - newDeviceLocation changed from \(String(describing: oldValue)) to \(String(describing: newValue))")
-                        }
-                    #endif
                 )
         }
         .task(id: siteId) {
@@ -513,15 +486,6 @@ extension SiteGraphView {
             totalZoom = max(selectedScale, minimumZoomLevel)
         }
     }
-    
-#if os(macOS)
-    private func updateNewDeviceRole(_ newDeviceRoleId: Int64, _ newDeviceLocation: CGPoint) {
-        DispatchQueue.main.async {
-            self.newDeviceRole = newDeviceRoleId
-            self.newDeviceLocation = newDeviceLocation
-        }
-    }
-#endif
     
     /**
      Renders the edges between devices in the site graph.

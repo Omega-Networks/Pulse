@@ -61,9 +61,7 @@ struct SiteView: View {
     @State private var contentWidth: CGFloat = 220 // Default width for left hand pane
     
     //Properties for showing the sheet for configuring Devices
-    @State private var showingConfigureDeviceSheet = false
-    @State private var newDeviceRole: Int64 = 0
-    @State private var newDeviceLocation: CGPoint?
+    @State private var showingNewDeviceSheet = false
     
     //Properties to alter the laout
     @State var isHorizontalLayout: Bool = true
@@ -124,10 +122,7 @@ struct SiteView: View {
                                     isInPopover: false,
                                     labelsEnabled: $labelsEnabled,
                                     saveCoordinates: $saveCoordinates,
-                                    isHorizontalLayout: $isHorizontalLayout,
-                                    showingConfigureDeviceSheet: $showingConfigureDeviceSheet,
-                                    newDeviceRole: $newDeviceRole,
-                                    newDeviceLocation: $newDeviceLocation
+                                    isHorizontalLayout: $isHorizontalLayout
                                 )
                                 .frame(width: 5000, height: 5000)
                             }
@@ -173,18 +168,9 @@ struct SiteView: View {
                 print("Error loading site data: \(error)")
             }
         }
-        .sheet(isPresented: $showingConfigureDeviceSheet) {
-            NewDeviceSheet(
-                siteId: siteId,
-                initialRoleID: newDeviceRole == 0 ? nil : newDeviceRole,
-                location: newDeviceLocation,
-                onDismiss: {
-                    showingConfigureDeviceSheet = false
-                    newDeviceRole = 0
-                    newDeviceLocation = nil
-                }
-            )
-            .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+        .sheet(isPresented: $showingNewDeviceSheet) {
+            NewDeviceSheet(siteId: siteId, onDismiss: { showingNewDeviceSheet = false })
+                .environment(\.netBoxSyncEngine, netBoxSyncEngine)
         }
     }
 }
@@ -218,9 +204,7 @@ extension SiteView {
         
         ToolbarItemGroup (placement: .primaryAction) {
             Button {
-                newDeviceRole = 0
-                newDeviceLocation = nil
-                showingConfigureDeviceSheet = true
+                showingNewDeviceSheet = true
             } label: {
                 Image(systemName: "plus")
                     .fontWeight(.medium)

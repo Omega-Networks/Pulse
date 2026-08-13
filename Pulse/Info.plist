@@ -49,26 +49,5 @@
 	<string>Pulse connects to devices on your local network to open their web and terminal management interfaces.</string>
 	<key>UIBackgroundModes</key>
 	<array/>
-	<!--
-	  Exported UTType for DeviceRoleRecord, a Transferable used to drag device
-	  roles onto the site graph. Declaring it here silences the "expected to be
-	  declared and exported in the Info.plist" runtime warning and lets macOS
-	  route the drag pasteboard reliably. The identifier must match
-	  UTType(exportedAs:) in DeviceRole.swift; the record is a Codable (JSON)
-	  payload, so it conforms to public.data.
-	-->
-	<key>UTExportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>omega-networks.Pulse.DeviceRoleRecord</string>
-			<key>UTTypeDescription</key>
-			<string>Pulse Device Role</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-			</array>
-		</dict>
-	</array>
 </dict>
 </plist>

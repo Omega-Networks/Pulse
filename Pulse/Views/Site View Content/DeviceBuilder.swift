@@ -27,39 +27,8 @@ import SwiftUI
 import SwiftData
 
 #if os(macOS)
-struct DeviceBuilder: View {
-    @Query(sort: \DeviceRole.name) private var deviceRoles: [DeviceRole]
-    
-    let columns: [GridItem] = Array(repeating: .init(.flexible()), count: 3)
-    
-    var body: some View {
-        VStack {
-            ScrollView {
-                Text("Add A Device")
-                    .font(.title)
-                    .fontWeight(.bold)
-                    .padding(.top, 5)
-                Text("Optional: drag a role onto the graph to prefill New Device.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-                
-                LazyVGrid(columns: columns, spacing: 20) {
-                    ForEach(deviceRoles) { deviceRole in
-                        DeviceRoleView(deviceRole: deviceRole)
-                    }
-                }
-                .padding()
-            }
-        }
-        .frame(minWidth: 320, minHeight: 280)
-    }
-}
-
 struct NewDeviceSheet: View {
     let siteId: Int64
-    var initialRoleID: Int64?
-    var location: CGPoint?
     var onDismiss: () -> Void
 
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
@@ -119,9 +88,6 @@ struct NewDeviceSheet: View {
         }
         .padding(24)
         .frame(minWidth: 420)
-        .onAppear {
-            if roleID == nil { roleID = initialRoleID }
-        }
     }
 
     private var canCreate: Bool {
@@ -138,11 +104,6 @@ struct NewDeviceSheet: View {
         guard !trimmed.isEmpty else { return }
         isWriting = true
         defer { isWriting = false }
-        var fields: [String: NetBoxWriteBody.JSONValue] = [:]
-        if let location {
-            fields[NetBoxCustomFields.coordinateX] = .double(location.x)
-            fields[NetBoxCustomFields.coordinateY] = .double(location.y)
-        }
         do {
             try await engine.createDevice(
                 NetBoxWriteBody.DeviceCreate(
@@ -150,8 +111,7 @@ struct NewDeviceSheet: View {
                     deviceType: typeID,
                     role: roleID,
                     site: siteId,
-                    status: status,
-                    customFields: fields.isEmpty ? nil : fields
+                    status: status
                 )
             )
             onDismiss()
@@ -159,59 +119,5 @@ struct NewDeviceSheet: View {
             writeError = error.localizedDescription
         }
     }
-}
-
-///New helper view for showing device role symbol and name
-struct DeviceRoleView: View {
-    let deviceRole: DeviceRole
-    
-    var body: some View {
-        VStack {
-            Image(symbolName(for: deviceRole))
-                .font(.system(size: 40))
-                .frame(width: 80, height: 80)
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(.black, .white)
-                .background(Color.secondary.opacity(0.2))
-                .cornerRadius(15)
-                .padding(10)
-            
-            Text(deviceRole.name ?? "")
-                .font(.caption)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-        }
-        .draggable(deviceRole.record)
-    }
-    
-    func symbolName(for deviceRole: DeviceRole) -> String {
-        switch deviceRole.name {
-        case "Access Switch", "Distribution Switch", "Management Switch":
-            return "custom.switch"
-        case "Core Switch":
-            return "custom.coreswitch"
-        case "Security Router", "Core Firewall", "Management Firewall":
-            return "custom.securityrouter"
-        case "Access Point", "Wireless Bridge":
-            return "custom.wirelessap"
-        case "Camera":
-            return "custom.camera"
-        case "Router", "Terminal Server", "Provider Edge":
-            return "custom.router"
-        case "Certificate":
-            return "custom.scroll.fill"
-        case "Digital Display":
-            return "custom.inset.filled.tv"
-        case "EdgeAI":
-            return "externaldrive.fill"
-        default:
-            return "custom.questionmark"
-        }
-    }
-}
-
-#Preview {
-    DeviceBuilder()
-        .modelContainer(for: DeviceRole.self, inMemory: true)
 }
 #endif

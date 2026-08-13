@@ -74,4 +74,4 @@ Validation errors (duplicate cable, missing field) show the server JSON.
 
 **New site** is the map window **+**. Tap the map first if you want coordinates and a reverse-geocoded address; then **+**. The form sends `name`, a slug derived from the name, `status`, and optional region/group/tenant. Coords and address are included only when a map pin exists. A failed POST leaves no local site.
 
-**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/`. Dropping a role on the graph opens the same form with that role and the drop point as `coordinate_x` / `coordinate_y`. A failed POST leaves no local device.
+**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/`. A failed POST leaves no local device.

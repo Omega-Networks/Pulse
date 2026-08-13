@@ -158,7 +158,6 @@ struct SingleRackView: View {
     @Environment(\.dismiss) private var dismiss
     
     @State private var hoveredUnit: Int? = nil
-    @State private var showDeviceBuilderSheet: Bool = false
     @State private var isHovering: Bool = false
     
     private let aspectRatioWithEars: CGFloat = 10.71
@@ -228,9 +227,6 @@ struct SingleRackView: View {
                                         .zIndex(1)
                                 } else if unit.device == nil && unit.staticDevice == nil {
                                     RackUnitView(unit: unit.index + 1, unitHeight: unitHeight, rackWidth: rackWidth)
-                                        .onTapGesture {
-                                            showDeviceBuilderSheet = true
-                                        }
                                         .zIndex(0)
                                 }
                             }
@@ -251,10 +247,6 @@ struct SingleRackView: View {
         }
         .onChange(of: staticDevices) {
             updateRackUnits()
-        }
-        .sheet(isPresented: $showDeviceBuilderSheet) {
-            DeviceBuilder()
-                .frame(minWidth: 360, minHeight: 320)
         }
     }
     
