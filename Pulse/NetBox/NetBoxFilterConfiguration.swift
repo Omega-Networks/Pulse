@@ -1,0 +1,77 @@
+//
+//  NetBoxFilterConfiguration.swift
+//  Pulse
+//
+//  Copyright © 2025–present Omega Networks Limited.
+//
+
+import Foundation
+
+/// Fetch-scope, delete-scope, and (later) delta-filter for NetBox sync.
+///
+/// One value object so the three consumers cannot drift. Defaults match the
+/// IDs previously baked into `NetboxResource` paths so Gate 1 is a parity run,
+/// not a scope change. Camera role IDs 11/35 on `Device` are display filters
+/// and do not belong here.
+struct NetBoxFilterConfiguration: Sendable, Equatable, Hashable {
+    /// Manufacturers omitted from device and device-type pulls (`manufacturer_id__n`).
+    var excludedManufacturerIDs: Set<Int>
+
+    /// Roles omitted from device and device-role pulls (`role_id__n` / `id__n`).
+    var excludedRoleIDs: Set<Int>
+
+    /// Roles that identify static rack fillers (blank plate, cable management,
+    /// patch panel). On-demand only in P1; not part of the boot device pull.
+    var staticDeviceRoleIDs: Set<Int>
+
+    /// Today's Omega instance IDs. Changing these is configuration, not a code edit.
+    static let `default` = NetBoxFilterConfiguration(
+        excludedManufacturerIDs: [5],
+        excludedRoleIDs: [29, 30],
+        staticDeviceRoleIDs: [6, 7, 18, 27]
+    )
+
+    /// Stable, sorted arrays for generated query parameters.
+    var excludedManufacturerQuery: [Int] {
+        excludedManufacturerIDs.sorted()
+    }
+
+    /// Device list `role_id__n` is typed `[String]` in the 4.6.2 schema.
+    var excludedRoleQueryAsStrings: [String] {
+        excludedRoleIDs.sorted().map(String.init)
+    }
+
+    var excludedRoleQueryAsInts: [Int] {
+        excludedRoleIDs.sorted()
+    }
+
+    var staticDeviceRoleQuery: [Int] {
+        staticDeviceRoleIDs.sorted()
+    }
+
+    /// True if a device with these foreign keys belongs in the local store.
+    func includesDevice(manufacturerID: Int?, roleID: Int?) -> Bool {
+        if let manufacturerID, excludedManufacturerIDs.contains(manufacturerID) {
+            return false
+        }
+        if let roleID, excludedRoleIDs.contains(roleID) {
+            return false
+        }
+        return true
+    }
+
+    /// True if a device-type with this manufacturer belongs in the local store.
+    func includesDeviceType(manufacturerID: Int?) -> Bool {
+        guard let manufacturerID else { return true }
+        return !excludedManufacturerIDs.contains(manufacturerID)
+    }
+
+    /// True if a device-role belongs in the local store.
+    func includesDeviceRole(id: Int) -> Bool {
+        !excludedRoleIDs.contains(id)
+    }
+
+    func isStaticDeviceRole(id: Int) -> Bool {
+        staticDeviceRoleIDs.contains(id)
+    }
+}

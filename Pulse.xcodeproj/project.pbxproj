@@ -131,6 +131,10 @@
 		A11CAFE0000000000000NB13 /* NetBoxLenientDateTranscoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB04 /* NetBoxLenientDateTranscoder.swift */; };
 		A11CAFE0000000000000NB14 /* NetBoxAuthMiddleware.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB05 /* NetBoxAuthMiddleware.swift */; };
 		A11CAFE0000000000000NB15 /* NetBoxDateTranscoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB06 /* NetBoxDateTranscoderTests.swift */; };
+		A11CAFE0000000000000NB16 /* NetBoxFilterConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB07 /* NetBoxFilterConfiguration.swift */; };
+		A11CAFE0000000000000NB17 /* NetBoxPageIterator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB08 /* NetBoxPageIterator.swift */; };
+		A11CAFE0000000000000NB18 /* NetBoxFilterConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB09 /* NetBoxFilterConfigurationTests.swift */; };
+		A11CAFE0000000000000NB19 /* NetBoxPageIteratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */; };
 		A11CAFE0000000000000NB22 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB20 /* OpenAPIRuntime */; };
 		A11CAFE0000000000000NB23 /* OpenAPIURLSession in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB21 /* OpenAPIURLSession */; };
 		A11CAFE000000000000000C0 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE000000000000000C1 /* NIOSSH */; };
@@ -428,6 +432,10 @@
 		A11CAFE0000000000000NB04 /* NetBoxLenientDateTranscoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxLenientDateTranscoder.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB05 /* NetBoxAuthMiddleware.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxAuthMiddleware.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB06 /* NetBoxDateTranscoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxDateTranscoderTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB07 /* NetBoxFilterConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxFilterConfiguration.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB08 /* NetBoxPageIterator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxPageIterator.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB09 /* NetBoxFilterConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxFilterConfigurationTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxPageIteratorTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -720,6 +728,8 @@
 				A11CAFE0000000000000A003 /* DirectTransportTests.swift */,
 				B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */,
 				A11CAFE0000000000000NB06 /* NetBoxDateTranscoderTests.swift */,
+				A11CAFE0000000000000NB09 /* NetBoxFilterConfigurationTests.swift */,
+				A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -730,6 +740,8 @@
 				A11CAFE0000000000000NB03 /* NetBoxClientFactory.swift */,
 				A11CAFE0000000000000NB04 /* NetBoxLenientDateTranscoder.swift */,
 				A11CAFE0000000000000NB05 /* NetBoxAuthMiddleware.swift */,
+				A11CAFE0000000000000NB07 /* NetBoxFilterConfiguration.swift */,
+				A11CAFE0000000000000NB08 /* NetBoxPageIterator.swift */,
 			);
 			path = NetBox;
 			sourceTree = "<group>";
@@ -1306,6 +1318,8 @@
 				A11CAFE0000000000000NB12 /* NetBoxClientFactory.swift in Sources */,
 				A11CAFE0000000000000NB13 /* NetBoxLenientDateTranscoder.swift in Sources */,
 				A11CAFE0000000000000NB14 /* NetBoxAuthMiddleware.swift in Sources */,
+				A11CAFE0000000000000NB16 /* NetBoxFilterConfiguration.swift in Sources */,
+				A11CAFE0000000000000NB17 /* NetBoxPageIterator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1318,6 +1332,8 @@
 				A11CAFE0000000000000B003 /* DirectTransportTests.swift in Sources */,
 				B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */,
 				A11CAFE0000000000000NB15 /* NetBoxDateTranscoderTests.swift in Sources */,
+				A11CAFE0000000000000NB18 /* NetBoxFilterConfigurationTests.swift in Sources */,
+				A11CAFE0000000000000NB19 /* NetBoxPageIteratorTests.swift in Sources */,
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
 				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
 				B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */,
