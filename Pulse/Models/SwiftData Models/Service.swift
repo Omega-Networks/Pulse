@@ -88,7 +88,7 @@ final class Service {
 
     /// The bare IP address of the first associated IP, with any trailing CIDR
     /// prefix stripped. Mirrors `Device.primaryIPAddress`: NetBox's IPAM stores
-    /// addresses in CIDR form (e.g. `172.27.10.201/24`), but the web companion
+    /// addresses in CIDR form (e.g. `192.0.2.10/24`), but the web companion
     /// and other network call sites need the bare address, not the CIDR string.
     /// The split is on the first `/` only; no IP address text contains a literal
     /// `/` for any other reason. Returns nil when there are no addresses.
@@ -115,11 +115,11 @@ extension Service: Identifiable {}
 //    "display": "SSH (TCP/22)",
 //    "parent_object_type": "dcim.device",
 //    "parent_object_id": 6023,
-//    "parent": { "id": 6023, "name": "OMG-08-010-LP-PB01", "description": "Proxmox Backup Server" },
+//    "parent": { "id": 6023, "name": "core-switch-01", "description": "Example switch" },
 //    "name": "SSH",
 //    "protocol": { "value": "tcp", "label": "TCP" },
 //    "ports": [22],
-//    "ipaddresses": [ { "id": 2275, "address": "172.27.10.201/24", "family": { "value": 4, "label": "IPv4" } } ],
+//    "ipaddresses": [ { "id": 2275, "address": "192.0.2.10/24", "family": { "value": 4, "label": "IPv4" } } ],
 //    "description": "Secure shell access"
 //}
 

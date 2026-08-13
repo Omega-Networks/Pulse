@@ -59,7 +59,140 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertTrue(page.allowsDelete)
     }
 
-    // MARK: - Tenant / site insert (the lastUpdated-equal bug)
+    // MARK: - Tenant ingest
+
+    func testTenantPageDecodesWhenGeneratedTypeWouldSkip() throws {
+        let json = Data("""
+        { "count": 2, "next": null, "results": [
+          {
+            "id": 1, "url": "u", "display_url": "d", "display": "Acme",
+            "name": "Acme", "slug": "acme",
+            "group": {
+              "id": 4, "url": "u", "display": "Customers",
+              "name": "Customers", "slug": "customers", "_depth": 0
+            },
+            "owner": { "id": 2, "url": "u", "display": "Ops", "name": "Ops" },
+            "tags": [{ "id": 9, "url": "u", "display": "prod", "name": "prod", "slug": "prod" }],
+            "created": "2022-04-27T09:47:32.110929Z",
+            "last_updated": "2022-04-27T09:50:23.049511Z"
+          },
+          {
+            "id": 8, "url": "u", "display_url": "d", "display": "Solo",
+            "name": "Solo", "slug": "solo",
+            "group": null,
+            "created": "2024-01-02T03:04:05Z",
+            "last_updated": "2024-01-02T03:04:05Z",
+            "circuit_count": 0, "device_count": 0, "ipaddress_count": 0,
+            "prefix_count": 0, "rack_count": 0, "site_count": 0,
+            "virtualmachine_count": 0, "vlan_count": 0, "vrf_count": 0,
+            "cluster_count": 0
+          }
+        ] }
+        """.utf8)
+
+        let generated = try NetBoxListDecoder.decodePage(Components.Schemas.Tenant.self, from: json)
+        XCTAssertEqual(generated.results.map(\.id), [8])
+        XCTAssertEqual(generated.skipped, 1)
+
+        let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Tenant.self, from: json)
+        XCTAssertEqual(page.skipped, 0)
+        XCTAssertEqual(page.results.map(\.id), [1, 8])
+        XCTAssertEqual(page.results[0].name, "Acme")
+        XCTAssertEqual(page.results[0].groupID, 4)
+        XCTAssertNil(page.results[1].groupID)
+    }
+
+    func testSiteRackDevicePagesDecodeWhenGeneratedTypesSkip() throws {
+        let sites = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 323, "url": "u", "display_url": "d", "display": "Lab",
+            "name": "Lab", "slug": "lab",
+            "status": { "value": "active", "label": "Active" },
+            "region": { "id": 3, "url": "u", "display": "NZ", "name": "NZ", "slug": "nz", "_depth": 0 },
+            "group": { "id": 2, "url": "u", "display": "Omega", "name": "Omega", "slug": "omega", "_depth": 0 },
+            "tenant": { "id": 1, "url": "u", "display": "Acme", "name": "Acme", "slug": "acme" },
+            "tags": [{ "id": 9, "url": "u", "display": "prod", "name": "prod", "slug": "prod" }],
+            "latitude": -41.2, "longitude": 174.7,
+            "created": "2024-01-02T03:04:05.000000Z",
+            "last_updated": "2024-01-02T03:04:05.000000Z"
+          }
+        ] }
+        """.utf8)
+        XCTAssertEqual(
+            try NetBoxListDecoder.decodePage(Components.Schemas.Site.self, from: sites).skipped,
+            1
+        )
+        let sitePage = try NetBoxListDecoder.decodePage(NetBoxRecord.Site.self, from: sites)
+        XCTAssertEqual(sitePage.skipped, 0)
+        XCTAssertEqual(sitePage.results.first?.id, 323)
+        XCTAssertEqual(sitePage.results.first?.regionID, 3)
+        XCTAssertEqual(sitePage.results.first?.groupID, 2)
+        XCTAssertEqual(sitePage.results.first?.tenantID, 1)
+        XCTAssertEqual(sitePage.results.first?.status, "active")
+
+        let racks = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 44, "url": "u", "display_url": "d", "display": "R1",
+            "name": "R1",
+            "site": { "id": 323, "url": "u", "display": "Lab", "name": "Lab", "slug": "lab" },
+            "status": { "value": "active", "label": "Active" },
+            "form_factor": { "value": "4-post-cabinet", "label": "4-post cabinet" },
+            "u_height": 42, "starting_unit": 1, "device_count": 3,
+            "created": "2024-01-02T03:04:05Z",
+            "last_updated": "2024-01-02T03:04:05Z"
+          }
+        ] }
+        """.utf8)
+        let rackPage = try NetBoxListDecoder.decodePage(NetBoxRecord.Rack.self, from: racks)
+        XCTAssertEqual(rackPage.skipped, 0)
+        XCTAssertEqual(rackPage.results.first?.siteID, 323)
+        XCTAssertEqual(rackPage.results.first?.uHeight, 42)
+        XCTAssertEqual(rackPage.results.first?.formFactor, "4-post-cabinet")
+
+        let devices = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 1260, "url": "u", "display_url": "d", "display": "sw1",
+            "name": "sw1",
+            "device_type": { "id": 8, "url": "u", "display": "t", "model": "t", "slug": "t" },
+            "role": { "id": 2, "url": "u", "display": "r", "name": "r", "slug": "r" },
+            "site": { "id": 323, "url": "u", "display": "Lab", "name": "Lab", "slug": "lab" },
+            "primary_ip": { "id": 9, "url": "u", "display": "10.0.0.1/24", "address": "10.0.0.1/24" },
+            "status": { "value": "active", "label": "Active" },
+            "custom_fields": { "coordinate_x": 1.5, "coordinate_y": "2.5", "zabbix_id": 99 },
+            "created": "2022-09-21T03:30:07.062900Z",
+            "last_updated": "2022-09-21T03:30:07.062900Z"
+          }
+        ] }
+        """.utf8)
+        XCTAssertEqual(
+            try NetBoxListDecoder.decodePage(Components.Schemas.DeviceWithConfigContext.self, from: devices).skipped,
+            1
+        )
+        let devicePage = try NetBoxListDecoder.decodePage(NetBoxRecord.Device.self, from: devices)
+        XCTAssertEqual(devicePage.skipped, 0)
+        XCTAssertEqual(devicePage.results.first?.siteID, 323)
+        XCTAssertEqual(devicePage.results.first?.roleID, 2)
+        XCTAssertEqual(devicePage.results.first?.typeID, 8)
+        XCTAssertEqual(devicePage.results.first?.primaryIP, "10.0.0.1/24")
+        XCTAssertEqual(devicePage.results.first?.x, 1.5)
+        XCTAssertEqual(devicePage.results.first?.y, 2.5)
+        XCTAssertEqual(devicePage.results.first?.zabbixID, 99)
+    }
+
+    func testSkipDescriptionNamesTheMissingKey() {
+        enum ProbeKey: String, CodingKey { case id }
+        let message = NetBoxListDecoder.describe(
+            DecodingError.keyNotFound(
+                ProbeKey.id,
+                .init(codingPath: [ProbeKey.id], debugDescription: "")
+            )
+        )
+        XCTAssertTrue(message.contains("id"), message)
+        XCTAssertTrue(message.contains("missing key"), message)
+    }
 
     func testNewTenantWithoutGroupIsInserted() throws {
         let container = try makeContainer()
@@ -205,6 +338,8 @@ final class NetBoxMappingTests: XCTestCase {
         let generated = try NetBoxListDecoder.makeDecoder()
             .decode(Components.Schemas.DeviceWithConfigContext.self, from: json)
         let record = NetBoxMapping.device(generated)
+        let ingested = try NetBoxListDecoder.makeDecoder().decode(NetBoxRecord.Device.self, from: json)
+        XCTAssertEqual(ingested, record)
         XCTAssertNil(record.name)
         XCTAssertEqual(record.serial, "Unknown")
         XCTAssertEqual(record.primaryIP, "Unknown")
@@ -253,6 +388,40 @@ final class NetBoxMappingTests: XCTestCase {
     }
 
     // MARK: - Services
+
+    func testServicePageDecodesIPAddressesWithoutDisplayURL() throws {
+        let json = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 7,
+            "url": "https://netbox.example.com/api/ipam/services/7/",
+            "display": "SSH (TCP/22)",
+            "parent_object_type": "dcim.device",
+            "parent_object_id": 6023,
+            "parent": { "id": 6023, "name": "core-switch-01" },
+            "name": "SSH",
+            "protocol": { "value": "tcp", "label": "TCP" },
+            "ports": [22],
+            "ipaddresses": [
+              { "id": 2275, "address": "192.0.2.10/24", "family": { "value": 4, "label": "IPv4" } }
+            ],
+            "description": "Secure shell access"
+          }
+        ] }
+        """.utf8)
+        XCTAssertEqual(
+            try NetBoxListDecoder.decodePage(Components.Schemas.Service.self, from: json).skipped,
+            1
+        )
+        let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Service.self, from: json)
+        XCTAssertEqual(page.skipped, 0)
+        XCTAssertEqual(page.results.first?.id, 7)
+        XCTAssertEqual(page.results.first?.ipAddresses, ["192.0.2.10/24"])
+        XCTAssertEqual(page.results.first?.parentObjectType, "dcim.device")
+        XCTAssertEqual(page.results.first?.parentObjectID, 6023)
+        XCTAssertEqual(page.results.first?.parentName, "core-switch-01")
+        XCTAssertEqual(page.results.first?.protocolValue, "tcp")
+    }
 
     func testServiceWiresDeviceParentAndRetainsVMParent() throws {
         let container = try makeContainer()

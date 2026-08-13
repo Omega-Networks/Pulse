@@ -41,11 +41,11 @@ final class ServicePropertiesDecodingTests: XCTestCase {
           "display": "SSH (TCP/22)",
           "parent_object_type": "dcim.device",
           "parent_object_id": 6023,
-          "parent": { "id": 6023, "name": "OMG-08-010-LP-PB01", "description": "Proxmox Backup Server" },
+          "parent": { "id": 6023, "name": "core-switch-01", "description": "Example switch" },
           "name": "SSH",
           "protocol": { "value": "tcp", "label": "TCP" },
           "ports": [22],
-          "ipaddresses": [ { "id": 2275, "address": "172.27.10.201/24", "family": { "value": 4, "label": "IPv4" } } ],
+          "ipaddresses": [ { "id": 2275, "address": "192.0.2.10/24", "family": { "value": 4, "label": "IPv4" } } ],
           "description": "Secure shell access"
         }
         """.utf8)
@@ -66,17 +66,17 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         XCTAssertEqual(service.ports, [22])
 
         // ipaddresses[].address pulled out in CIDR form.
-        XCTAssertEqual(service.ipAddresses, ["172.27.10.201/24"])
+        XCTAssertEqual(service.ipAddresses, ["192.0.2.10/24"])
 
         // Flat parent fields plus the nested parent.name.
         XCTAssertEqual(service.parentObjectType, "dcim.device")
         XCTAssertEqual(service.parentObjectId, 6023)
-        XCTAssertEqual(service.parentName, "OMG-08-010-LP-PB01")
+        XCTAssertEqual(service.parentName, "core-switch-01")
 
         // Model layer: the bare-IP helper strips CIDR like Device does.
         let model = Service(id: service.id)
         model.ipAddresses = service.ipAddresses
-        XCTAssertEqual(model.primaryIPAddress, "172.27.10.201")
+        XCTAssertEqual(model.primaryIPAddress, "192.0.2.10")
     }
 
     // MARK: - VM-parented service is retained, not dropped
@@ -89,11 +89,11 @@ final class ServicePropertiesDecodingTests: XCTestCase {
           "display": "HTTPS (TCP/443)",
           "parent_object_type": "virtualization.virtualmachine",
           "parent_object_id": 4410,
-          "parent": { "id": 4410, "name": "omg-vm-web01", "description": "Web frontend VM" },
+          "parent": { "id": 4410, "name": "web-frontend-01", "description": "Web frontend VM" },
           "name": "HTTPS",
           "protocol": { "value": "tcp", "label": "TCP" },
           "ports": [443, 8443],
-          "ipaddresses": [ { "id": 9001, "address": "10.8.0.50/24", "family": { "value": 4, "label": "IPv4" } } ],
+          "ipaddresses": [ { "id": 9001, "address": "198.51.100.20/24", "family": { "value": 4, "label": "IPv4" } } ],
           "description": "Web frontend"
         }
         """.utf8)
@@ -103,7 +103,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         XCTAssertEqual(service.id, 91)
         XCTAssertEqual(service.parentObjectType, "virtualization.virtualmachine")
         XCTAssertEqual(service.parentObjectId, 4410)
-        XCTAssertEqual(service.parentName, "omg-vm-web01")
+        XCTAssertEqual(service.parentName, "web-frontend-01")
         XCTAssertEqual(service.ports, [443, 8443])
 
         // Model layer: a VM-parented service maps onto the model with all its
@@ -119,8 +119,8 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         model.parentName = service.parentName
         // No device wired because parentObjectType != "dcim.device".
         XCTAssertNil(model.device)
-        XCTAssertEqual(model.parentName, "omg-vm-web01")
-        XCTAssertEqual(model.primaryIPAddress, "10.8.0.50")
+        XCTAssertEqual(model.parentName, "web-frontend-01")
+        XCTAssertEqual(model.primaryIPAddress, "198.51.100.20")
     }
 
     // MARK: - Array decode via the production Wrapper
@@ -130,10 +130,10 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         { "count": 1, "next": null, "previous": null, "results": [
           { "id": 7, "url": "u", "display": "SSH (TCP/22)",
             "parent_object_type": "dcim.device", "parent_object_id": 6023,
-            "parent": { "id": 6023, "name": "OMG-08-010-LP-PB01" },
+            "parent": { "id": 6023, "name": "core-switch-01" },
             "name": "SSH", "protocol": { "value": "tcp", "label": "TCP" },
             "ports": [22],
-            "ipaddresses": [ { "id": 2275, "address": "172.27.10.201/24" } ],
+            "ipaddresses": [ { "id": 2275, "address": "192.0.2.10/24" } ],
             "description": "Secure shell access" }
         ] }
         """.utf8)
@@ -141,7 +141,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         let wrapper = try JSONDecoder().decode(Wrapper<ServiceProperties>.self, from: json)
         XCTAssertEqual(wrapper.results.count, 1)
         XCTAssertEqual(wrapper.results.first?.ports, [22])
-        XCTAssertEqual(wrapper.results.first?.ipAddresses, ["172.27.10.201/24"])
+        XCTAssertEqual(wrapper.results.first?.ipAddresses, ["192.0.2.10/24"])
         XCTAssertNil(wrapper.next)
     }
 
@@ -170,20 +170,20 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         {
           "id": 12, "url": "u", "display": "HTTPS (TCP/443)",
           "parent_object_type": "dcim.device", "parent_object_id": 6023,
-          "parent": { "id": 6023, "name": "OMG-08-010-LP-PB01" },
+          "parent": { "id": 6023, "name": "core-switch-01" },
           "name": "HTTPS", "protocol": { "value": "tcp", "label": "TCP" },
           "ports": [443],
           "ipaddresses": [
-            { "id": 1, "address": "172.27.10.201/24" },
+            { "id": 1, "address": "192.0.2.10/24" },
             "this-element-is-malformed",
-            { "id": 2, "address": "10.8.0.50/24" }
+            { "id": 2, "address": "198.51.100.20/24" }
           ],
           "description": ""
         }
         """.utf8)
         let service = try JSONDecoder().decode(ServiceProperties.self, from: json)
         // The malformed middle element is skipped; both good elements survive.
-        XCTAssertEqual(service.ipAddresses, ["172.27.10.201/24", "10.8.0.50/24"])
+        XCTAssertEqual(service.ipAddresses, ["192.0.2.10/24", "198.51.100.20/24"])
     }
 
     // MARK: - processServiceBatch wires device parents and retains VM parents

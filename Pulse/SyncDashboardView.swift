@@ -43,6 +43,15 @@ struct SyncDashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     @Query var syncProvider: [SyncProvider]
+    @Query private var tenantGroups: [TenantGroup]
+    @Query private var tenants: [Tenant]
+    @Query private var deviceRoles: [DeviceRole]
+    @Query private var deviceTypes: [DeviceType]
+    @Query private var regions: [Region]
+    @Query private var siteGroups: [SiteGroup]
+    @Query private var sites: [Site]
+    @Query private var racks: [Rack]
+    @Query private var devices: [Device]
     
     // MARK: - UI State
     
@@ -50,18 +59,6 @@ struct SyncDashboardView: View {
     @State var eventMonitoringTimer: Timer?
     @State var openDeleteButtons = false
     @State var openFetchButtons = false
-    
-    // MARK: - Object Counts
-    
-    @State private var deviceRolesCount: Int = 0
-    @State private var deviceTypesCount: Int = 0
-    @State private var tenantsCount: Int = 0
-    @State private var regionsCount: Int = 0
-    @State private var siteGroupsCount: Int = 0
-    @State private var sitesCount: Int = 0
-    @State private var racksCount: Int = 0
-    @State private var devicesCount: Int = 0
-    @State private var syncProviderCount: Int = 0
     
     // MARK: - API Configuration
     
@@ -99,7 +96,7 @@ struct SyncDashboardView: View {
                         Text("Sync Provider")
                             .font(.title3)
                             .fontWeight(.bold)
-                        switch syncProviderCount {
+                        switch syncProvider.count {
                         case 0: Image(systemName: "multiply.square.fill")
                                 .foregroundStyle(Color.red)
                         case 1: Image(systemName: "checkmark.square.fill")
@@ -115,14 +112,15 @@ struct SyncDashboardView: View {
             .padding(4)
             
             Form {
-                LabeledContent("Device Roles:", value: String(deviceRolesCount))
-                LabeledContent("Device Types:", value: String(deviceTypesCount))
-                LabeledContent("Tenants:", value: String(tenantsCount))
-                LabeledContent("Regions:", value: String(regionsCount))
-                LabeledContent("Site Groups:", value: String(siteGroupsCount))
-                LabeledContent("Sites:", value: String(sitesCount))
-                LabeledContent("Racks:", value: String(racksCount))
-                LabeledContent("Devices:", value: String(devicesCount))
+                LabeledContent("Device Roles:", value: String(deviceRoles.count))
+                LabeledContent("Device Types:", value: String(deviceTypes.count))
+                LabeledContent("Tenant Groups:", value: String(tenantGroups.count))
+                LabeledContent("Tenants:", value: String(tenants.count))
+                LabeledContent("Regions:", value: String(regions.count))
+                LabeledContent("Site Groups:", value: String(siteGroups.count))
+                LabeledContent("Sites:", value: String(sites.count))
+                LabeledContent("Racks:", value: String(racks.count))
+                LabeledContent("Devices:", value: String(devices.count))
             }
             .id(contextDidSaveDate)
             HStack {
@@ -170,7 +168,6 @@ struct SyncDashboardView: View {
         }
         
         .task {
-            await updateCounts()
             await checkConfigurationNeeded()
         }
         .alert(alertTitle, isPresented: $showAlert) {
@@ -180,46 +177,6 @@ struct SyncDashboardView: View {
         }
         .onChange(of: statusManager.currentStatus) { oldValue, newValue in
             handleStatusChange(newValue)
-        }
-    }
-    
-    /**
-     Updates the count of all managed object types in the local storage.
-     
-     This function fetches counts for:
-     - Device roles and types
-     - Tenants and regions
-     - Site groups and sites
-     - Racks and devices
-     - Sync providers
-     */
-    func updateCounts() async {
-        do {
-            deviceRolesCount = try await fetchCount(for: DeviceRole.self)
-            deviceTypesCount = try await fetchCount(for: DeviceType.self)
-            tenantsCount = try await fetchCount(for: Tenant.self)
-            regionsCount = try await fetchCount(for: Region.self)
-            siteGroupsCount = try await fetchCount(for: SiteGroup.self)
-            sitesCount = try await fetchCount(for: Site.self)
-            racksCount = try await fetchCount(for: Rack.self)
-            devicesCount = try await fetchCount(for: Device.self)
-            syncProviderCount = try await fetchCount(for: SyncProvider.self)
-        } catch {
-            print("Error: \(error)")
-        }
-    }
-    
-    /**
-      Fetches the count of objects for a specific persistent model type.
-      
-      - Parameter type: The type of persistent model to count
-      - Returns: The number of objects of the specified type in storage
-      - Throws: Any errors encountered during the fetch operation
-      */
-    func fetchCount<T: PersistentModel>(for type: T.Type) async throws -> Int {
-        let descriptor = FetchDescriptor<T>()
-        return try await withModelContext { context in
-            try context.fetchCount(descriptor)
         }
     }
     
@@ -278,11 +235,6 @@ struct SyncDashboardView: View {
      - Returns: The result of the performed operation
      - Throws: Any errors encountered during the operation
      */
-    @MainActor
-    func withModelContext<T>(_ perform: @MainActor (ModelContext) throws -> T) async rethrows -> T {
-        try perform(modelContext)
-    }
-    
     /**
      Checks if API configuration is needed by verifying the existence of required API credentials.
      
@@ -317,7 +269,6 @@ struct SyncDashboardView: View {
         do {
             try modelContext.delete(model: type)
             print("\(type) data deleted successfully.")
-            Task { await updateCounts() }
         } catch {
             print("Failed to delete all \(type).")
         }
@@ -334,26 +285,28 @@ struct SyncDashboardView: View {
      */
     func deleteAllDataAndUpdateCounts() {
         let modelsToDelete: [any PersistentModel.Type] = [
-            DeviceType.self,
-            DeviceRole.self,
-            Tenant.self,
-            Region.self,
-            SiteGroup.self,
-            Site.self,
+            Event.self,
+            Service.self,
+            Device.self,
             Rack.self,
-            Device.self
+            Site.self,
+            SiteGroup.self,
+            Region.self,
+            Tenant.self,
+            TenantGroup.self,
+            DeviceType.self,
+            DeviceRole.self
         ]
-        
+
         do {
             for model in modelsToDelete {
                 try modelContext.delete(model: model)
                 print("\(model) data deleted successfully.")
+                if model == Event.self || model == Service.self {
+                    try modelContext.save()
+                }
             }
-            
-            Task {
-                await updateCounts()
-            }
-            
+            try modelContext.save()
             print("All data deleted successfully.")
         } catch {
             print("Failed to delete all data: \(error)")
@@ -494,8 +447,6 @@ extension SyncDashboardView {
                 )
             }
         }
-
-        await updateCounts()
     }
 
     /**

@@ -102,6 +102,41 @@ final class NetBoxSyncEngineTests: XCTestCase {
         XCTAssertEqual(groups.first?.name, "G")
     }
 
+    func testTenantsAreFetchedAndStored() async throws {
+        let container = try makeContainer()
+        let fetcher = MockNetBoxFetcher()
+        fetcher.emptySuccess = true
+        fetcher.bodies["/api/tenancy/tenant-groups/"] = Data("""
+        { "count": 1, "next": null, "results": [
+          { "id": 4, "url": "u", "display_url": "d", "display": "Customers",
+            "name": "Customers", "slug": "customers",
+            "created": "2024-01-02T03:04:05Z",
+            "last_updated": "2024-01-02T03:04:05Z",
+            "tenant_count": 1, "_depth": 0 }
+        ] }
+        """.utf8)
+        fetcher.bodies["/api/tenancy/tenants/"] = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 1, "url": "u", "display_url": "d", "display": "Acme",
+            "name": "Acme", "slug": "acme",
+            "group": {
+              "id": 4, "url": "u", "display": "Customers",
+              "name": "Customers", "slug": "customers", "_depth": 0
+            },
+            "created": "2022-04-27T09:47:32.110929Z",
+            "last_updated": "2022-04-27T09:50:23.049511Z"
+          }
+        ] }
+        """.utf8)
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.fullSync()
+        let tenants = try ModelContext(container).fetch(FetchDescriptor<Tenant>())
+        XCTAssertEqual(tenants.count, 1)
+        XCTAssertEqual(tenants.first?.name, "Acme")
+        XCTAssertEqual(tenants.first?.group?.id, 4)
+    }
+
     func testDeviceQueryUsesFilterExcludes() async throws {
         let container = try makeContainer()
         let fetcher = MockNetBoxFetcher()

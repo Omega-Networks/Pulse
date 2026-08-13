@@ -123,10 +123,10 @@ actor NetBoxSyncEngine {
         let (rows, skipped) = try await fetchAll(
             path: "/api/tenancy/tenants/",
             extraQuery: [],
-            as: Components.Schemas.Tenant.self
+            as: NetBoxRecord.Tenant.self
         )
         _ = try NetBoxStore.applyTenants(
-            rows.map(NetBoxMapping.tenant),
+            rows,
             fetchComplete: true,
             skipped: skipped,
             in: ModelContext(modelContainer)
@@ -165,10 +165,10 @@ actor NetBoxSyncEngine {
         let (rows, skipped) = try await fetchAll(
             path: "/api/dcim/sites/",
             extraQuery: [],
-            as: Components.Schemas.Site.self
+            as: NetBoxRecord.Site.self
         )
         _ = try NetBoxStore.applySites(
-            rows.map(NetBoxMapping.site),
+            rows,
             fetchComplete: true,
             skipped: skipped,
             in: ModelContext(modelContainer)
@@ -179,10 +179,10 @@ actor NetBoxSyncEngine {
         let (rows, skipped) = try await fetchAll(
             path: "/api/dcim/racks/",
             extraQuery: [],
-            as: Components.Schemas.Rack.self
+            as: NetBoxRecord.Rack.self
         )
         _ = try NetBoxStore.applyRacks(
-            rows.map(NetBoxMapping.rack),
+            rows,
             fetchComplete: true,
             skipped: skipped,
             in: ModelContext(modelContainer)
@@ -199,10 +199,10 @@ actor NetBoxSyncEngine {
         let (rows, skipped) = try await fetchAll(
             path: "/api/dcim/devices/",
             extraQuery: extra,
-            as: Components.Schemas.DeviceWithConfigContext.self
+            as: NetBoxRecord.Device.self
         )
         _ = try NetBoxStore.applyDevices(
-            rows.map(NetBoxMapping.device),
+            rows,
             fetchComplete: true,
             skipped: skipped,
             in: ModelContext(modelContainer)
@@ -213,10 +213,10 @@ actor NetBoxSyncEngine {
         let (rows, skipped) = try await fetchAll(
             path: "/api/ipam/services/",
             extraQuery: [],
-            as: Components.Schemas.Service.self
+            as: NetBoxRecord.Service.self
         )
         _ = try NetBoxStore.applyServices(
-            rows.map(NetBoxMapping.service),
+            rows,
             fetchComplete: true,
             skipped: skipped,
             in: ModelContext(modelContainer)

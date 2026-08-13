@@ -24,7 +24,8 @@ struct NetBoxFilterConfiguration: Sendable, Equatable, Hashable {
     /// patch panel). On-demand only in P1; not part of the boot device pull.
     var staticDeviceRoleIDs: Set<Int>
 
-    /// Today's Omega instance IDs. Changing these is configuration, not a code edit.
+    /// Today's Omega instance IDs so Gate 1 matches the previous baked-in
+    /// scope. A Settings control belongs later; do not scatter new literals.
     static let `default` = NetBoxFilterConfiguration(
         excludedManufacturerIDs: [5],
         excludedRoleIDs: [29, 30],

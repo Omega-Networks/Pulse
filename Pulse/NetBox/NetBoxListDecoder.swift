@@ -6,10 +6,12 @@
 //
 
 import Foundation
+import OSLog
 
 /// Per-element list decode. A poisoned result is skipped; the page continues.
 /// `skipped > 0` means the caller must not run the delete pass.
 enum NetBoxListDecoder {
+    private static let logger = Logger(subsystem: "netbox", category: "decode")
     struct Page<Element>: Sendable where Element: Sendable {
         var results: [Element]
         var next: String?
@@ -45,6 +47,9 @@ enum NetBoxListDecoder {
                 results.append(decoded)
             } catch {
                 skipped += 1
+                logger.error(
+                    "Skipped \(String(describing: Element.self)): \(Self.describe(error), privacy: .public)"
+                )
             }
         }
         return Page(
@@ -53,6 +58,27 @@ enum NetBoxListDecoder {
             count: envelope.count ?? results.count,
             skipped: skipped
         )
+    }
+
+    static func describe(_ error: Error) -> String {
+        switch error {
+        case let DecodingError.keyNotFound(key, context):
+            return "missing key '\(key.stringValue)' at \(path(context.codingPath))"
+        case let DecodingError.valueNotFound(type, context):
+            let detail = context.debugDescription.isEmpty ? "\(type)" : context.debugDescription
+            return "missing \(detail) at \(path(context.codingPath))"
+        case let DecodingError.typeMismatch(type, context):
+            return "type mismatch \(type) at \(path(context.codingPath))"
+        case let DecodingError.dataCorrupted(context):
+            return "corrupt at \(path(context.codingPath)): \(context.debugDescription)"
+        default:
+            return error.localizedDescription
+        }
+    }
+
+    private static func path(_ codingPath: [CodingKey]) -> String {
+        let joined = codingPath.map(\.stringValue).filter { !$0.isEmpty }.joined(separator: ".")
+        return joined.isEmpty ? "<root>" : joined
     }
 
     private struct Envelope: Decodable {
