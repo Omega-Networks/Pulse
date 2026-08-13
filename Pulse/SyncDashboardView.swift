@@ -430,7 +430,15 @@ extension SyncDashboardView {
             }
         }
 
-        let engine = netBoxSyncEngine ?? NetBoxSyncEngine(modelContainer: modelContext.container)
+        guard let engine = netBoxSyncEngine else {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .unknownError("NetBox sync engine is not available")
+                )
+            }
+            return
+        }
 
         do {
             try await engine.fullSync()

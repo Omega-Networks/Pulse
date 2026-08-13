@@ -4,6 +4,24 @@
 //
 //  Copyright © 2025–present Omega Networks Limited.
 //
+//  Pulse
+//  The Platform for Unified Leadership in Smart Environments.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
 
 import Foundation
 import OSLog
@@ -16,14 +34,18 @@ protocol NetBoxFetching: Sendable {
 
 enum NetBoxSyncError: Error, Equatable {
     case missingServerURL
+    case missingToken
     case invalidServerURL(String)
     case httpStatus(code: Int, body: String)
     case transport(String)
     case emptyPageWithNext
+    case pageLimitExceeded
 
     static func == (lhs: NetBoxSyncError, rhs: NetBoxSyncError) -> Bool {
         switch (lhs, rhs) {
         case (.missingServerURL, .missingServerURL):
+            return true
+        case (.missingToken, .missingToken):
             return true
         case (.invalidServerURL(let a), .invalidServerURL(let b)):
             return a == b
@@ -32,6 +54,8 @@ enum NetBoxSyncError: Error, Equatable {
         case (.transport(let a), .transport(let b)):
             return a == b
         case (.emptyPageWithNext, .emptyPageWithNext):
+            return true
+        case (.pageLimitExceeded, .pageLimitExceeded):
             return true
         default:
             return false
@@ -53,12 +77,12 @@ enum NetBoxSyncError: Error, Equatable {
             )
         case .transport(let message):
             RequestStatusManager.shared.updateStatus(.netbox, .connectionError(message))
-        case .missingServerURL, .invalidServerURL:
+        case .missingToken:
             RequestStatusManager.shared.updateStatus(
                 .netbox,
-                .dataError(code: 0, message: localizedDescription)
+                .authenticationFailure(code: 0, message: localizedDescription)
             )
-        case .emptyPageWithNext:
+        case .missingServerURL, .invalidServerURL, .emptyPageWithNext, .pageLimitExceeded:
             RequestStatusManager.shared.updateStatus(
                 .netbox,
                 .dataError(code: 0, message: localizedDescription)
@@ -72,6 +96,8 @@ extension NetBoxSyncError: LocalizedError {
         switch self {
         case .missingServerURL:
             return "NetBox server URL is not configured"
+        case .missingToken:
+            return "NetBox API token is not configured"
         case .invalidServerURL(let value):
             return "NetBox server URL is invalid: \(value)"
         case .httpStatus(let code, let body):
@@ -80,6 +106,8 @@ extension NetBoxSyncError: LocalizedError {
             return message
         case .emptyPageWithNext:
             return "NetBox returned an empty page that still claimed a next page"
+        case .pageLimitExceeded:
+            return "NetBox pagination exceeded the page safety limit"
         }
     }
 }
@@ -92,9 +120,12 @@ struct NetBoxLiveFetcher: NetBoxFetching {
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
         let server = await Configuration.shared.getNetboxApiServer()
         let token = await Configuration.shared.getNetboxApiToken()
-        guard !server.isEmpty else { throw NetBoxSyncError.missingServerURL }
+        let authorization = try NetBoxAuthorization.headerValue(for: token)
+        let serverURL = try NetBoxServerURL.parse(server)
 
-        let base = server.hasSuffix("/") ? String(server.dropLast()) : server
+        let base = serverURL.absoluteString.hasSuffix("/")
+            ? String(serverURL.absoluteString.dropLast())
+            : serverURL.absoluteString
         let suffix = path.hasPrefix("/") ? path : "/" + path
         guard var components = URLComponents(string: base + suffix) else {
             throw NetBoxSyncError.invalidServerURL(server)
@@ -109,20 +140,14 @@ struct NetBoxLiveFetcher: NetBoxFetching {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if !token.isEmpty {
-            if token.hasPrefix("nbt_") {
-                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            } else {
-                request.setValue("Token \(token)", forHTTPHeaderField: "Authorization")
-            }
-        }
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
 
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
-            logger.error("NetBox GET \(url.absoluteString) failed: \(error.localizedDescription)")
+            logger.error("NetBox GET \(url.absoluteString, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             throw NetBoxSyncError.transport(error.localizedDescription)
         }
 
@@ -130,10 +155,11 @@ struct NetBoxLiveFetcher: NetBoxFetching {
             throw NetBoxSyncError.transport("Invalid response type")
         }
         guard (200...299).contains(http.statusCode) else {
-            let raw = String(data: data, encoding: .utf8) ?? "<non-UTF-8 \(data.count) bytes>"
-            let body = raw.count > 8192 ? String(raw.prefix(8192)) + "…" : raw
-            logger.error("NetBox GET \(url.absoluteString) status \(http.statusCode): \(body)")
-            throw NetBoxSyncError.httpStatus(code: http.statusCode, body: body)
+            logger.error("NetBox GET \(url.absoluteString, privacy: .public) status \(http.statusCode)")
+            throw NetBoxSyncError.httpStatus(
+                code: http.statusCode,
+                body: HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            )
         }
         return data
     }

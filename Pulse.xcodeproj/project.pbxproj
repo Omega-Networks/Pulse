@@ -142,6 +142,8 @@
 		A11CAFE0000000000000NB53 /* NetBoxFetching.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB50 /* NetBoxFetching.swift */; };
 		A11CAFE0000000000000NB54 /* NetBoxSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB51 /* NetBoxSyncEngine.swift */; };
 		A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */; };
+		A11CAFE0000000000000NB61 /* NetBoxAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB60 /* NetBoxAuthorization.swift */; };
+		A11CAFE0000000000000NB63 /* NetBoxAuthorizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */; };
 		A11CAFE0000000000000NB26 /* NetBoxAPI in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB27 /* NetBoxAPI */; };
 		A11CAFE0000000000000NB22 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB20 /* OpenAPIRuntime */; };
 		A11CAFE0000000000000NB23 /* OpenAPIURLSession in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB21 /* OpenAPIURLSession */; };
@@ -451,6 +453,8 @@
 		A11CAFE0000000000000NB50 /* NetBoxFetching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxFetching.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB51 /* NetBoxSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxSyncEngine.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxSyncEngineTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB60 /* NetBoxAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxAuthorization.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxAuthorizationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -749,6 +753,7 @@
 				A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */,
 				A11CAFE0000000000000NB0F /* NetBoxMappingTests.swift */,
 				A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */,
+				A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -759,6 +764,7 @@
 				A11CAFE0000000000000NB03 /* NetBoxClientFactory.swift */,
 				A11CAFE0000000000000NB04 /* NetBoxLenientDateTranscoder.swift */,
 				A11CAFE0000000000000NB05 /* NetBoxAuthMiddleware.swift */,
+				A11CAFE0000000000000NB60 /* NetBoxAuthorization.swift */,
 				A11CAFE0000000000000NB07 /* NetBoxFilterConfiguration.swift */,
 				A11CAFE0000000000000NB08 /* NetBoxPageIterator.swift */,
 				A11CAFE0000000000000NB0B /* NetBoxCustomFields.swift */,
@@ -1350,6 +1356,7 @@
 				A11CAFE0000000000000NB1D /* NetBoxStore.swift in Sources */,
 				A11CAFE0000000000000NB53 /* NetBoxFetching.swift in Sources */,
 				A11CAFE0000000000000NB54 /* NetBoxSyncEngine.swift in Sources */,
+				A11CAFE0000000000000NB61 /* NetBoxAuthorization.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1366,6 +1373,7 @@
 				A11CAFE0000000000000NB19 /* NetBoxPageIteratorTests.swift in Sources */,
 				A11CAFE0000000000000NB1E /* NetBoxMappingTests.swift in Sources */,
 				A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */,
+				A11CAFE0000000000000NB63 /* NetBoxAuthorizationTests.swift in Sources */,
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
 				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
 				B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */,

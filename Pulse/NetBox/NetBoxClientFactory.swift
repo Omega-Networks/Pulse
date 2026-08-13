@@ -4,6 +4,24 @@
 //
 //  Copyright © 2025–present Omega Networks Limited.
 //
+//  Pulse
+//  The Platform for Unified Leadership in Smart Environments.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
 
 import Foundation
 import NetBoxAPI
@@ -17,11 +35,6 @@ import OpenAPIURLSession
 /// URL + transport + middleware, no connection). Auth middleware re-reads
 /// the token on every request for the same reason.
 enum NetBoxClientFactory {
-    enum FactoryError: Error, Sendable {
-        case missingServerURL
-        case invalidServerURL(String)
-    }
-
     /// Default configuration: lenient dates. Transport is injectable so tests
     /// can supply a mock `ClientTransport` without hitting the network.
     static func makeClient(
@@ -38,12 +51,9 @@ enum NetBoxClientFactory {
     }
 
     /// Reads the server URL from `Configuration.shared` and builds a client.
+    /// Rejects anything that is not `https` with a host.
     static func makeClient() async throws -> Client {
         let raw = await Configuration.shared.getNetboxApiServer()
-        guard !raw.isEmpty else { throw FactoryError.missingServerURL }
-        guard let url = URL(string: raw), url.scheme != nil, url.host != nil else {
-            throw FactoryError.invalidServerURL(raw)
-        }
-        return makeClient(serverURL: url)
+        return makeClient(serverURL: try NetBoxServerURL.parse(raw))
     }
 }
