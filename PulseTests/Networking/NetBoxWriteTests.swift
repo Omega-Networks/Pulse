@@ -36,6 +36,11 @@ final class NetBoxWriteTests: XCTestCase {
             NetBoxWriteBody.InterfacePatch(enabled: true, description: "uplink")
         )
         assertJSON(both, ["description": "uplink", "enabled": true])
+
+        let cleared = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.InterfacePatch(description: "")
+        )
+        assertJSON(cleared, ["description": ""])
     }
 
     func testCustomFieldsSendsOnlyChangedKeys() throws {
@@ -97,6 +102,26 @@ final class NetBoxWriteTests: XCTestCase {
         )
         XCTAssertEqual(row.enabled, false)
         XCTAssertEqual(row.interfaceDescription, "uplink")
+    }
+
+    func testEmptyDescriptionPatchSendsEmptyStringNotOmit() async throws {
+        let container = try makeContainer()
+        try seedInterface(in: container)
+        let fetcher = WriteFetcher()
+        fetcher.sendQueue = [
+            NetBoxHTTPResponse(status: 200, body: Data("{}".utf8), etag: nil),
+        ]
+        fetcher.getBodies["/api/dcim/interfaces/88/"] = interfaceJSON(
+            id: 88, enabled: true, description: "", cableID: nil
+        )
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.patchInterface(id: 88, description: "")
+        XCTAssertEqual(fetcher.sends.map(\.method), ["PATCH"])
+        assertJSON(try XCTUnwrap(fetcher.sends[0].body), ["description": ""])
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<Interface>()).first?.interfaceDescription,
+            ""
+        )
     }
 
     func testIfMatchPolicySendsHeaderFromGET() async throws {

@@ -51,12 +51,24 @@ enum NetBoxWriteBody {
 
     struct InterfacePatch: Encodable, Equatable, Sendable {
         var enabled: Bool?
+        /// `nil` omits the key. `""` is a clear — it must be sent.
         var description: String?
         var customFields: [String: JSONValue]?
 
         enum CodingKeys: String, CodingKey {
             case enabled, description
             case customFields = "custom_fields"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(enabled, forKey: .enabled)
+            // encodeIfPresent would also keep "", but spell it out so a
+            // clear cannot be "fixed" back into an omit.
+            if let description {
+                try container.encode(description, forKey: .description)
+            }
+            try container.encodeIfPresent(customFields, forKey: .customFields)
         }
     }
 

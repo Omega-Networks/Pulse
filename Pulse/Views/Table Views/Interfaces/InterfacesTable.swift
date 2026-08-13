@@ -164,11 +164,16 @@ struct InterfacesTable: View {
     }
 
     private func saveDescription(_ interface: InterfaceVO, _ value: String) async {
-        let next = value.isEmpty ? "" : value
-        let current = interface.interfaceDescription ?? ""
-        guard next != current else { return }
+        let committed = interface.interfaceDescription ?? ""
+        guard value != committed else {
+            editedInterfaces.removeValue(forKey: interface.id)
+            return
+        }
         await performWrite {
-            try await engine.patchInterface(id: interface.id, description: next)
+            try await engine.patchInterface(id: interface.id, description: value)
+        }
+        if writeError == nil {
+            editedInterfaces.removeValue(forKey: interface.id)
         }
     }
 
@@ -244,8 +249,13 @@ extension InterfacesTable {
             TableColumn("Description") { (interface: InterfaceVO) in
                 EditableText(
                     text: Binding(
-                        get: { editedInterfaces[interface.id]?.interfaceDescription ?? interface.interfaceDescription ?? "" },
-                        set: { editedInterfaces[interface.id, default: interface].interfaceDescription = $0.isEmpty ? nil : $0 }
+                        get: {
+                            if let edited = editedInterfaces[interface.id] {
+                                return edited.interfaceDescription ?? ""
+                            }
+                            return interface.interfaceDescription ?? ""
+                        },
+                        set: { editedInterfaces[interface.id, default: interface].interfaceDescription = $0 }
                     ),
                     onSubmitted: { value in
                         Task { await saveDescription(interface, value) }
@@ -370,15 +380,22 @@ struct EditableText: View {
     }
     
     var body: some View {
-        TextField("", text: $temporaryText, onCommit: {
-            text = temporaryText
-            onSubmitted?(temporaryText)
-        })
+        TextField("", text: $temporaryText)
             .focused($isFocused, equals: true)
+            .onSubmit(submit)
+            .onChange(of: isFocused) { _, focused in
+                if !focused { submit() }
+            }
             .onTapGesture { isFocused = true }
 #if os (macOS)
             .onExitCommand { temporaryText = text; isFocused = false }
 #endif
+    }
+
+    private func submit() {
+        guard temporaryText != text else { return }
+        text = temporaryText
+        onSubmitted?(temporaryText)
     }
 }
 
