@@ -593,14 +593,10 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertEqual(page.results.first?.deviceID, 10)
         XCTAssertEqual(page.results.first?.duplex, "full")
         XCTAssertEqual(page.results.first?.occupied, true)
-        let cached = try XCTUnwrap(page.results.first?.asCacheValue())
-        XCTAssertEqual(cached.mtu, 1500)
-        XCTAssertEqual(cached.speed, 1_000_000)
-        XCTAssertEqual(cached.connectedEndpointName, "eth1")
-        XCTAssertEqual(cached.connectedEndpointDeviceId, 11)
-        XCTAssertNil(cached.lagId)
-        XCTAssertNil(cached.bridgeId)
-        XCTAssertNil(cached.parentId)
+        XCTAssertEqual(page.results.first?.connectedEndpointName, "eth1")
+        XCTAssertNil(page.results.first?.lagID)
+        XCTAssertNil(page.results.first?.bridgeID)
+        XCTAssertNil(page.results.first?.parentID)
     }
 
     func testInterfacePageAcceptsStringMTUAndEmptyEndpoint() throws {

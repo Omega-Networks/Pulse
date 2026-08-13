@@ -1,6 +1,6 @@
 # NetBox sync (operator)
 
-Pulse mirrors a subset of NetBox into local SwiftData on every launch and when you press **Sync Data** in Settings → Database.
+Pulse mirrors a subset of NetBox into local SwiftData on every launch and when you press **Sync Data** in Settings → Database. Devices, sites, and the other inventory types block the launch screen; **interfaces stream afterwards**. Sites open with whatever interfaces have already landed. A “Synchronising interfaces…” indicator in the toolbar means topology edges may still be filling in. After a failed interface walk, freshness is not stamped and the next launch retries the full interface pull.
 
 ## Token
 
@@ -18,7 +18,7 @@ Fetch and local delete share one configuration (`NetBoxFilterConfiguration`). De
 | Filter | Default | Used on |
 |---|---|---|
 | Exclude manufacturer IDs | `5` | device types, devices |
-| Exclude role IDs | `29`, `30` | device roles, devices |
+| Exclude role IDs | `29`, `30` | device roles, devices, interfaces (`device_role_id__n`) |
 | Static-device role IDs | `6`, `7`, `18`, `27` | on-demand rack fillers (blank plate, cable management, patch panel, shelf) |
 
 Changing these is configuration, not a code edit. A Settings UI comes later.

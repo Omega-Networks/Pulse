@@ -186,6 +186,14 @@ The pre-push audit found this plan's tracked copy had lost §8 (overwritten at b
 4. `Package.resolved` is committed at the workspace path; NetBoxAPI has no separate resolved file (single-workspace resolution). Platforms in `NetBoxAPI/Package.swift` are below the app minimums — align or annotate.
 5. Info.plist carries a pre-existing `NSAllowsLocalNetworking` ATS relaxation, so plain `http://` to a local NetBox would succeed silently — the https-only validator is therefore a required code-level control, not defense-in-depth.
 
+## 10. P2 as-built amendments (2026-08-13)
+
+1. **Unresolved device / missing site is out of scope, not `skipped`.** Counting those rows as skipped would permanently disable the interface delete pass on any instance with manufacturer-excluded devices (the interface list has `device_role_id__n` but not `manufacturer_id__n`). Poisoned JSON still increments `skipped` and gates delete.
+2. **Streaming delete gate:** batches apply during the walk. A mid-walk throw leaves upserts, does not delete, does not stamp. The delete pass uses the union of accepted ids from every page.
+3. **Interface page cap is 60_000** (1M devices × 50 IF / 1000 + 20% slack). Other types stay at 100.
+4. **Consumers use `FetchDescriptor` + `InterfaceVO`**, not site-scoped `@Query`. Table edit UI stays ephemeral on VO copies (writes are P4).
+5. **`ProviderModelActor` is kept** — `UpdateModal` still calls it for Zabbix event updates.
+
 ## Sources
 
 NetBox REST API docs (netboxlabs.com/docs/netbox/integrations/rest-api/); NetBox change-logging docs and `core/ObjectChange` model docs; NetBox configuration docs (`CHANGELOG_RETENTION`); NetBox v4.0/v4.1/v4.6 release notes; netbox-community/netbox source (`settings.py` SPECTACULAR_SETTINGS, `core/api/serializers_/change_logging.py`, `core/filtersets.py`, `core/signals.py`, `dcim/api/serializers_/cables.py`, `netbox/api/fields.py`); NetBox issues/PRs #15894, #17709, #18451, #21356, #21937; apple/swift-openapi-generator README + Configuring-the-generator (filtering) + issues #569/#613 (large specs); apple/swift-openapi-runtime `Configuration.swift` (DateTranscoder); swift-foundation issue #963 (fractional-seconds strictness); Swift Package Index (generator 1.13.0, urlsession transport 1.3.1). Codebase findings: agent review transcripts, 2026-08-12, against working tree at commit-time snapshot.

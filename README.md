@@ -51,7 +51,7 @@ Connect to network devices over SSH without leaving Pulse. Credentials are backe
 
 ## Capabilities
 
-- ✅ NetBox integration for infrastructure visualization (generated OpenAPI client, full pull on boot)
+- ✅ NetBox integration for infrastructure visualization (generated OpenAPI types; inventory + persisted interfaces; offline topology after one sync)
 - ✅ Zabbix monitoring with real-time status updates
 - ✅ Historical data analysis and pattern recognition
 - ✅ 2D/3D topology visualization

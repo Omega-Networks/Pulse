@@ -41,30 +41,6 @@ enum NetBoxPageIterator {
     /// +20% slack. Lab (12K × ~20) is ~240 pages.
     static let interfaceMaxPages = 60_000
 
-    struct Page<Element: Sendable>: Sendable {
-        var results: [Element]
-        var next: String?
-        var count: Int
-    }
-
-    enum IteratorError: Error, Equatable {
-        /// A page returned `next` but zero results — cannot advance offset.
-        case emptyPageWithNext
-        /// More than `maxPages` arrived with `next` still set.
-        case pageLimitExceeded
-    }
-
-    /// Materialize every page. Fine for small types (roles, tenants, …).
-    static func fetchAll<Element: Sendable>(
-        fetchPage: (Int) async throws -> Page<Element>
-    ) async throws -> [Element] {
-        var collected: [Element] = []
-        try await forEachPage(fetchPage: fetchPage) { page in
-            collected.append(contentsOf: page)
-        }
-        return collected
-    }
-
     /// GET every offset page through `NetBoxFetching` and the per-element
     /// list decoder. Invokes `body` once per page and does not accumulate
     /// rows. A throw leaves already-delivered pages with the caller.
@@ -116,24 +92,6 @@ enum NetBoxPageIterator {
             await collected.append(page)
         }
         return (await collected.rows, result.skipped)
-    }
-
-    static func forEachPage<Element: Sendable>(
-        fetchPage: (Int) async throws -> Page<Element>,
-        maxPages: Int = NetBoxPageIterator.maxPages,
-        body: ([Element]) async throws -> Void
-    ) async throws {
-        var offset = 0
-        var pages = 0
-        while true {
-            pages += 1
-            guard pages <= maxPages else { throw IteratorError.pageLimitExceeded }
-            let page = try await fetchPage(offset)
-            try await body(page.results)
-            guard page.next != nil else { return }
-            guard !page.results.isEmpty else { throw IteratorError.emptyPageWithNext }
-            offset += page.results.count
-        }
     }
 }
 

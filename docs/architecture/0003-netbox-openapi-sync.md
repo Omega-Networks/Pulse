@@ -5,7 +5,7 @@
 | **Status** | Accepted (P1) |
 | **Date** | 2026-08-13 |
 | **Decision owner** | Leon Cassidy |
-| **Applies to** | `Pulse/NetBox/**`, `NetBoxAPI/**`, `Pulse/Models/SiteDataService.swift`, boot + Sync Dashboard |
+| **Applies to** | `Pulse/NetBox/**`, `NetBoxAPI/**`, `Pulse/Models/SiteDataService.swift`, `Pulse/Models/SwiftData Models/Interface.swift`, boot + Sync Dashboard |
 
 ## Principle
 
@@ -29,7 +29,7 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 | Phase | Ships |
 |---|---|
 | **P1 (this ADR)** | Generated GET client, boot + dashboard + on-demand site loads, ingest DTOs, delete gate, Add Site disabled, operator stub |
-| **P2** | Persisted `Interface` `@Model`, drop `InterfaceCache` |
+| **P2 (this amendment)** | Persisted `Interface` `@Model`, streaming ingest, `InterfaceVO` edges, drop `InterfaceCache` |
 | **P3** | Changelog watermark, delta pass |
 | **P4** | MACD writes, real Add Site, ETag |
 
@@ -43,6 +43,20 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 
 P1 list traffic uses `NetBoxLiveFetcher` (URLSession + typed `URLQueryItem` + offset pages). That is the ratified P1 transport: generated list types require fields the lab omits, so ingest goes through `NetBoxRecord` DTOs and the per-element decoder, not `Client`. `NetBoxClientFactory` and `NetBoxAuthMiddleware` stay in tree as the future generated-transport path (typed operations, P4 writes) and must not grow a second Token/Bearer implementation. Both the live fetcher and the middleware call the single `NetBoxAuthorization` / `NetBoxServerURL` rule (fail-closed empty token, `https` + host). Wiring the generated client as the runtime transport is a later, explicit change — not a silent dual stack.
 
+## Interfaces (P2 amendment)
+
+`Interface` is a SwiftData `@Model` with denormalized indexed `deviceId` and `siteId`. Optional reference ids (`connectedEndpointId`, `lagId`, `bridgeId`, `parentId`) are nil, never 0. `mtu` / `speed` are integers (the wire type).
+
+Ingest streams `/api/dcim/interfaces/` page-by-page (`streamDecoded`, `maxPages` = 60_000). Each page upserts in a fresh `ModelContext` and is released. `fetchComplete` is true only after the last page returns cleanly. The delete pass uses the **union of accepted ids from every page**, not the last page. A mid-walk throw leaves already-upserted rows (idempotent) and does not delete or stamp.
+
+Unresolved device or a device with no site is **out of scope**: logged, not stored, not counted as `skipped`. Only poisoned JSON increments `skipped` and gates delete. The interface list query sends `device_role_id__n` from `NetBoxFilterConfiguration`; there is no `manufacturer_id__n` on this endpoint, so manufacturer-excluded leftovers drop as out of scope.
+
+The first interface walk after upgrade is a background phase. Boot leaves the loading screen when the 10-type inventory is ready. A `.syncing` status on `RequestStatusManager` covers the rest. `lastNetBoxUpdate` still stamps only after interfaces succeed.
+
+`InterfaceCache` and `.interfacesDidUpdate` are gone. Consumers load `InterfaceVO` via an indexed `FetchDescriptor`. `SiteGraphView` and `LayoutManager` share `SiteTopologyEdges` (one per-site fetch + undirected join). Duplicate cable rendering (once per end) is collapsed to a single edge — accepted visual change.
+
+`deleteStale` still full-table-scans the type (P1 pattern). Fine at the 12K lab if measured. At tens of millions of rows that scan is P2 debt; do not invent a new delete primitive here.
+
 ## Store QoS (P1 amendment)
 
 `NetBoxStore` apply/delete runs inside `Task.detached(priority: .userInitiated)` with a context created on that task. SwiftData `fetch`/`save` on a Background queue while boot or Sync Dashboard waits at User-initiated is a priority inversion (Instruments hang risk at the delete-pass fetch). Do not apply on the engine actor's inherited executor.
@@ -52,7 +66,7 @@ P1 list traffic uses `NetBoxLiveFetcher` (URLSession + typed `URLQueryItem` + of
 | Gate | Status |
 |---|---|
 | Gate 1 — lab count parity, skip+delete, network kill, Add Site disabled | In progress (lab) |
-| Gate 2 — offline interfaces | Not yet |
+| Gate 2 — offline interfaces | Not yet (lab; blocks P2 merge) |
 | Gate 3 — changelog converge | Not yet |
 | Gate 4 — write round-trips | Not yet |
 
@@ -81,3 +95,4 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 - 2026-08-13 — P1 accepted. Ingest-DTO lesson recorded after generated types skipped lab tenants, sites, racks, devices, and services.
 - 2026-08-13 — Delete All / SwiftData invalidation: P1 stop-crash recorded; store-replace and severity-as-data named as the real design.
 - 2026-08-13 — Transport: `NetBoxLiveFetcher` ratified for P1; factory/middleware retained for the generated path; one `NetBoxAuthorization` rule. Store apply hops to user-initiated QoS.
+- 2026-08-13 — P2: persisted `Interface`, streaming ingest, out-of-scope vs skipped, VO edges, cache deleted. Gate 2 still lab.

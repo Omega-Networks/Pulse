@@ -562,36 +562,6 @@ extension NetBoxRecord.Interface: Decodable {
         parentID = parent.id
         parentName = parent.name
     }
-
-    func asCacheValue() -> InterfaceVO {
-        var value = InterfaceVO(id: id)
-        value.name = name
-        value.display = display
-        value.url = url
-        value.created = created
-        value.lastUpdated = lastUpdated
-        value.type = type
-        value.label = label
-        value.enabled = enabled
-        value.mtu = mtu
-        value.speed = speed
-        value.interfaceDescription = interfaceDescription
-        value.poeMode = poeMode
-        value.duplex = duplex
-        value.occupied = occupied
-        value.deviceId = deviceID
-        value.deviceName = deviceName
-        value.connectedEndpointId = connectedEndpointID
-        value.connectedEndpointName = connectedEndpointName
-        value.connectedEndpointDeviceId = connectedEndpointDeviceID
-        value.lagId = lagID
-        value.lagName = lagName
-        value.bridgeId = bridgeID
-        value.bridgeName = bridgeName
-        value.parentId = parentID
-        value.parentName = parentName
-        return value
-    }
 }
 
 extension NetBoxRecord.StaticDevice: Decodable {
