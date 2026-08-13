@@ -387,6 +387,72 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertEqual(devices.first?.site?.id, 4)
     }
 
+    // MARK: - On-demand ingest
+
+    func testInterfacePageDecodesMTUAsIntegerAndFirstEndpoint() throws {
+        let json = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 88, "url": "u", "display": "eth0", "name": "eth0",
+            "device": { "id": 10, "name": "core-switch-01" },
+            "type": { "value": "1000base-t", "label": "1000BASE-T" },
+            "enabled": true, "mtu": 1500, "speed": 1000000,
+            "description": "uplink",
+            "connected_endpoints": [ { "id": 99, "name": "eth1" } ],
+            "lag": null, "bridge": null, "parent": null,
+            "created": "2024-01-02T03:04:05Z",
+            "last_updated": "2024-01-02T03:04:05Z"
+          }
+        ] }
+        """.utf8)
+        let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Interface.self, from: json)
+        XCTAssertEqual(page.skipped, 0)
+        XCTAssertEqual(page.results.first?.mtu, "1500")
+        XCTAssertEqual(page.results.first?.speed, "1000000")
+        XCTAssertEqual(page.results.first?.connectedEndpointID, 99)
+        XCTAssertEqual(page.results.first?.deviceID, 10)
+        let cached = try XCTUnwrap(page.results.first?.asCacheValue())
+        XCTAssertEqual(cached.mtu, "1500")
+        XCTAssertEqual(cached.connectedEndpointName, "eth1")
+    }
+
+    func testStaticDeviceAndBayPagesDecodeWithoutGeneratedCounts() throws {
+        let devices = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 50, "name": "shelf-1", "display": "shelf-1",
+            "role": { "id": 6, "name": "Shelf" },
+            "device_type": { "id": 3, "model": "1U-shelf" },
+            "site": { "id": 4, "name": "Lab" },
+            "rack": { "id": 44, "name": "R1" },
+            "position": 10,
+            "front_port_count": 0, "rear_port_count": 0, "device_bay_count": 8
+          }
+        ] }
+        """.utf8)
+        let devicePage = try NetBoxListDecoder.decodePage(NetBoxRecord.StaticDevice.self, from: devices)
+        XCTAssertEqual(devicePage.skipped, 0)
+        XCTAssertEqual(devicePage.results.first?.roleName, "Shelf")
+        XCTAssertEqual(devicePage.results.first?.typeModel, "1U-shelf")
+        XCTAssertEqual(devicePage.results.first?.asCacheValue().deviceRole, "Shelf")
+
+        let bays = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 70, "name": "Bay 1", "display": "Bay 1",
+            "device": { "id": 50, "name": "shelf-1" },
+            "installed_device": { "id": 51, "name": "router-1" }
+          }
+        ] }
+        """.utf8)
+        let bayPage = try NetBoxListDecoder.decodePage(NetBoxRecord.DeviceBay.self, from: bays)
+        XCTAssertEqual(bayPage.skipped, 0)
+        let bay = try XCTUnwrap(bayPage.results.first?.asCacheValue())
+        XCTAssertEqual(bay.staticDeviceId, 50)
+        XCTAssertEqual(bay.deviceId, 51)
+        XCTAssertEqual(bay.deviceName, "router-1")
+    }
+
     // MARK: - Services
 
     func testServicePageDecodesIPAddressesWithoutDisplayURL() throws {

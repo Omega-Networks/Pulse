@@ -230,22 +230,12 @@ actor NetBoxSyncEngine {
         extraQuery: [URLQueryItem],
         as type: T.Type
     ) async throws -> (rows: [T], skipped: Int) {
-        var skipped = 0
-        var rows: [T] = []
-        var offset = 0
-        while true {
-            var query = extraQuery
-            query.append(URLQueryItem(name: "limit", value: String(NetBoxPageIterator.pageLimit)))
-            query.append(URLQueryItem(name: "offset", value: String(offset)))
-            let data = try await fetcher.get(path: path, query: query)
-            let page = try NetBoxListDecoder.decodePage(T.self, from: data)
-            skipped += page.skipped
-            rows.append(contentsOf: page.results)
-            guard page.next != nil else { break }
-            guard !page.results.isEmpty else { throw NetBoxSyncError.emptyPageWithNext }
-            offset += page.results.count
-        }
-        return (rows, skipped)
+        try await NetBoxPageIterator.fetchDecoded(
+            path: path,
+            extraQuery: extraQuery,
+            as: type,
+            using: fetcher
+        )
     }
 
     private func stampSuccess() throws {

@@ -50,6 +50,10 @@ struct NetBoxFilterConfiguration: Sendable, Equatable, Hashable {
         staticDeviceRoleIDs.sorted()
     }
 
+    var staticDeviceRoleQueryItems: [URLQueryItem] {
+        staticDeviceRoleQuery.map { URLQueryItem(name: "role_id", value: String($0)) }
+    }
+
     /// True if a device with these foreign keys belongs in the local store.
     func includesDevice(manufacturerID: Int?, roleID: Int?) -> Bool {
         if let manufacturerID, excludedManufacturerIDs.contains(manufacturerID) {

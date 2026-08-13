@@ -41,6 +41,32 @@ enum NetBoxPageIterator {
 
     /// Stream each page into `body`. Use this for devices/services so the
     /// full list is never held just to walk it.
+    /// GET every offset page through `NetBoxFetching` and the per-element
+    /// list decoder. Shared by the boot engine and on-demand site loads.
+    static func fetchDecoded<T: Decodable & Sendable>(
+        path: String,
+        extraQuery: [URLQueryItem] = [],
+        as type: T.Type,
+        using fetcher: any NetBoxFetching
+    ) async throws -> (rows: [T], skipped: Int) {
+        var skipped = 0
+        var rows: [T] = []
+        var offset = 0
+        while true {
+            var query = extraQuery
+            query.append(URLQueryItem(name: "limit", value: String(pageLimit)))
+            query.append(URLQueryItem(name: "offset", value: String(offset)))
+            let data = try await fetcher.get(path: path, query: query)
+            let page = try NetBoxListDecoder.decodePage(T.self, from: data)
+            skipped += page.skipped
+            rows.append(contentsOf: page.results)
+            guard page.next != nil else { break }
+            guard !page.results.isEmpty else { throw NetBoxSyncError.emptyPageWithNext }
+            offset += page.results.count
+        }
+        return (rows, skipped)
+    }
+
     static func forEachPage<Element: Sendable>(
         fetchPage: (Int) async throws -> Page<Element>,
         body: ([Element]) async throws -> Void

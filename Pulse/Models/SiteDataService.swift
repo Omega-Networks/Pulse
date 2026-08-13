@@ -37,85 +37,61 @@ enum SiteDataError: Error {
 
 actor SiteDataService {
     let modelContainer: ModelContainer
-    
-    init(modelContainer: ModelContainer) {
+    private let fetcher: any NetBoxFetching
+    private let filter: NetBoxFilterConfiguration
+    private let logger = Logger(subsystem: "netbox", category: "site")
+
+    init(
+        modelContainer: ModelContainer,
+        fetcher: any NetBoxFetching = NetBoxLiveFetcher(),
+        filter: NetBoxFilterConfiguration = .default
+    ) {
         self.modelContainer = modelContainer
+        self.fetcher = fetcher
+        self.filter = filter
     }
-    
+
     //MARK: - Loading Static Devices and Loading Bays
     func getStaticDevices(for siteId: Int64) async throws {
-        
+        var query = [URLQueryItem(name: "site_id", value: String(siteId))]
+        query.append(contentsOf: filter.staticDeviceRoleQueryItems)
         do {
-            let resource = StaticDeviceResource(siteId: siteId)
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            let request = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            
-            let staticDeviceProperties = try await request.execute()
-            let devices = staticDeviceProperties.map { staticDeviceProperties in
-                var staticDevice = StaticDevice(id: staticDeviceProperties.id ?? 0)
-                staticDevice.name = staticDeviceProperties.name
-                staticDevice.display = staticDeviceProperties.display
-                staticDevice.created = staticDeviceProperties.created
-                staticDevice.lastUpdated = staticDeviceProperties.lastUpdated
-                staticDevice.rackPosition = staticDeviceProperties.rackPosition
-                staticDevice.rackId = staticDeviceProperties.rackId
-                staticDevice.rackName = staticDeviceProperties.rackName
-                staticDevice.frontPortCount = staticDeviceProperties.frontPortCount
-                staticDevice.rearPortCount = staticDeviceProperties.rearPortCount
-                staticDevice.frontPortCount = staticDeviceProperties.frontPortCount
-                staticDevice.deviceRole = staticDeviceProperties.deviceRoleName
-                staticDevice.deviceType = staticDeviceProperties.deviceTypeModel
-                staticDevice.site = staticDeviceProperties.siteName
-                
-                return staticDevice
+            let (rows, skipped) = try await NetBoxPageIterator.fetchDecoded(
+                path: "/api/dcim/devices/",
+                extraQuery: query,
+                as: NetBoxRecord.StaticDevice.self,
+                using: fetcher
+            )
+            if skipped > 0 {
+                logger.error("Skipped \(skipped) static devices for site \(siteId)")
             }
-            
+            let devices = rows.map { $0.asCacheValue() }
             await StaticDeviceCache.shared.setStaticDevices(devices, forSiteId: siteId)
-            
-            // Load device bays for Shelf devices
             for device in devices where device.deviceRole == "Shelf" {
-                Task {
-                    do {
-                        try await getDeviceBays(for: device.id)
-                    } catch {
-                        print("Error loading device bays for Shelf \(device.id): \(error)")
-                    }
-                }
+                try await getDeviceBays(for: device.id)
             }
-            
         } catch {
-            print("Error fetching static devices: \(error)")
+            logger.error("Static devices for site \(siteId) failed: \(error.localizedDescription, privacy: .public)")
+            throw SiteDataError.networkError(error)
         }
     }
-    
+
     func getDeviceBays(for deviceId: Int64) async throws {
-        let resource = DeviceBayResource(deviceId: deviceId)
-        let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-        let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-        let request = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-        
-        let deviceBayProperties = try await request.execute()
-        
-        let deviceBays = deviceBayProperties.map { properties in
-            var deviceBay = DeviceBay(id: properties.id ?? 0)
-            deviceBay.id = properties.id ?? 0
-            deviceBay.name = properties.name
-            deviceBay.display = properties.display
-            deviceBay.created = properties.created
-            deviceBay.lastUpdated = properties.lastUpdated
-            deviceBay.deviceId = properties.installedDeviceId
-            deviceBay.deviceName = properties.installedDeviceName
-            deviceBay.staticDeviceId = properties.deviceId
-            
-            
-            deviceBay.staticDeviceName = properties.deviceName
-            
-            
-            return deviceBay
+        do {
+            let (rows, skipped) = try await NetBoxPageIterator.fetchDecoded(
+                path: "/api/dcim/device-bays/",
+                extraQuery: [URLQueryItem(name: "device_id", value: String(deviceId))],
+                as: NetBoxRecord.DeviceBay.self,
+                using: fetcher
+            )
+            if skipped > 0 {
+                logger.error("Skipped \(skipped) device bays for device \(deviceId)")
+            }
+            await DeviceBayCache.shared.setDeviceBays(rows.map { $0.asCacheValue() }, forDeviceId: deviceId)
+        } catch {
+            logger.error("Device bays for device \(deviceId) failed: \(error.localizedDescription, privacy: .public)")
+            throw SiteDataError.networkError(error)
         }
-        
-        await DeviceBayCache.shared.setDeviceBays(deviceBays, forDeviceId: deviceId)
     }
     
     // Coordinator function that handles all loading
@@ -128,73 +104,32 @@ actor SiteDataService {
     //     MARK: - Loading Interfaces and Items
     
     func getInterfaces(for siteId: Int64) async throws {
-        // Create local context
         let localContext = ModelContext(modelContainer)
-        
-        // Create and execute fetch descriptor
         let descriptor = FetchDescriptor<Device>(
             predicate: #Predicate<Device> { device in
                 device.site?.id == siteId
             }
         )
-        
-        let devices = try localContext.fetch(descriptor)
-        
-        // Get API configuration
-        let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-        let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-        
-        // Create an array of device IDs which are sendable
-        let deviceIds = devices.map { $0.id }
-        
+        let deviceIds = try localContext.fetch(descriptor).map(\.id)
+
         try await withThrowingTaskGroup(of: Void.self) { group in
             for deviceId in deviceIds {
-                group.addTask { [deviceId] in
-                    let resource = InterfaceResource(deviceId: deviceId)
-                    let request = APIRequest(resource: resource,
-                                             apiKey: netboxApiToken,
-                                             baseURL: netboxApiServer)
-                    
-                    let interfaceProperties = try await request.execute()
-                    let interfaces = interfaceProperties.map { properties in
-                        var interface = Interface(id: properties.id)
-                        interface.created = properties.created
-                        interface.lastUpdated = properties.lastUpdated
-                        interface.name = properties.name
-                        interface.display = properties.display
-                        interface.url = properties.url
-                        interface.type = properties.type
-                        interface.label = properties.label
-                        interface.enabled = properties.enabled
-                        interface.mtu = properties.mtu
-                        interface.speed = properties.speed
-                        interface.interfaceDescription = properties.interfaceDescription
-                        interface.poeMode = properties.poeMode
-                        
-                        //Assigning properties used for relationships with Device, Connected Endpoint, Bridge, Lag and Parent
-                        interface.deviceId = properties.deviceId
-                        
-                        interface.connectedEndpointId = properties.connectedEndpointId
-                        interface.connectedEndpointName = properties.connectedEndpointName
-                        
-                        interface.lagId = properties.lagId
-                        interface.lagName = properties.lagName
-                        
-                        interface.bridgeId = properties.bridgeId
-                        interface.bridgeName = properties.bridgeName
-                        
-                        interface.parentId = properties.parentId
-                        interface.parentName = properties.parentName
-                        
-                        return interface
+                group.addTask {
+                    let (rows, skipped) = try await NetBoxPageIterator.fetchDecoded(
+                        path: "/api/dcim/interfaces/",
+                        extraQuery: [URLQueryItem(name: "device_id", value: String(deviceId))],
+                        as: NetBoxRecord.Interface.self,
+                        using: self.fetcher
+                    )
+                    if skipped > 0 {
+                        self.logger.error("Skipped \(skipped) interfaces for device \(deviceId)")
                     }
-                    
-                    await InterfaceCache.shared.setInterfaces(interfaces,
-                                                              forDeviceId: deviceId
+                    await InterfaceCache.shared.setInterfaces(
+                        rows.map { $0.asCacheValue() },
+                        forDeviceId: deviceId
                     )
                 }
             }
-            
             try await group.waitForAll()
         }
     }
