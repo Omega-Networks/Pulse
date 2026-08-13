@@ -104,9 +104,6 @@ struct InterfacesTable: View {
             }
             ///Main table view
             tableView
-                .onChange(of: selection) {
-                    print("selection: \(selection)")
-                }
                 .onDrag {
                     let selectedRows = selection.map { Int($0) }
                     do {
@@ -283,10 +280,11 @@ extension InterfacesTable {
                     }
                     
                     Text(interface.name)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            
-            
+            .width(min: 80, ideal: 160)
+
             TableColumn("Description") { (interface: InterfaceVO) in
                 EditableText(
                     text: Binding(
@@ -304,6 +302,7 @@ extension InterfacesTable {
                 )
                 .disabled(isWriting)
             }
+            .width(min: 140)
 
             TableColumn("Enabled") { (interface: InterfaceVO) in
                 Toggle(
@@ -318,13 +317,16 @@ extension InterfacesTable {
                 .labelsHidden()
                 .id("\(interface.id)-enabled-\(interface.enabled)")
                 .disabled(isWriting || netBoxSyncEngine == nil)
+                .frame(maxWidth: .infinity)
             }
+            .width(min: 64, ideal: 72, max: 88)
 
             TableColumn("Cable") { (interface: InterfaceVO) in
                 if interface.cableId != nil || interface.connectedEndpointId != nil {
                     HStack {
                         Text(interface.connectedEndpointName ?? "—")
                             .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         Button("Disconnect") {
                             requestDisconnect(interface)
                         }
@@ -336,18 +338,23 @@ extension InterfacesTable {
                         beginConnect(interface)
                     }
                     .disabled(isWriting || netBoxSyncEngine == nil)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            
+            .width(min: 120, ideal: 200)
+
             TableColumn("Type") { (interface: InterfaceVO) in
                 Text(interface.type ?? "")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            
+            .width(min: 80, ideal: 120)
+
             TableColumn("Member") { (interface: InterfaceVO) in
                 if ["lag", "bridge"].contains(interface.type) || !filteredInterfaces.isEmpty {
                     MemberCell(parentInterface: interface, allInterfaces: interfaces)
                 }
             }
+            .width(min: 80, ideal: 140)
         } rows: {
             ForEach(filteredInterfaces) { interface in
                 TableRow(interface)
@@ -434,28 +441,23 @@ struct EditableText: View {
     }
     
     var body: some View {
-        HStack(spacing: 0) {
-            TextField("", text: $temporaryText)
-                .textFieldStyle(.plain)
-                .focused($isFocused)
-                .onSubmit(submit)
-                .onChange(of: isFocused) { _, focused in
-                    if !focused { submit() }
+        TextField("", text: $temporaryText)
+            .textFieldStyle(.plain)
+            .focused($isFocused)
+            .onSubmit(submit)
+            .onChange(of: isFocused) { _, focused in
+                if !focused { submit() }
+            }
+            .onChange(of: text) { _, newValue in
+                if newValue != temporaryText {
+                    temporaryText = newValue
                 }
-                .onChange(of: text) { _, newValue in
-                    if newValue != temporaryText {
-                        temporaryText = newValue
-                    }
-                }
+            }
 #if os (macOS)
-                .onExitCommand { temporaryText = text; isFocused = false }
+            .onExitCommand { temporaryText = text; isFocused = false }
 #endif
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture { isFocused = true }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
     }
 
     private func submit() {
