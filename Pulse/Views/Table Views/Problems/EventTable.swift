@@ -50,13 +50,12 @@ struct EventTable: View {
     
     //Old solution for getting all events within a Site (still could cause problems)
     var events: [Event] {
-        let events = self.devices.compactMap { device in
+        return devices.compactMap { device in
             device.events
         }
-            .flatMap { $0 }
-            .sorted(by: { $0.formattedClock > $1.formattedClock })  // sort in descending order
-        
-        return events
+        .flatMap { $0 }
+        .filter(\.isStoreBacked)
+        .sorted(by: { $0.formattedClock > $1.formattedClock })
     }
     
     var selectedEvents: [Event] {

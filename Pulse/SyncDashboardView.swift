@@ -298,15 +298,18 @@ struct SyncDashboardView: View {
             DeviceRole.self
         ]
 
+        // Delete on a side context so the main-window @Query snapshots
+        // (map pins, EventCounter) merge a fresh fetch instead of holding
+        // rows this context just invalidated. Same-context delete(model:)
+        // after Event.rClock is what crashed Delete All.
+        let context = ModelContext(modelContext.container)
+        context.autosaveEnabled = false
         do {
             for model in modelsToDelete {
-                try modelContext.delete(model: model)
+                try context.delete(model: model)
                 print("\(model) data deleted successfully.")
-                if model == Event.self || model == Service.self {
-                    try modelContext.save()
-                }
             }
-            try modelContext.save()
+            try context.save()
             print("All data deleted successfully.")
         } catch {
             print("Failed to delete all data: \(error)")

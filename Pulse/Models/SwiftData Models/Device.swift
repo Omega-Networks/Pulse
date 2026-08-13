@@ -170,7 +170,7 @@ final class Device {
     /// Active events that are not suppressed or resolved
     private var activeEvents: [Event] {
         events?.filter {
-            $0.rClock == "0" && $0.suppressed == "0"
+            $0.isStoreBacked && $0.rClock == "0" && $0.suppressed == "0"
         } ?? []
     }
     
@@ -203,7 +203,7 @@ final class Device {
      var eventCountBySeverity: [String: Int] {
          guard let events = events else { return [:] }
          return events
-             .filter { $0.rClock == "0" }  // Only count events in active state
+             .filter { $0.isStoreBacked && $0.rClock == "0" }
              .reduce(into: [:]) { counts, event in
                  counts[event.severity, default: 0] += 1
              }

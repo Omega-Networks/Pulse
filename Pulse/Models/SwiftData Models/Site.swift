@@ -76,12 +76,14 @@ final class Site {
     }
     
     private var activeEvents: [Event] {
-        monitoredDevices.compactMap { device in
-            device.events?.filter {
-                $0.rClock == "0" &&
-                $0.suppressed == "0"
+        var result: [Event] = []
+        for device in monitoredDevices {
+            guard device.modelContext != nil, let events = device.events else { continue }
+            for event in events where event.isStoreBacked && event.rClock == "0" && event.suppressed == "0" {
+                result.append(event)
             }
-        }.flatMap { $0 }
+        }
+        return result
     }
     
     private var unacknowledgedActiveEvents: [Event] {

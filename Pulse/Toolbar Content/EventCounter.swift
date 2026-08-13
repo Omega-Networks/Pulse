@@ -33,11 +33,10 @@ struct EventCounter: View {
     @State private var openDevicesPopover: Bool = false
     
     private var eventsCountBySeverity: [String: Int] {
-        let severityCounts = events.reduce(into: [String: Int]()) { counts, event in
-            // Increment the count for the event's severity
+        events.reduce(into: [String: Int]()) { counts, event in
+            guard event.isStoreBacked else { return }
             counts[event.severity, default: 0] += 1
         }
-        return severityCounts
     }
     
     var body: some View {
@@ -124,7 +123,7 @@ struct DevicePopoverView: View {
                     .font(.headline)
                     .padding(.bottom, 2)
                 // Events are now presented in an animated List for better organization.
-                ForEach(device.events ?? [], id: \.eventId) { event in
+                ForEach((device.events ?? []).filter(\.isStoreBacked), id: \.eventId) { event in
                     HStack {
                         Text(event.name)
                             .foregroundColor(.primary)
