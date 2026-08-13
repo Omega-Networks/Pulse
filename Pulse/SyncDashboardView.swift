@@ -379,6 +379,8 @@ struct SyncDashboardView: View {
         case .unknownError(let message):
             alertTitle = "Error"
             alertMessage = "\(source.displayName): \(message)"
+        case .syncing:
+            return
         }
         
         showAlert = true

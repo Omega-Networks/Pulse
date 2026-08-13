@@ -117,6 +117,56 @@ final class NetBoxPageIteratorTests: XCTestCase {
         }
     }
 
+    func testStreamDecodedDoesNotAccumulateCallerSide() async throws {
+        final class TwoPageFetcher: NetBoxFetching, @unchecked Sendable {
+            var calls = 0
+            func get(path: String, query: [URLQueryItem]) async throws -> Data {
+                calls += 1
+                if calls == 1 {
+                    return Data(#"{"count":2,"next":"x","results":[{"ok":true}]}"#.utf8)
+                }
+                return Data(#"{"count":2,"next":null,"results":[{"ok":false}]}"#.utf8)
+            }
+        }
+        struct Row: Decodable, Sendable { var ok: Bool }
+        var seen: [[Bool]] = []
+        let fetcher = TwoPageFetcher()
+        let result = try await NetBoxPageIterator.streamDecoded(
+            path: "/api/dcim/interfaces/",
+            as: Row.self,
+            using: fetcher
+        ) { page, skipped in
+            XCTAssertEqual(skipped, 0)
+            seen.append(page.map(\.ok))
+        }
+        XCTAssertEqual(result.skipped, 0)
+        XCTAssertEqual(result.pages, 2)
+        XCTAssertEqual(seen, [[true], [false]])
+        XCTAssertEqual(fetcher.calls, 2)
+    }
+
+    func testStreamDecodedPageCapThrowsSyncError() async {
+        final class LoopFetcher: NetBoxFetching, @unchecked Sendable {
+            func get(path: String, query: [URLQueryItem]) async throws -> Data {
+                Data(#"{"count":99,"next":"x","results":[{"ok":true}]}"#.utf8)
+            }
+        }
+        struct Row: Decodable, Sendable { var ok: Bool }
+        do {
+            _ = try await NetBoxPageIterator.streamDecoded(
+                path: "/api/dcim/interfaces/",
+                as: Row.self,
+                using: LoopFetcher(),
+                maxPages: 2
+            ) { _, _ in }
+            XCTFail("expected pageLimitExceeded")
+        } catch NetBoxSyncError.pageLimitExceeded {
+            // expected
+        } catch {
+            XCTFail("wrong error \(error)")
+        }
+    }
+
     func testTransportErrorStopsIteration() async {
         struct Boom: Error {}
         var calls = 0

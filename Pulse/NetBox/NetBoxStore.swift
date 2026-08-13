@@ -490,6 +490,101 @@ enum NetBoxStore {
         )
     }
 
+    // MARK: - Interfaces
+
+    struct InterfaceApplyResult: Equatable, Sendable {
+        var upserted: Int
+        var outOfScope: Int
+        var deleted: Int
+        var didDelete: Bool
+        var acceptedIDs: Set<Int64>
+    }
+
+    /// Upsert a page of interfaces. Unresolved device or a device with no
+    /// site is out of scope (logged, not stored, not counted as `skipped`).
+    ///
+    /// Delete runs only when `fetchComplete && skipped == 0`. Pass the
+    /// union of every accepted id from the walk in `keeping`; passing only
+    /// the last page's ids would delete earlier pages.
+    static func applyInterfaces(
+        _ records: [NetBoxRecord.Interface],
+        fetchComplete: Bool,
+        skipped: Int,
+        keeping: Set<Int64>,
+        in context: ModelContext
+    ) throws -> InterfaceApplyResult {
+        let deviceIDs = records.compactMap(\.deviceID)
+        let devices = try fetchByIDs(Device.self, ids: deviceIDs, in: context)
+
+        var accepted: [NetBoxRecord.Interface] = []
+        var acceptedIDs = Set<Int64>()
+        var siteByDevice: [Int64: Int64] = [:]
+        var outOfScope = 0
+        for record in records {
+            guard let deviceID = record.deviceID,
+                  let device = devices[deviceID],
+                  let siteID = device.site?.id
+            else {
+                logger.error(
+                    "Interface \(record.id) device \(record.deviceID ?? -1) unresolved or has no site; dropping as out of scope"
+                )
+                outOfScope += 1
+                continue
+            }
+            accepted.append(record)
+            acceptedIDs.insert(record.id)
+            siteByDevice[deviceID] = siteID
+        }
+
+        try upsert(accepted, in: context) { record, model in
+            let deviceID = record.deviceID!
+            model.name = record.name
+            model.display = record.display
+            model.url = record.url
+            model.created = record.created
+            model.lastUpdated = record.lastUpdated
+            model.type = record.type
+            model.label = record.label
+            model.enabled = record.enabled
+            model.mtu = record.mtu
+            model.speed = record.speed
+            model.interfaceDescription = record.interfaceDescription
+            model.poeMode = record.poeMode
+            model.duplex = record.duplex
+            model.occupied = record.occupied
+            model.deviceId = deviceID
+            model.siteId = siteByDevice[deviceID]!
+            model.deviceName = record.deviceName
+            model.connectedEndpointId = record.connectedEndpointID
+            model.connectedEndpointName = record.connectedEndpointName
+            model.connectedEndpointDeviceId = record.connectedEndpointDeviceID
+            model.lagId = record.lagID
+            model.lagName = record.lagName
+            model.bridgeId = record.bridgeID
+            model.bridgeName = record.bridgeName
+            model.parentId = record.parentID
+            model.parentName = record.parentName
+            model.device = devices[deviceID]
+        } create: {
+            Interface(id: $0.id)
+        }
+
+        let deleted = try deleteStale(
+            Interface.self,
+            keeping: keeping,
+            allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            in: context
+        )
+        try context.save()
+        return InterfaceApplyResult(
+            upserted: accepted.count,
+            outOfScope: outOfScope,
+            deleted: max(0, deleted),
+            didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            acceptedIDs: acceptedIDs
+        )
+    }
+
     // MARK: - Internals
 
     private static func upsert<Record, Model>(
@@ -579,6 +674,7 @@ extension NetBoxRecord.Site: NetBoxRecordID {}
 extension NetBoxRecord.Rack: NetBoxRecordID {}
 extension NetBoxRecord.Device: NetBoxRecordID {}
 extension NetBoxRecord.Service: NetBoxRecordID {}
+extension NetBoxRecord.Interface: NetBoxRecordID {}
 
 private protocol NetBoxIdentified: AnyObject {
     var id: Int64 { get }
@@ -594,3 +690,4 @@ extension Site: NetBoxIdentified {}
 extension Rack: NetBoxIdentified {}
 extension Device: NetBoxIdentified {}
 extension Service: NetBoxIdentified {}
+extension Interface: NetBoxIdentified {}

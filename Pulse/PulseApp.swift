@@ -35,6 +35,13 @@ import OSLog
  This class tracks various stages of the application's startup process,
  including progress updates, welcome messages, and animation states.
  */
+/// Marks that the 10-type inventory finished so a later interface-walk
+/// failure does not replay the offline loading screen.
+private actor InventoryReadyFlag {
+    private(set) var isReady = false
+    func mark() { isReady = true }
+}
+
 @MainActor
 class InitializationState: ObservableObject {
     @Published var progress: Double = 0
@@ -43,8 +50,8 @@ class InitializationState: ObservableObject {
     @Published var contentViewReady = false
     @Published var startExitAnimation = false
     @Published var isConfigured = false
-    /// Ten NetBox types plus TipKit. Matches the last `updateProgress` step
-    /// inside `verifyContainer` so the bar fills to 100% when work completes.
+    /// Ten inventory types plus TipKit. Interfaces stream after the bar
+    /// fills (background phase); they are not a launch-bar step.
     let totalSteps = 11.0
     
     /**
@@ -277,17 +284,25 @@ struct PulseApp: App {
         // updateProgress call sets the label for the step that's about to run.
         // NetBoxSyncEngine is the single NetBox owner; boot and Sync Dashboard
         // share it so they cannot race.
+        let inventory = InventoryReadyFlag()
         do {
-            try await netBoxSyncEngine.fullSync { step, label in
-                Task { @MainActor in
-                    initState.updateProgress(step, label)
+            try await netBoxSyncEngine.fullSync(
+                progress: { step, label in
+                    Task { @MainActor in
+                        initState.updateProgress(step, label)
+                    }
+                },
+                onInventoryReady: {
+                    await inventory.mark()
+                    await MainActor.run {
+                        initState.updateProgress(10, "Setting up Tips...")
+                        tipManager.configure()
+                        initState.updateProgress(11, "Ready")
+                    }
+                    // Do not block the interface walk on the welcome animation.
+                    Task { await leaveLoadingScreen() }
                 }
-            }
-
-            initState.updateProgress(10, "Setting up Tips...")
-            tipManager.configure()
-
-            initState.updateProgress(11, "Ready")
+            )
         } catch {
             logger.error("NetBox sync failed: \(error.localizedDescription)")
             if let netboxError = error as? NetBoxSyncError {
@@ -300,26 +315,26 @@ struct PulseApp: App {
                     )
                 }
             }
-            initState.currentStep = "Running in Offline Mode"
-            initState.showWelcome = true
-            try? await Task.sleep(for: .seconds(2))
+            if await !inventory.isReady {
+                initState.currentStep = "Running in Offline Mode"
+                initState.showWelcome = true
+                try? await Task.sleep(for: .seconds(2))
+                await leaveLoadingScreen()
+            }
+            return
         }
+    }
 
-        // Brief pause so a full bar is visible before the welcome message swaps in.
+    /// Welcome animation and hand-off to `ContentView`. Called when the
+    /// 10-type inventory is in the store so the first interface walk can
+    /// continue in the background.
+    private func leaveLoadingScreen() async {
         try? await Task.sleep(for: .milliseconds(500))
-
         initState.showWelcome = true
         initState.currentStep = "Welcome to Pulse"
-
-        // Time to read the welcome message.
         try? await Task.sleep(for: .milliseconds(1500))
-
-        // Trigger exit animation.
         initState.startExitAnimation = true
-
-        // Wait for the loading view to animate out.
         try? await Task.sleep(for: .milliseconds(1100))
-
         withAnimation(.easeInOut(duration: 0.5)) {
             showContentView = true
         }

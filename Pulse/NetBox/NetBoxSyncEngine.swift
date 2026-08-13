@@ -50,14 +50,23 @@ actor NetBoxSyncEngine {
     }
 
     /// Tenant groups → roles → types → tenants → regions → site groups →
-    /// sites → racks → devices → services.
-    func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
+    /// sites → racks → devices → services, then streaming interfaces.
+    /// `onInventoryReady` fires after services so boot can leave the
+    /// loading screen while interfaces continue. Stamp still waits for
+    /// the interface walk.
+    func fullSync(
+        progress: (@Sendable (Int, String) -> Void)? = nil,
+        onInventoryReady: (@Sendable () async -> Void)? = nil
+    ) async throws {
         if let inFlight {
             try await inFlight.value
             return
         }
         let task = Task(priority: .userInitiated) {
-            try await self.performFullSync(progress: progress)
+            try await self.performFullSync(
+                progress: progress,
+                onInventoryReady: onInventoryReady
+            )
         }
         inFlight = task
         defer { inFlight = nil }
@@ -69,7 +78,10 @@ actor NetBoxSyncEngine {
         }
     }
 
-    private func performFullSync(progress: (@Sendable (Int, String) -> Void)?) async throws {
+    private func performFullSync(
+        progress: (@Sendable (Int, String) -> Void)?,
+        onInventoryReady: (@Sendable () async -> Void)?
+    ) async throws {
         let stages: [(String, () async throws -> Void)] = [
             ("Synchronising Tenant Groups...", { try await self.syncTenantGroups() }),
             ("Synchronising Device Roles...", { try await self.syncDeviceRoles() }),
@@ -86,7 +98,12 @@ actor NetBoxSyncEngine {
             progress?(index, stage.0)
             try await stage.1()
         }
+        await onInventoryReady?()
+        try await syncInterfaces()
         try await stampSuccess()
+        await MainActor.run {
+            RequestStatusManager.shared.clearSyncing(.netbox)
+        }
     }
 
     // MARK: - Types
@@ -238,6 +255,47 @@ actor NetBoxSyncEngine {
         }
     }
 
+    private func syncInterfaces() async throws {
+        await MainActor.run {
+            RequestStatusManager.shared.updateStatus(
+                .netbox,
+                .syncing("Synchronising interfaces…")
+            )
+        }
+        let extra = filter.excludedRoleQueryAsInts.map {
+            URLQueryItem(name: "device_role_id__n", value: String($0))
+        }
+        let keeping = AcceptedInterfaceIDs()
+        let walk = try await NetBoxPageIterator.streamDecoded(
+            path: "/api/dcim/interfaces/",
+            extraQuery: extra,
+            as: NetBoxRecord.Interface.self,
+            using: fetcher,
+            maxPages: NetBoxPageIterator.interfaceMaxPages
+        ) { page, _ in
+            let result = try await self.applyOnStore { context in
+                try NetBoxStore.applyInterfaces(
+                    page,
+                    fetchComplete: false,
+                    skipped: 0,
+                    keeping: [],
+                    in: context
+                )
+            }
+            await keeping.formUnion(result.acceptedIDs)
+        }
+        let seen = await keeping.ids
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyInterfaces(
+                [],
+                fetchComplete: true,
+                skipped: walk.skipped,
+                keeping: seen,
+                in: context
+            )
+        }
+    }
+
     // MARK: - Fetch
 
     private func fetchAll<T: Decodable & Sendable>(
@@ -279,6 +337,13 @@ actor NetBoxSyncEngine {
             return true
         }
     }
+}
+
+/// Accumulates accepted interface ids across streamed pages without
+/// capturing a mutable `Set` in a Sendable closure.
+private actor AcceptedInterfaceIDs {
+    private(set) var ids: Set<Int64> = []
+    func formUnion(_ other: Set<Int64>) { ids.formUnion(other) }
 }
 
 // MARK: - Environment

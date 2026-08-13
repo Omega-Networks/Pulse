@@ -30,11 +30,37 @@ import SwiftData
 struct ToolbarStatus: View {
     @Query private var syncProvider: [SyncProvider]
     @Query private var sites: [Site]
-    
+    private var statusManager = RequestStatusManager.shared
+
     var body: some View {
-        VStack {
+        VStack(alignment: .leading, spacing: 2) {
             Text("\(sites.count) Sites")
                 .font(.caption)
+            if case .syncing(let message) = statusManager.currentStatus[.netbox] {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+struct NetBoxSyncIndicator: View {
+    private var statusManager = RequestStatusManager.shared
+
+    var body: some View {
+        if case .syncing(let message) = statusManager.currentStatus[.netbox] {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

@@ -38,6 +38,37 @@ final class NetBoxMappingTests: XCTestCase {
         return try ModelContainer(for: schema, configurations: [config])
     }
 
+    private func interfaceRecord(id: Int64, deviceID: Int64?) -> NetBoxRecord.Interface {
+        NetBoxRecord.Interface(
+            id: id,
+            name: "eth\(id)",
+            display: "eth\(id)",
+            url: nil,
+            created: nil,
+            lastUpdated: nil,
+            type: "1000base-t",
+            label: nil,
+            enabled: true,
+            mtu: 1500,
+            speed: 1_000_000,
+            interfaceDescription: "",
+            poeMode: nil,
+            duplex: nil,
+            occupied: false,
+            deviceID: deviceID,
+            deviceName: nil,
+            connectedEndpointID: nil,
+            connectedEndpointName: nil,
+            connectedEndpointDeviceID: nil,
+            lagID: nil,
+            lagName: nil,
+            bridgeID: nil,
+            bridgeName: nil,
+            parentID: nil,
+            parentName: nil
+        )
+    }
+
     // MARK: - List decoder
 
     func testPoisonedElementIsSkippedAndBlocksDelete() throws {
@@ -403,6 +434,135 @@ final class NetBoxMappingTests: XCTestCase {
     }
 
     // MARK: - On-demand ingest
+
+    func testInterfaceUpsertSkipsUnresolvedDeviceWithoutGatingDelete() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let site = Site(id: 1)
+        site.name = "Lab"
+        context.insert(site)
+        let device = Device(id: 10)
+        device.site = site
+        context.insert(device)
+        try context.save()
+
+        let accepted = interfaceRecord(id: 1, deviceID: 10)
+        let orphan = interfaceRecord(id: 2, deviceID: 99)
+        let first = try NetBoxStore.applyInterfaces(
+            [accepted, orphan],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        XCTAssertEqual(first.upserted, 1)
+        XCTAssertEqual(first.outOfScope, 1)
+        XCTAssertFalse(first.didDelete)
+        XCTAssertEqual(first.acceptedIDs, [1])
+
+        let stale = interfaceRecord(id: 3, deviceID: 10)
+        _ = try NetBoxStore.applyInterfaces(
+            [stale],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).count, 2)
+
+        let finished = try NetBoxStore.applyInterfaces(
+            [],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertTrue(finished.didDelete)
+        XCTAssertEqual(finished.deleted, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).map(\.id), [1])
+    }
+
+    func testInterfaceDeleteUsesAccumulatedKeepingNotLastPage() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let site = Site(id: 1)
+        context.insert(site)
+        let device = Device(id: 10)
+        device.site = site
+        context.insert(device)
+        try context.save()
+
+        _ = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 10)],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        _ = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 2, deviceID: 10)],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        let lastPageOnly = try NetBoxStore.applyInterfaces(
+            [],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [2],
+            in: context
+        )
+        XCTAssertTrue(lastPageOnly.didDelete)
+        XCTAssertEqual(Set(try context.fetch(FetchDescriptor<Interface>()).map(\.id)), [2])
+    }
+
+    func testInterfacePoisonedSkipGatesDelete() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let site = Site(id: 1)
+        context.insert(site)
+        let device = Device(id: 10)
+        device.site = site
+        context.insert(device)
+        try context.save()
+
+        _ = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 10), interfaceRecord(id: 2, deviceID: 10)],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [1, 2],
+            in: context
+        )
+        let gated = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 10)],
+            fetchComplete: true,
+            skipped: 1,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertFalse(gated.didDelete)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).count, 2)
+    }
+
+    func testInterfaceMissingSiteIsOutOfScope() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        context.insert(Device(id: 10))
+        try context.save()
+
+        let result = try NetBoxStore.applyInterfaces(
+            [interfaceRecord(id: 1, deviceID: 10)],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        XCTAssertEqual(result.upserted, 0)
+        XCTAssertEqual(result.outOfScope, 1)
+        XCTAssertTrue(result.didDelete)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Interface>()).isEmpty)
+    }
 
     func testInterfacePageDecodesMTUAsIntegerAndFirstEndpoint() throws {
         let json = Data("""
