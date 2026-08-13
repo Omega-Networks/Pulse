@@ -146,6 +146,23 @@ struct InterfacesTable: View {
         } message: {
             Text(writeError ?? "")
         }
+        .alert(
+            "Disconnect cable?",
+            isPresented: Binding(
+                get: { interfaceToDelete != nil },
+                set: { if !$0 { interfaceToDelete = nil } }
+            )
+        ) {
+            Button("Cancel", role: .cancel) { interfaceToDelete = nil }
+            Button("Disconnect", role: .destructive) {
+                if let interface = interfaceToDelete {
+                    interfaceToDelete = nil
+                    Task { await disconnect(interface) }
+                }
+            }
+        } message: {
+            Text(disconnectMessage(for: interfaceToDelete))
+        }
     }
     
     private func loadInterfaces() {
@@ -189,6 +206,21 @@ struct InterfacesTable: View {
         await performWrite {
             try await engine.createCable(from: source.id, to: target.id)
         }
+    }
+
+    private func requestDisconnect(_ interface: InterfaceVO) {
+        guard interface.cableId != nil else {
+            writeError = "Cable id is missing. Run Full Resync, then disconnect."
+            return
+        }
+        interfaceToDelete = interface
+    }
+
+    private func disconnectMessage(for interface: InterfaceVO?) -> String {
+        guard let interface else { return "" }
+        let here = interface.name
+        let there = interface.connectedEndpointName ?? "the other end"
+        return "This deletes the cable in NetBox between \(here) and \(there). That cannot be undone from here."
     }
 
     private func disconnect(_ interface: InterfaceVO) async {
@@ -283,12 +315,12 @@ extension InterfacesTable {
                         Text(interface.connectedEndpointName ?? "—")
                             .lineLimit(1)
                         Button("Disconnect") {
-                            Task { await disconnect(interface) }
+                            requestDisconnect(interface)
                         }
                         .disabled(isWriting || interface.cableId == nil || netBoxSyncEngine == nil)
                         .help(interface.cableId == nil
                               ? "Cable id is missing. Run Full Resync, then disconnect."
-                              : "Delete the cable in NetBox")
+                              : "Delete the cable in NetBox after confirmation")
                     }
                 } else {
                     Button("Connect…") {

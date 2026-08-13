@@ -34,6 +34,7 @@ struct InterfacePopover: View {
     @State private var writeError: String?
     @State private var connectFrom: InterfaceVO?
     @State private var siteCandidates: [InterfaceVO] = []
+    @State private var confirmDisconnect = false
     private var squareSize: CGFloat = 15
     private var verticalPadding: CGFloat = 5
     
@@ -105,7 +106,7 @@ struct InterfacePopover: View {
                     Spacer()
                     if interface.cableId != nil || interface.connectedEndpointId != nil {
                         Button("Disconnect") {
-                            Task { await disconnect() }
+                            requestDisconnect()
                         }
                         .disabled(isWriting || interface.cableId == nil || netBoxSyncEngine == nil)
                     } else {
@@ -150,6 +151,14 @@ struct InterfacePopover: View {
         } message: {
             Text(writeError ?? "")
         }
+        .alert("Disconnect cable?", isPresented: $confirmDisconnect) {
+            Button("Cancel", role: .cancel) { confirmDisconnect = false }
+            Button("Disconnect", role: .destructive) {
+                Task { await disconnect() }
+            }
+        } message: {
+            Text("This deletes the cable in NetBox between \(interface.name) and \(interface.connectedEndpointName ?? "the other end"). That cannot be undone from here.")
+        }
     }
 
     private func beginConnect() {
@@ -173,6 +182,14 @@ struct InterfacePopover: View {
         await performWrite {
             try await engine.createCable(from: interface.id, to: target.id)
         }
+    }
+
+    private func requestDisconnect() {
+        guard interface.cableId != nil else {
+            writeError = "Cable id is missing. Run Full Resync, then disconnect."
+            return
+        }
+        confirmDisconnect = true
     }
 
     private func disconnect() async {

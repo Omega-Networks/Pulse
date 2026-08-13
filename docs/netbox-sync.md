@@ -60,7 +60,7 @@ From a device's Interfaces table or faceplate popover:
 - Edit a description and press Return — PATCH `/api/dcim/interfaces/{id}/` with `description` only
 - Toggle Enabled — PATCH with `enabled` only
 - **Connect…** — POST `/api/dcim/cables/` with `a_terminations` / `b_terminations` `{"object_type":"dcim.interface","object_id":N}`
-- **Disconnect** — DELETE `/api/dcim/cables/{id}/` (needs a stored cable id; run **Full Resync** once if disconnect is disabled)
+- **Disconnect** — asks first, then DELETE `/api/dcim/cables/{id}/` (needs a stored cable id; run **Full Resync** once if disconnect is disabled)
 
 Every successful write re-reads the object from NetBox. Validation errors (duplicate cable, missing field) show the server JSON.
 
