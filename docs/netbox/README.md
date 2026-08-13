@@ -12,6 +12,8 @@ from **this instance's** schema, not a hand-written Codable layer.
 
 The unfiltered lab document is ~5.5 MiB and is **not** committed (`docs/netbox/openapi-raw.yaml` is gitignored). Regeneration fetches it.
 
+Operator token, filter defaults, and resync: [`docs/netbox-sync.md`](../netbox-sync.md). Architecture: [`docs/architecture/0003-netbox-openapi-sync.md`](../architecture/0003-netbox-openapi-sync.md).
+
 ## Lab version this tree was generated against
 
 Recorded 2026-08-13 from `GET /api/status/`:

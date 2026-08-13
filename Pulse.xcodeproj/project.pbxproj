@@ -65,7 +65,6 @@
 		41AF55732D14B8B500072BF6 /* RequestStatusManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41AF55722D14B8B500072BF6 /* RequestStatusManager.swift */; };
 		41B467B02C3C984C00B23BA8 /* DeviceBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41B467AF2C3C984C00B23BA8 /* DeviceBuilder.swift */; };
 		41B82EE92CACBC930019FDAD /* RackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41B82EE82CACBC930019FDAD /* RackView.swift */; };
-		41C7AA642ACE081A009DB9BD /* CableProperties.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41C7AA632ACE081A009DB9BD /* CableProperties.swift */; };
 		41D7B54E2C28EBB600D11F4B /* UpdateParameters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41D7B54D2C28EBB600D11F4B /* UpdateParameters.swift */; };
 		41D8E68C2D2B72BD002CA36D /* CredentialsTip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41D8E68B2D2B72BD002CA36D /* CredentialsTip.swift */; };
 		41D8E68E2D2B76A0002CA36D /* FetchEventsTip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41D8E68D2D2B76A0002CA36D /* FetchEventsTip.swift */; };
@@ -185,8 +184,7 @@
 		C96191B42ACA57B9000198DB /* SwiftDataError.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191B32ACA57B9000198DB /* SwiftDataError.swift */; };
 		C96191B62ACA57C5000198DB /* Tenant.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191B52ACA57C5000198DB /* Tenant.swift */; };
 		C96191B82ACA57D2000198DB /* TenantGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191B72ACA57D2000198DB /* TenantGroup.swift */; };
-		C96191BA2ACA57FC000198DB /* APIRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191B92ACA57FC000198DB /* APIRequest.swift */; };
-		C96191BC2ACA5808000198DB /* NetboxResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191BB2ACA5808000198DB /* NetboxResource.swift */; };
+
 		C96191BE2ACA5813000198DB /* ZabbixResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191BD2ACA5813000198DB /* ZabbixResource.swift */; };
 		C96191C32ACA5856000198DB /* AddButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191C22ACA5856000198DB /* AddButton.swift */; };
 		C96191C72ACA5881000198DB /* FilterButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191C62ACA5881000198DB /* FilterButton.swift */; };
@@ -301,7 +299,7 @@
 		41AF55722D14B8B500072BF6 /* RequestStatusManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestStatusManager.swift; sourceTree = "<group>"; };
 		41B467AF2C3C984C00B23BA8 /* DeviceBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceBuilder.swift; sourceTree = "<group>"; };
 		41B82EE82CACBC930019FDAD /* RackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RackView.swift; sourceTree = "<group>"; };
-		41C7AA632ACE081A009DB9BD /* CableProperties.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CableProperties.swift; sourceTree = "<group>"; };
+
 		41D7B54D2C28EBB600D11F4B /* UpdateParameters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateParameters.swift; sourceTree = "<group>"; };
 		41D8E68B2D2B72BD002CA36D /* CredentialsTip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialsTip.swift; sourceTree = "<group>"; };
 		41D8E68D2D2B76A0002CA36D /* FetchEventsTip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FetchEventsTip.swift; sourceTree = "<group>"; };
@@ -400,8 +398,7 @@
 		C96191B32ACA57B9000198DB /* SwiftDataError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftDataError.swift; sourceTree = "<group>"; };
 		C96191B52ACA57C5000198DB /* Tenant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tenant.swift; sourceTree = "<group>"; };
 		C96191B72ACA57D2000198DB /* TenantGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TenantGroup.swift; sourceTree = "<group>"; };
-		C96191B92ACA57FC000198DB /* APIRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIRequest.swift; sourceTree = "<group>"; };
-		C96191BB2ACA5808000198DB /* NetboxResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetboxResource.swift; sourceTree = "<group>"; };
+
 		C96191BD2ACA5813000198DB /* ZabbixResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZabbixResource.swift; sourceTree = "<group>"; };
 		C96191C22ACA5856000198DB /* AddButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddButton.swift; sourceTree = "<group>"; };
 		C96191C62ACA5881000198DB /* FilterButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilterButton.swift; sourceTree = "<group>"; };
@@ -856,7 +853,6 @@
 				419B02E02ADC7EF600D5FF47 /* History.swift */,
 				412BAF3E2C51B7A00026BC6D /* Layout.swift */,
 				C96191B32ACA57B9000198DB /* SwiftDataError.swift */,
-				41C7AA632ACE081A009DB9BD /* CableProperties.swift */,
 				419246072B6B2F380067DE98 /* ProviderModelActor.swift */,
 				41ACDC672B72D762003027A3 /* NotificationHandler.swift */,
 				419D50F62C2221F400CEA439 /* HistoryFetcher.swift */,
@@ -875,8 +871,6 @@
 			isa = PBXGroup;
 			children = (
 				C97136DE2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift */,
-				C96191B92ACA57FC000198DB /* APIRequest.swift */,
-				C96191BB2ACA5808000198DB /* NetboxResource.swift */,
 				C96191BD2ACA5813000198DB /* ZabbixResource.swift */,
 				41A0BE9D2C8FC05200C39B50 /* Configuration.swift */,
 				41AF55722D14B8B500072BF6 /* RequestStatusManager.swift */,
@@ -1260,7 +1254,6 @@
 				C961920B2ACA5D1D000198DB /* StatusCell.swift in Sources */,
 				C96191E32ACA5B7F000198DB /* InterfacesTable.swift in Sources */,
 				4128B0DB2CC7459500EB85D2 /* DeviceBaySlotView.swift in Sources */,
-				C96191BC2ACA5808000198DB /* NetboxResource.swift in Sources */,
 				41EBAF932CC5A650006E06A5 /* ShelfView.swift in Sources */,
 				C96191D72ACA5AB4000198DB /* DeviceView.swift in Sources */,
 				41446D242BF40D3900EA7A14 /* CPUCoresChart.swift in Sources */,
@@ -1304,7 +1297,7 @@
 				4114A6EC2BA3B7EF00ABEC8C /* InterfaceStatusCell.swift in Sources */,
 				C97C4F3E2ACB7CEC009F3795 /* PreviewTrait.swift in Sources */,
 				41ACDC682B72D762003027A3 /* NotificationHandler.swift in Sources */,
-				41C7AA642ACE081A009DB9BD /* CableProperties.swift in Sources */,
+
 				C96191B22ACA57AD000198DB /* SiteGroup.swift in Sources */,
 				067FD09E2ECC6D5500146D44 /* Logger+Extensions.swift in Sources */,
 				A11CAFE0000000000000300 /* Bundle+PulseBundleID.swift in Sources */,
@@ -1343,7 +1336,7 @@
 				C96191D92ACA5B17000198DB /* EdgeLabel.swift in Sources */,
 				4177A5EC2CE3FF2E00A7C754 /* SyncButton.swift in Sources */,
 				C96192052ACA5D00000198DB /* EventModal.swift in Sources */,
-				C96191BA2ACA57FC000198DB /* APIRequest.swift in Sources */,
+
 				C96191A62ACA573A000198DB /* DeviceType.swift in Sources */,
 				C9FCA5172D153E4D00D9E851 /* Event.swift in Sources */,
 				A11CAFE0000000000000NB12 /* NetBoxClientFactory.swift in Sources */,

@@ -37,7 +37,7 @@ struct AddSiteWindow: View {
     @State private var selectedStatus: String = ""
     @State private var selectedRegion: String = ""
     @State private var selectedGroup: String = ""
-    @State private var selectedTimeZone: String = "Pacific/Auckland" //TODO: Include timeZone as a property in SiteProperties
+    @State private var selectedTimeZone: String = "Pacific/Auckland"
     @State private var selectedDescription: String = ""
     @State private var selectedTags: String = ""
     @State private var selectedTenantGroup: String = ""
@@ -137,7 +137,7 @@ struct AddSiteWindow: View {
                         /// Group
                         Picker(selection: $selectedGroup, label: Text("Group")) {
                             ForEach(allSiteGroups, id: \.self) { group in
-                                Text(group).tag(fetchSiteGroupIdByName(group))
+                                Text(group).tag(group)
                             }
                         }
                         .pickerStyle(.menu)
@@ -259,18 +259,21 @@ struct AddSiteWindow: View {
                 
                 HStack {
                     Spacer()
-                    
-                    /// Update
-                    Button {
-                        Task.detached(priority: .background) {
-                            await validateSiteCreation()
+
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Text("Site creation is not available yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button {
+                        } label: {
+                            Text("Create")
+                                .frame(width: 80)
+                                .foregroundColor(.white)
                         }
-                    } label: {
-                        Text("Create")
-                            .frame(width: 80)
-                            .foregroundColor(.white)
+                        .disabled(true)
+                        .help("Site creation is not available yet")
+                        .cornerRadius(5)
                     }
-                    .cornerRadius(5)
                     
                     /// Cancel
                     Button {
@@ -301,127 +304,6 @@ struct AddSiteWindow: View {
                 self.selectedPhysicalAddress = tapAddress
             }
         }
-    }
-    
-    //MARK: Functions for the AddSiteWindow view
-    private func validateSiteCreation() async {
-        if selectedName.isEmpty || selectedStatus.isEmpty {
-            validationFailed = true
-        } else if checkForDuplicateName() {
-            isDuplicateName = true
-        } else {
-            validationFailed = false
-            let properties = await createSiteProperties()
-            
-            //Temporary print block for testing
-            print("Verifying Site Properties:")
-            print("  Name: \(properties.name)")
-            print("  Region ID: \(properties.regionId)")
-            print("  Group ID: \(properties.groupId)")
-            print("  Tenant ID: \(properties.tenantId)")
-            print("  Physical Address: \(properties.physicalAddress)")
-            print("  Shipping Address: \(properties.shippingAddress)")
-            print("  Latitude: \(properties.latitude)")
-            print("  Longitude: \(properties.longitude)")
-            
-            // Uncomment the following line when ready to actually post the site
-             await ProviderModelActor(modelContainer: modelContext.container).postSite(with: properties)
-            
-            await MainActor.run {
-                presentationMode.wrappedValue.dismiss()
-            }
-        }
-    }
-    
-    private func fetchSiteGroupIdByName(_ name: String) -> Int64 {
-        let predicate = #Predicate<SiteGroup> { siteGroup in
-            siteGroup.name == name
-        }
-        
-        let fetchDescriptor = FetchDescriptor(predicate: predicate)
-        
-        do {
-            let fetchedSiteGroups = try modelContext.fetch(fetchDescriptor)
-            guard let matchingSiteGroup = fetchedSiteGroups.first else {
-                print("No site groups matched do.")
-                return 0
-            }
-            return matchingSiteGroup.id
-        } catch {
-            print("No site groups matched catch.")
-            return 0
-        }
-    }
-    
-    private func fetchTenantIdByName(_ name: String) async -> Int64 {
-        let predicate = #Predicate<Tenant> { tenant in
-            tenant.name == name
-        }
-        
-        let fetchDescriptor = FetchDescriptor(predicate: predicate)
-        
-        do {
-            let tenants = try modelContext.fetch(fetchDescriptor)
-            guard let matchingTenant = tenants.first else {
-                print("No tenants matched do.")
-                return 0
-            }
-            return matchingTenant.id
-        } catch {
-            print("No tenants matched catch.")
-            return 0
-        }
-    }
-    
-    private func fetchRegionIdByName(_ name: String) async -> Int64 {
-        let predicate = #Predicate<Region> { region_netbox in
-            region_netbox.name == name
-        }
-        
-        let fetchDescriptor = FetchDescriptor(predicate: predicate)
-        
-        do {
-            let regions = try modelContext.fetch(fetchDescriptor)
-            guard let matchingRegion = regions.first else {
-                print("No regions matched do.")
-                return 0
-            }
-            return matchingRegion.id
-        } catch {
-            print("No regions matched catch.")
-            return 0
-        }
-    }
-    
-    private func generateSlug(from name: String) -> String {
-        return name.lowercased().replacingOccurrences(of: " ", with: "-")
-    }
-    
-    private func checkForDuplicateName() -> Bool {
-        return sites.contains { $0.name == selectedName }
-    }
-    
-    func createSiteProperties() async -> SiteProperties {
-        ///Reducing latitude and longitude values to five digits
-        let formattedLatitude = String(format: "%.5f", sharedLocations.tapLocation?.latitude ?? 0.0)
-        let formattedLongitude = String(format: "%.5f", sharedLocations.tapLocation?.longitude ?? 0.0)
-        
-        let siteProperties = SiteProperties(
-            name: selectedName,
-            slug: generateSlug(from: selectedName),
-            status: selectedStatus,
-            display: selectedDisplay,
-            url: selectedURL,
-            latitude: Double(formattedLatitude) ?? 0.0,
-            longitude: Double(formattedLongitude) ?? 0.0,
-            physicalAddress: sharedLocations.tapAddress ?? "",
-            shippingAddress: selectedShippingAddress,
-            groupId: fetchSiteGroupIdByName(selectedGroup),
-            regionId: await fetchRegionIdByName(selectedRegion),
-            tenantId: await fetchTenantIdByName(selectedTenant)
-        )
-        
-        return siteProperties
     }
 }
 

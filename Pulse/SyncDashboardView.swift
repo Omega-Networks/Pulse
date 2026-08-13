@@ -448,24 +448,6 @@ extension SyncDashboardView {
             }
         }
     }
-
-    /**
-     A publisher that emits when the managed object context saves changes.
-     The publisher's events are delivered on the main dispatch queue.
-     */
-    @MainActor
-    private func handleNetboxError(_ error: NetboxRequestError, operation: String) async {
-        switch error {
-        case .failure(let code, let message):
-            RequestStatusManager.shared.updateStatus(.netbox, .dataError(code: code, message: "\(operation): \(message)"))
-        case .networkError(let error):
-            RequestStatusManager.shared.updateStatus(.netbox, .connectionError("\(operation): \(error.localizedDescription)"))
-        case .decodingError:
-            RequestStatusManager.shared.updateStatus(.netbox, .dataError(code: 0, message: "\(operation): Failed to decode response"))
-        case .success:
-            break
-        }
-    }
 }
 
 
