@@ -348,6 +348,15 @@ final class NetBoxWriteTests: XCTestCase {
             #"{"detail":"no"}"#
         )
         XCTAssertEqual(NetBoxLiveFetcher.bodyString(Data()), "")
+        let offline = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorNotConnectedToInternet,
+            userInfo: [NSLocalizedDescriptionKey: "The Internet connection appears to be offline."]
+        )
+        XCTAssertEqual(
+            NetBoxLiveFetcher.transportMessage(offline),
+            "NetBox is unreachable. The change was not saved."
+        )
     }
 
     private func assertJSON(

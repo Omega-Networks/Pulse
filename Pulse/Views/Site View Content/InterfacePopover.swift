@@ -31,10 +31,9 @@ struct InterfacePopover: View {
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     @State var interface: InterfaceVO
     @State private var isWriting = false
-    @State private var writeError: String?
+    @State private var operatorAlert: OperatorAlert?
     @State private var connectFrom: InterfaceVO?
     @State private var siteCandidates: [InterfaceVO] = []
-    @State private var confirmDisconnect = false
     private var squareSize: CGFloat = 15
     private var verticalPadding: CGFloat = 5
     
@@ -137,30 +136,34 @@ struct InterfacePopover: View {
         .sheet(item: $connectFrom) { source in
             ConnectInterfaceSheet(
                 source: source,
-                candidates: siteCandidates.filter {
-                    $0.id != source.id && $0.cableId == nil && $0.connectedEndpointId == nil
-                },
+                candidates: siteCandidates.filter { $0.id != source.id },
                 onCancel: { connectFrom = nil },
                 onConnect: { target in
                     Task { await connect(to: target) }
                 }
             )
         }
-        .alert("NetBox write failed", isPresented: Binding(
-            get: { writeError != nil },
-            set: { if !$0 { writeError = nil } }
-        )) {
-            Button("OK", role: .cancel) { writeError = nil }
-        } message: {
-            Text(writeError ?? "")
-        }
-        .alert("Disconnect cable?", isPresented: $confirmDisconnect) {
-            Button("Cancel", role: .cancel) { confirmDisconnect = false }
-            Button("Disconnect", role: .destructive) {
-                Task { await disconnect() }
+        .alert(item: $operatorAlert) { alert in
+            switch alert {
+            case .failed(let message):
+                return Alert(
+                    title: Text("NetBox write failed"),
+                    message: Text(message),
+                    dismissButton: .cancel(Text("OK"))
+                )
+            case .confirmDisconnect(let target):
+                return Alert(
+                    title: Text("Disconnect cable?"),
+                    message: Text("This deletes the cable in NetBox between \(target.name) and \(target.connectedEndpointName ?? "the other end"). That cannot be undone from here."),
+                    primaryButton: .cancel(),
+                    secondaryButton: .destructive(Text("Disconnect")) {
+                        Task {
+                            await Task.yield()
+                            await disconnect()
+                        }
+                    }
+                )
             }
-        } message: {
-            Text("This deletes the cable in NetBox between \(interface.name) and \(interface.connectedEndpointName ?? "the other end"). That cannot be undone from here.")
         }
     }
 
@@ -189,10 +192,10 @@ struct InterfacePopover: View {
 
     private func requestDisconnect() {
         guard interface.cableId != nil || interface.connectedEndpointId != nil else {
-            writeError = "This interface has no cable."
+            operatorAlert = .failed("This interface has no cable.")
             return
         }
-        confirmDisconnect = true
+        operatorAlert = .confirmDisconnect(interface)
     }
 
     private func disconnect() async {
@@ -223,7 +226,7 @@ struct InterfacePopover: View {
             try await work()
             reload()
         } catch {
-            writeError = error.localizedDescription
+            operatorAlert = .failed(error.localizedDescription)
             reload()
         }
     }

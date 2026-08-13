@@ -199,7 +199,7 @@ struct NetBoxLiveFetcher: NetBoxFetching {
             logger.error(
                 "NetBox \(request.method, privacy: .public) \(url.absoluteString, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
             )
-            throw NetBoxSyncError.transport(error.localizedDescription)
+            throw NetBoxSyncError.transport(Self.transportMessage(error))
         }
 
         guard let http = response as? HTTPURLResponse else {
@@ -219,6 +219,28 @@ struct NetBoxLiveFetcher: NetBoxFetching {
             body: data,
             etag: http.value(forHTTPHeaderField: "ETag")
         )
+    }
+
+    /// Operator-facing transport copy. Offline is not a URL dump.
+    static func transportMessage(_ error: Error) -> String {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorNotConnectedToInternet,
+                 NSURLErrorNetworkConnectionLost,
+                 NSURLErrorDataNotAllowed:
+                return "NetBox is unreachable. The change was not saved."
+            case NSURLErrorTimedOut:
+                return "NetBox timed out. The change was not saved."
+            case NSURLErrorCannotFindHost,
+                 NSURLErrorCannotConnectToHost,
+                 NSURLErrorDNSLookupFailed:
+                return "Cannot reach the NetBox server. The change was not saved."
+            default:
+                break
+            }
+        }
+        return error.localizedDescription
     }
 
     /// Surface the server JSON verbatim. `HTTPURLResponse.localizedString`

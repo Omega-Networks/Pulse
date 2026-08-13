@@ -57,7 +57,7 @@ struct InterfacesTable: View {
     @State var selection = Set<Int64>()
     @State private var interfaces: [InterfaceVO] = []
     @State private var isWriting = false
-    @State private var writeError: String?
+    @State private var operatorAlert: OperatorAlert?
     @State private var connectFrom: InterfaceVO?
     @State private var siteCandidates: [InterfaceVO] = []
     
@@ -129,39 +129,34 @@ struct InterfacesTable: View {
         .sheet(item: $connectFrom) { source in
             ConnectInterfaceSheet(
                 source: source,
-                candidates: siteCandidates.filter {
-                    $0.id != source.id && $0.cableId == nil && $0.connectedEndpointId == nil
-                },
+                candidates: siteCandidates.filter { $0.id != source.id },
                 onCancel: { connectFrom = nil },
                 onConnect: { target in
                     Task { await connect(source, to: target) }
                 }
             )
         }
-        .alert("NetBox write failed", isPresented: Binding(
-            get: { writeError != nil },
-            set: { if !$0 { writeError = nil } }
-        )) {
-            Button("OK", role: .cancel) { writeError = nil }
-        } message: {
-            Text(writeError ?? "")
-        }
-        .alert(
-            "Disconnect cable?",
-            isPresented: Binding(
-                get: { interfaceToDelete != nil },
-                set: { if !$0 { interfaceToDelete = nil } }
-            )
-        ) {
-            Button("Cancel", role: .cancel) { interfaceToDelete = nil }
-            Button("Disconnect", role: .destructive) {
-                if let interface = interfaceToDelete {
-                    interfaceToDelete = nil
-                    Task { await disconnect(interface) }
-                }
+        .alert(item: $operatorAlert) { alert in
+            switch alert {
+            case .failed(let message):
+                return Alert(
+                    title: Text("NetBox write failed"),
+                    message: Text(message),
+                    dismissButton: .cancel(Text("OK"))
+                )
+            case .confirmDisconnect(let interface):
+                return Alert(
+                    title: Text("Disconnect cable?"),
+                    message: Text(disconnectMessage(for: interface)),
+                    primaryButton: .cancel(),
+                    secondaryButton: .destructive(Text("Disconnect")) {
+                        Task {
+                            await Task.yield()
+                            await disconnect(interface)
+                        }
+                    }
+                )
             }
-        } message: {
-            Text(disconnectMessage(for: interfaceToDelete))
         }
     }
     
@@ -211,14 +206,13 @@ struct InterfacesTable: View {
 
     private func requestDisconnect(_ interface: InterfaceVO) {
         guard interface.cableId != nil || interface.connectedEndpointId != nil else {
-            writeError = "This interface has no cable."
+            operatorAlert = .failed("This interface has no cable.")
             return
         }
-        interfaceToDelete = interface
+        operatorAlert = .confirmDisconnect(interface)
     }
 
-    private func disconnectMessage(for interface: InterfaceVO?) -> String {
-        guard let interface else { return "" }
+    private func disconnectMessage(for interface: InterfaceVO) -> String {
         let here = interface.name
         let there = interface.connectedEndpointName ?? "the other end"
         return "This deletes the cable in NetBox between \(here) and \(there). That cannot be undone from here."
@@ -254,7 +248,7 @@ struct InterfacesTable: View {
             loadInterfaces()
             return true
         } catch {
-            writeError = error.localizedDescription
+            operatorAlert = .failed(error.localizedDescription)
             editedInterfaces.removeAll()
             loadInterfaces()
             return false
@@ -416,6 +410,18 @@ extension InterfacesTable {
     }
 }
 
+enum OperatorAlert: Identifiable {
+    case failed(String)
+    case confirmDisconnect(InterfaceVO)
+
+    var id: String {
+        switch self {
+        case .failed: return "failed"
+        case .confirmDisconnect(let interface): return "disconnect-\(interface.id)"
+        }
+    }
+}
+
 //MARK: Helper views for InterfacesTable
 
 /**
@@ -475,51 +481,39 @@ struct ConnectInterfaceSheet: View {
     @State private var selected: Int64?
     @State private var filter = ""
 
-    private var grouped: [(device: String, rows: [InterfaceVO])] {
-        let visible = candidates.filter { vo in
+    private var visible: [InterfaceVO] {
+        candidates.filter { vo in
             guard !filter.isEmpty else { return true }
-            let haystack = "\(vo.deviceName ?? "") \(vo.name) \(vo.interfaceDescription ?? "")"
+            let haystack = "\(vo.deviceName ?? "") \(vo.name) \(vo.interfaceDescription ?? "") \(vo.connectedEndpointName ?? "")"
             return haystack.localizedCaseInsensitiveContains(filter)
         }
-        let byDevice = Dictionary(grouping: visible) { $0.deviceName ?? "Unknown device" }
-        return byDevice.keys.sorted().map { name in
-            let rows = (byDevice[name] ?? []).sorted {
-                $0.name.localizedStandardCompare($1.name) == .orderedAscending
-            }
-            return (name, rows)
-        }
+    }
+
+    private var free: [InterfaceVO] {
+        visible.filter { $0.cableId == nil && $0.connectedEndpointId == nil }
+    }
+
+    private var occupied: [InterfaceVO] {
+        visible.filter { $0.cableId != nil || $0.connectedEndpointId != nil }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Connect \(source.deviceName.map { "\($0) " } ?? "")\(source.name)")
                 .font(.headline)
-            Text("Creates a cable in NetBox to the free interface you pick.")
+            Text("Creates a cable in NetBox. Already-connected ports are listed so a duplicate can be rejected by the server.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             if candidates.isEmpty {
-                Text("No free interfaces at this site.")
+                Text("No other interfaces at this site.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 TextField("Filter device or interface", text: $filter)
                     .textFieldStyle(.roundedBorder)
                 List(selection: $selected) {
-                    ForEach(grouped, id: \.device) { group in
-                        Section(group.device) {
-                            ForEach(group.rows) { vo in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(vo.name)
-                                    if let description = vo.interfaceDescription, !description.isEmpty {
-                                        Text(description)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .tag(vo.id)
-                            }
-                        }
-                    }
+                    candidateSection("Free", rows: free)
+                    candidateSection("Already connected", rows: occupied)
                 }
                 #if os(macOS)
                 .listStyle(.bordered(alternatesRowBackgrounds: true))
@@ -540,5 +534,28 @@ struct ConnectInterfaceSheet: View {
         }
         .padding()
         .frame(minWidth: 480, minHeight: 420)
+    }
+
+    @ViewBuilder
+    private func candidateSection(_ title: String, rows: [InterfaceVO]) -> some View {
+        if !rows.isEmpty {
+            Section(title) {
+                ForEach(rows) { vo in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(vo.deviceName ?? "device")  \(vo.name)")
+                        if let other = vo.connectedEndpointName {
+                            Text("Connected to \(other)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if let description = vo.interfaceDescription, !description.isEmpty {
+                            Text(description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tag(vo.id)
+                }
+            }
+        }
     }
 }
