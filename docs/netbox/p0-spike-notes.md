@@ -1,4 +1,4 @@
-# P0 spike notes — 2026-08-13
+# P0 spike notes - 2026-08-13
 
 Against the operator's lab instance. Token was env-sourced; hostname and token are not recorded here.
 
@@ -12,15 +12,15 @@ Against the operator's lab instance. Token was env-sourced; hostname and token a
 | Schema | OpenAPI 3.0.3, 5.5 MiB, 226 968 lines, 329 paths |
 | Plugins | DNS plugin present (out of scope; not in the vendored spec) |
 
-## UNVERIFIED plan items — confirmed or discounted
+## UNVERIFIED plan items - confirmed or discounted
 
-**Path-filter globbing — discounted.** Generator 1.13.0 `filter.paths` is an exact `OpenAPI.Path` match (`DocumentFilter.includePath`). `/api/dcim/devices/` does not include `/api/dcim/devices/{id}/`. Config therefore lists concrete operation IDs, not path prefixes.
+**Path-filter globbing - discounted.** Generator 1.13.0 `filter.paths` is an exact `OpenAPI.Path` match (`DocumentFilter.includePath`). `/api/dcim/devices/` does not include `/api/dcim/devices/{id}/`. Config therefore lists concrete operation IDs, not path prefixes.
 
-**Tags collapsed to `api` — discounted for 4.6.2.** This instance has 14 real operation tags (`dcim`, `ipam`, `core`, `tenancy`, …). Path/operation filtering remains the right contract either way.
+**Tags collapsed to `api` - discounted for 4.6.2.** This instance has 14 real operation tags (`dcim`, `ipam`, `core`, `tenancy`, …). Path/operation filtering remains the right contract either way.
 
-**ETag in the schema document — discounted; header is present.** No `ETag` / `If-Match` field in the OpenAPI document. A single-object GET returns `etag: W/"<last_updated>"` (weak, last-updated based) and `api-version: 4.6`. P4 can send `If-Match` even though the schema does not declare it.
+**ETag in the schema document - discounted; header is present.** No `ETag` / `If-Match` field in the OpenAPI document. A single-object GET returns `etag: W/"<last_updated>"` (weak, last-updated based) and `api-version: 4.6`. P4 can send `If-Match` even though the schema does not declare it.
 
-**`MAX_PAGE_SIZE` — confirmed 1000.** Default page size is 50. `?limit=2000` and `?limit=10000` both return 1000 rows. Pagination helper should request `limit=1000`.
+**`MAX_PAGE_SIZE` - confirmed 1000.** Default page size is 50. `?limit=2000` and `?limit=10000` both return 1000 rows. Pagination helper should request `limit=1000`.
 
 ## Dates
 
@@ -44,7 +44,7 @@ Generated `Client.init` takes an unqualified `Configuration`. Pulse already has 
 
 - 29 operations (list+retrieve + status only). Write verbs were dropped: generated `PatchedWritable*Request` types do not conform to `Encodable` (empty `oneOf ()` in the NetBox 4.6.2 schema). P4 took the fallback: hand-written `Encodable` bodies for the small write surface, pinned by tests. The client was not regenerated.
 - `Client.swift` 18 287 lines; `Types.swift` 28 837 lines. Isolated in local package `NetBoxAPI`.
-- macOS Debug `xcodebuild` with generated client: **BUILD SUCCEEDED** (~50 s wall including regen; not a clean-from-zero measurement). Incremental after touching the factory is recorded in the P1 PR. No separate-module escalation for speed — the package exists because of the `Configuration` name collision.
+- macOS Debug `xcodebuild` with generated client: **BUILD SUCCEEDED** (~50 s wall including regen; not a clean-from-zero measurement). Incremental after touching the factory is recorded in the P1 PR. No separate-module escalation for speed - the package exists because of the `Configuration` name collision.
 - Filter CLI drops `components.securitySchemes`; the regenerate script restores `cookieAuth` / `tokenAuth` so the vendored document is generate-ready offline.
 - Warnings to carry into P4: empty `oneOf ()` skipped on device/site **create** request bodies; optional multipart bodies skipped. GET responses generated cleanly.
 

@@ -12,7 +12,7 @@ from **this instance's** schema, not a hand-written Codable layer.
 
 The unfiltered lab document is ~5.5 MiB and is **not** committed (`docs/netbox/openapi-raw.yaml` is gitignored). Regeneration fetches it.
 
-Operator token, filter defaults, and resync: [`docs/netbox-sync.md`](../netbox-sync.md). Architecture: [`docs/architecture/0003-netbox-openapi-sync.md`](../architecture/0003-netbox-openapi-sync.md).
+Operator token and resync: [`docs/netbox-sync.md`](../netbox-sync.md). How the local twin is built: [`docs/architecture/0003-netbox-openapi-sync.md`](../architecture/0003-netbox-openapi-sync.md).
 
 ## Lab version this tree was generated against
 
@@ -33,7 +33,7 @@ export GENERATOR=/path/to/swift-openapi-generator   # 1.13.0
 
 The script refuses to run if either env var is unset. The token is written to a `0600` temp file and passed to curl as `-H @file` so it does not appear on `ps`. After generate it rewrites `servers:` to an empty URL and **exits non-zero** if the `NETBOX_URL` host still appears in the filtered spec or generated Swift. Do not put a token or a lab hostname in the script, in this file, or in a commit message.
 
-After regenerating: diff the filtered spec and the generated Swift, then rebuild. Schema churn across 4.x minors is expected — treat the compiler errors as the upgrade checklist.
+After regenerating: diff the filtered spec and the generated Swift, then rebuild. Schema churn across 4.x minors is expected - treat the compiler errors as the upgrade checklist.
 
 ## Runtime packages (exact pins, SwiftTerm precedent)
 

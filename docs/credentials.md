@@ -2,7 +2,7 @@
 
 This guide explains how Pulse stores the SSH keys you use to reach devices, why those keys behave the way they do, and what to expect when something changes about how Pulse is built or signed. It's written for the operators using Pulse day-to-day, with notes for anyone maintaining a fork or running a beta channel.
 
-For the underlying architecture decisions see [ADR 0001](architecture/0001-ssh-terminal-and-web-foundations.md). This document doesn't restate those decisions; it explains what they mean in practice.
+For the credential, trust, and session-recording model see [SSH and web foundations](architecture/0001-ssh-terminal-and-web-foundations.md). This guide explains what that means in practice.
 
 ## The Secure Enclave, briefly
 
@@ -16,15 +16,15 @@ The Secure Enclave only supports one signature algorithm: ECDSA over the NIST P-
 
 `ecdsa-sha2-nistp256` was added to OpenSSH in version 6.5 (released January 2014) and has been accepted by every modern SSH server since. If you're connecting to gear from this decade, the algorithm isn't a compatibility concern.
 
-If you must use Ed25519 or RSA — older industrial gear, vendor defaults that hardcode an algorithm, or interop with non-OpenSSH stacks — the legacy portable tier covers those cases. Trade-off: portable keys live in the regular Keychain as exportable bytes, not in hardware. The credential editor labels them "Legacy" so the choice is deliberate.
+If you must use Ed25519 or RSA - older industrial gear, vendor defaults that hardcode an algorithm, or interop with non-OpenSSH stacks - the legacy portable tier covers those cases. Trade-off: portable keys live in the regular Keychain as exportable bytes, not in hardware. The credential editor labels them "Legacy" so the choice is deliberate.
 
 ## Biometric gating
 
-Every signing operation against a Secure Enclave credential prompts for Touch ID or your device passcode. There is no per-session cache. Connecting to a host, re-authenticating mid-session, running a `git fetch` over SSH inside a Pulse-managed shell — each signature triggers a prompt.
+Every signing operation against a Secure Enclave credential prompts for Touch ID or your device passcode. There is no per-session cache. Connecting to a host, re-authenticating mid-session, running a `git fetch` over SSH inside a Pulse-managed shell - each signature triggers a prompt.
 
 This is structural. The access control flags on the key (`kSecAccessControlBiometryAny` combined with `.privateKeyUsage` and `.devicePasscode` fallback) tell the Enclave to require user presence per use, and the prompt is driven by the Enclave itself rather than by Pulse asking `LAContext`. You can't relax it from inside Pulse; you'd have to generate a new credential with different access flags, which Pulse doesn't offer.
 
-The biometric requirement survives changes to your Touch ID enrolment. Adding or removing a fingerprint, or changing the device passcode, does not invalidate existing credentials. The stricter alternative (`biometryCurrentSet`) would protect against an attacker who already possesses your device passcode enrolling their own biometric — a niche threat already gated by passcode possession. The operational cost of invalidating every credential on a routine Touch ID change isn't worth that marginal extra coverage.
+The biometric requirement survives changes to your Touch ID enrolment. Adding or removing a fingerprint, or changing the device passcode, does not invalidate existing credentials. The stricter alternative (`biometryCurrentSet`) would protect against an attacker who already possesses your device passcode enrolling their own biometric - a niche threat already gated by passcode possession. The operational cost of invalidating every credential on a routine Touch ID change isn't worth that marginal extra coverage.
 
 The intent: every SSH session, and every authenticated action within it, has a human at the keyboard. No background process signs on your behalf.
 
@@ -32,7 +32,7 @@ The intent: every SSH session, and every authenticated action within it, has a h
 
 Pulse has two credential tiers, distinguished by where the private material lives.
 
-**Secure Enclave (default).** Private key material resides in the Enclave hardware and never leaves. The Keychain holds only an opaque reference — CryptoKit's `SecureEnclave.P256.Signing.PrivateKey.dataRepresentation`, an SE-encrypted blob that's useless to any other app and any other device. The blob lives in a `kSecClassGenericPassword` item under service `<bundle-id>.ssh` (for example `com.yourorg.pulse.ssh`) and account `<credentialUUID>`. The service deriving from `Bundle.main.bundleIdentifier` rather than a hardcoded string makes the bundle reachability contract structural: a fork with a different `BUNDLE_IDENTIFIER` automatically lands credentials in a disjoint keychain namespace. The item lives under the access group `<TeamID>.<BundleID>`, uses access class `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, is pinned to the data-protection keychain, and is explicitly non-synchronisable.
+**Secure Enclave (default).** Private key material resides in the Enclave hardware and never leaves. The Keychain holds only an opaque reference - CryptoKit's `SecureEnclave.P256.Signing.PrivateKey.dataRepresentation`, an SE-encrypted blob that's useless to any other app and any other device. The blob lives in a `kSecClassGenericPassword` item under service `<bundle-id>.ssh` (for example `com.yourorg.pulse.ssh`) and account `<credentialUUID>`. The service deriving from `Bundle.main.bundleIdentifier` rather than a hardcoded string makes the bundle reachability contract structural: a fork with a different `BUNDLE_IDENTIFIER` automatically lands credentials in a disjoint keychain namespace. The item lives under the access group `<TeamID>.<BundleID>`, uses access class `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, is pinned to the data-protection keychain, and is explicitly non-synchronisable.
 
 **Legacy portable (PEM).** Private key material is a PEM-encoded byte string in the regular file-based Keychain, at key `ssh-cred-<UUID>-privateKey`. Access class `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` so background polling can read it when the device is unlocked-but-locked-screen. The `ssh-cred-<UUID>-passphrase` accessor is reserved schema for future encrypted-PEM support; v1 rejects encrypted PEMs at import (see the import note below), so nothing is written there today.
 
@@ -67,7 +67,7 @@ This affects three scenarios:
 
 **Re-signing.** If you change the signing team between releases (e.g. Omega Networks moves their App Store Connect organisation), every existing operator hits a one-time re-enrolment after the team change lands. Their credentials in the Pulse UI list will show, but signing will fail; they delete and recreate.
 
-The design favours strictness over convenience. SSH credentials shouldn't silently follow an operator across trust boundaries — a build under a different signing identity is a different application from the OS's perspective, and Pulse treats it that way.
+The design favours strictness over convenience. SSH credentials shouldn't silently follow an operator across trust boundaries - a build under a different signing identity is a different application from the OS's perspective, and Pulse treats it that way.
 
 Pulse's strongest credential model relies on Apple's Secure Enclave hardware. Operators who need cross-platform key portability use the legacy tier and accept its weaker isolation. Pulse's sovereignty principles emphasise community-owned, portable tools; the SE-backed tier is the deliberate trade-off for hardware-grade isolation on Apple devices, and the legacy tier is the escape hatch when you need to move keys somewhere else.
 
@@ -79,9 +79,9 @@ Open Pulse → Settings → SSH (the **SSH** tab between PowerSense and Database
 
 **Import legacy key (PEM)…** Imports a PEM-encoded private key into the regular Keychain. Two-step flow: the first screen labelled "Legacy (portable key)" explains what you're doing and why; you have to actively continue to reach the import form. The form detects what you paste (Ed25519, ECDSA, RSA, or unknown). Pulse v1 accepts only **unencrypted** Ed25519 and ECDSA (P-256/384/521) keys; RSA and encrypted PEMs are rejected at import with remediation guidance. Decrypt an encrypted key locally before importing: re-export it without a passphrase using `ssh-keygen -p -P "oldpassphrase" -N "" -f /path/to/key` (the same command the in-app error suggests). After a successful import, the credential row gets an orange Legacy badge.
 
-**Copy public key (clipboard icon on each row).** Copies that credential's OpenSSH `authorized_keys` line (`ecdsa-sha2-nistp256 AAAA…label`) to your clipboard so you can paste it into a switch or server's `~/.ssh/authorized_keys`. The button appears whenever the credential has a derived public key, regardless of tier. Secure Enclave credentials always have one, so it shows immediately. For portable PEMs it shows as soon as a public key is available: at import for OpenSSH new-format keys (the public blob lives in the payload), or after the auth delegate's first-use backfill for traditional EC / PKCS#8 PEMs. Until then the row's caption reads "PEM stored — public key derived on first use" and the button is hidden rather than rendered disabled. Click triggers no biometric prompt; deriving or copying a public key doesn't need user presence.
+**Copy public key (clipboard icon on each row).** Copies that credential's OpenSSH `authorized_keys` line (`ecdsa-sha2-nistp256 AAAA…label`) to your clipboard so you can paste it into a switch or server's `~/.ssh/authorized_keys`. The button appears whenever the credential has a derived public key, regardless of tier. Secure Enclave credentials always have one, so it shows immediately. For portable PEMs it shows as soon as a public key is available: at import for OpenSSH new-format keys (the public blob lives in the payload), or after the auth delegate's first-use backfill for traditional EC / PKCS#8 PEMs. Until then the row's caption reads "PEM stored - public key derived on first use" and the button is hidden rather than rendered disabled. Click triggers no biometric prompt; deriving or copying a public key doesn't need user presence.
 
-**Delete (trash icon).** Removes the secret material first (SE key from the Enclave, or PEM and passphrase from the Keychain), then removes the credential metadata from the local SwiftData store. If the Keychain delete fails, the credential row stays put so you can retry — an orphaned secret with no metadata is a worse end state than a row you can delete again.
+**Delete (trash icon).** Removes the secret material first (SE key from the Enclave, or PEM and passphrase from the Keychain), then removes the credential metadata from the local SwiftData store. If the Keychain delete fails, the credential row stays put so you can retry - an orphaned secret with no metadata is a worse end state than a row you can delete again.
 
 ## Debug inspection (Debug builds only)
 
@@ -90,17 +90,17 @@ In Debug builds of Pulse, right-clicking any credential row shows an **Inspect k
 ```
 Credential: Lab-1
 Access group: ABCDE12345.com.yourorg.pulse
-Token ID: (CryptoKit SE.P256 — generic-password storage)
+Token ID: (CryptoKit SE.P256 - generic-password storage)
 Synchronizable: false
 Access control: biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly
 ```
 
 What each value should be, and what it tells you:
 
-- **Access group** — should be `<TeamID>.<BundleID>` for your build. If it's something else, the entitlement file isn't expanding correctly at sign time and SE writes will fail.
-- **Token ID** — current builds report this field as `(CryptoKit SE.P256 — generic-password storage)`. The placeholder string is honest about the storage shape: SE keys are stored as opaque CryptoKit `dataRepresentation` blobs in `kSecClassGenericPassword` items, which don't carry a `kSecAttrTokenID`. If this field shows `com.apple.setoken` you're looking at an orphan from a previous storage model that the current build cannot reach (see Troubleshooting). If blank, the key isn't actually SE-backed (something fell back to software).
-- **Synchronizable** — must be `false`. If `true`, the credential could in principle leave the device via iCloud Keychain, which contradicts the whole credential model.
-- **Access control** — sourced from the SecAccessControl flags set at creation for SE credentials; decoded from `kSecAttrAccessible` for portable ones. SE credentials should always show `biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`. Portable credentials should show `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Anything else is a misconfiguration.
+- **Access group** - should be `<TeamID>.<BundleID>` for your build. If it's something else, the entitlement file isn't expanding correctly at sign time and SE writes will fail.
+- **Token ID** - current builds report this field as `(CryptoKit SE.P256 - generic-password storage)`. The placeholder string is honest about the storage shape: SE keys are stored as opaque CryptoKit `dataRepresentation` blobs in `kSecClassGenericPassword` items, which don't carry a `kSecAttrTokenID`. If this field shows `com.apple.setoken` you're looking at an orphan from a previous storage model that the current build cannot reach (see Troubleshooting). If blank, the key isn't actually SE-backed (something fell back to software).
+- **Synchronizable** - must be `false`. If `true`, the credential could in principle leave the device via iCloud Keychain, which contradicts the whole credential model.
+- **Access control** - sourced from the SecAccessControl flags set at creation for SE credentials; decoded from `kSecAttrAccessible` for portable ones. SE credentials should always show `biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`. Portable credentials should show `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Anything else is a misconfiguration.
 
 This is the operator-side self-check. If a credential is misbehaving and you want to be sure the build is configured correctly without dropping into Xcode, run Inspect first.
 
@@ -117,7 +117,7 @@ If you maintain a fork, run a beta channel, or are about to migrate the producti
 5. **Operators create new Secure Enclave credentials.** Same flow as initial setup.
 6. **Re-enrol the new public keys on every device they connect to.** Copy public key → paste into the switch / router / server's `~/.ssh/authorized_keys`.
 
-Legacy portable credentials are unaffected by team or bundle ID changes — they're regular Keychain items keyed by UUID, not access-group-scoped. Operators who imported their keys instead of generating SE-backed ones can keep using them across re-signs. This is one of the legacy tier's small upsides.
+Legacy portable credentials are unaffected by team or bundle ID changes - they're regular Keychain items keyed by UUID, not access-group-scoped. Operators who imported their keys instead of generating SE-backed ones can keep using them across re-signs. This is one of the legacy tier's small upsides.
 
 For fork maintainers specifically: **use a stable bundle ID from the start**. If you change it later, every operator on your fork hits the re-enrolment dance. Pick `<your-org-reverse-dns>.pulse` (or similar) at fork creation and don't change it.
 
@@ -127,13 +127,13 @@ For fork maintainers specifically: **use a stable bundle ID from the start**. If
 By far the most common cause is a bundle ID or signing team change between the install that created the credential and the install trying to use it. Verify in Debug builds via Inspect; if the access group doesn't match the current build's identity, the credential is from a previous incarnation. Delete and recreate.
 
 **No biometric prompt fires when signing.**
-Inspect the credential. Under the current storage model (CryptoKit's `SecureEnclave.P256.Signing.PrivateKey`) the Inspect alert reports `CryptoKit SE.P256 — generic-password storage` in the Token ID field; that's the expected value. If the credential predates the CryptoKit migration it will not be findable at all (see the orphan note below); delete the SwiftData row and regenerate. If the credential is current and signing still doesn't prompt, the most likely cause is the device having a configured biometric that's now in a "needs re-enrolment" state at the OS level; resolve at System Settings → Touch ID & Password before retrying.
+Inspect the credential. Under the current storage model (CryptoKit's `SecureEnclave.P256.Signing.PrivateKey`) the Inspect alert reports `CryptoKit SE.P256 - generic-password storage` in the Token ID field; that's the expected value. If the credential predates the CryptoKit migration it will not be findable at all (see the orphan note below); delete the SwiftData row and regenerate. If the credential is current and signing still doesn't prompt, the most likely cause is the device having a configured biometric that's now in a "needs re-enrolment" state at the OS level; resolve at System Settings → Touch ID & Password before retrying.
 
 **Orphan `kSecClassKey` entries from before the CryptoKit migration.**
 An earlier implementation stored SE keys as `kSecClassKey` items with `kSecAttrTokenIDSecureEnclave`. The CryptoKit migration moved storage to `kSecClassGenericPassword` items carrying CryptoKit's `dataRepresentation`. Any dev-test credentials from before that migration become unreachable to the current build and stop appearing in Pulse's credential list; the underlying `kSecClassKey` entries remain in the data-protection keychain as harmless orphans taking trivial space. They cannot be used (the SecAccessControl is bound to the previous build's process) and Pulse no longer enumerates them. Clear with Keychain Access (search for `nz.omega.pulse.ssh.`) if tidy housekeeping matters; otherwise ignore.
 
 **Public key shows "PEM stored, public key derived on first use" on a Legacy credential.**
-Expected when the imported PEM is a traditional EC PEM (`EC PRIVATE KEY`) or an unencrypted PKCS#8 key (`PRIVATE KEY`): the importer can't recover the OpenSSH wire-format public key from these without parsing the private scalar, so it defers: the credential stores with an empty public-key placeholder and the auth delegate backfills the public half from the private material at first use. OpenSSH new-format keys (`OPENSSH PRIVATE KEY`, Ed25519 or ECDSA) carry the public blob in the payload, so their public key derives at import and Copy public key is available immediately. RSA portable signing is reserved scaffolding, not accepted in v1 (ADR 0001 §1), so RSA keys are rejected at import and never reach this state.
+Expected when the imported PEM is a traditional EC PEM (`EC PRIVATE KEY`) or an unencrypted PKCS#8 key (`PRIVATE KEY`): the importer can't recover the OpenSSH wire-format public key from these without parsing the private scalar, so it defers: the credential stores with an empty public-key placeholder and the auth delegate backfills the public half from the private material at first use. OpenSSH new-format keys (`OPENSSH PRIVATE KEY`, Ed25519 or ECDSA) carry the public blob in the payload, so their public key derives at import and Copy public key is available immediately. RSA portable signing is reserved scaffolding, not accepted in v1, so RSA keys are rejected at import and never reach this state.
 
 **"Couldn't update credentials" alert during delete.**
 The secret-material cleanup failed. The credential row stays in place so you can retry. Common causes: device locked partway through (deletion needs the unlocked-class state), or some other process is holding a reference to the Keychain entry. Wait a moment and try again.
@@ -145,11 +145,11 @@ The classifier didn't recognise it. Two likely reasons: a corrupted paste (line 
 
 The SSH terminal opens from any device row's context menu, "Open SSH Terminal". The item is disabled when the device has no `primaryIP` recorded in NetBox; populate that field in NetBox first.
 
-When you open the terminal, Pulse presents an inline connect form before any handshake runs. The form shows the connection target (host:port), a Username field, a Credential picker, and a small biometric hint that tells you how many Touch ID prompts the upcoming connection will fire. The Connect button stays disabled until you've supplied a non-empty username and picked a credential explicitly — there's no "first credential in your list" silent default, because picking the wrong-tier credential against a sensitive device is the kind of mistake the form exists to catch. After a failed connection the same form re-appears with the failure reason as a banner above it; fix the field that was wrong and click Connect again, no need to close the window.
+When you open the terminal, Pulse presents an inline connect form before any handshake runs. The form shows the connection target (host:port), a Username field, a Credential picker, and a small biometric hint that tells you how many Touch ID prompts the upcoming connection will fire. The Connect button stays disabled until you've supplied a non-empty username and picked a credential explicitly - there's no "first credential in your list" silent default, because picking the wrong-tier credential against a sensitive device is the kind of mistake the form exists to catch. After a failed connection the same form re-appears with the failure reason as a banner above it; fix the field that was wrong and click Connect again, no need to close the window.
 
-If the device row has both a default username and a default credential set, and the credential still exists in your local store, the form is bypassed and the connection auto-fires on window open — preserving the "double-click and go" muscle memory for fully-configured devices. After any failure the form always shows, regardless of defaults, so you can think about what went wrong before retrying. The form runs the full handshake on Connect: TCP connect, host-key check, user-auth, channel open, PTY request, shell.
+If the device row has both a default username and a default credential set, and the credential still exists in your local store, the form is bypassed and the connection auto-fires on window open - preserving the "double-click and go" muscle memory for fully-configured devices. After any failure the form always shows, regardless of defaults, so you can think about what went wrong before retrying. The form runs the full handshake on Connect: TCP connect, host-key check, user-auth, channel open, PTY request, shell.
 
-**Save as default.** The form carries a "Save as default for this device" checkbox below the credential picker (device mode only — the checkbox does not render for the Debug menu's ad-hoc surface, which has no Device row to persist to). Tick the box, fill the form, click Connect; if the connection succeeds, Pulse writes your username and credential choice to the device row, and the next open of this device row auto-fires with no form. The persistence happens **only after the connection reaches `connected`** — a failed handshake never writes incorrect defaults, regardless of whether the box was ticked. The posture is explicit opt-in rather than silent-persist-on-every-success: shared or jumphost credentials in a multi-operator team would otherwise stomp each other's defaults on autopilot, and one extra click per "make this the default" is the right trade against that. A small "Clear saved defaults" button appears below the Connect button when the device row has either default field populated; tapping it nils both fields in one transaction, leaving the device in the un-configured state where the next open shows the empty form. If saving the defaults fails (a SwiftData write error, full disk), the audit log under `category == "ssh.session"` carries the error and your session continues uninterrupted — the persistence is opportunistic and never blocks the operator's terminal.
+**Save as default.** The form carries a "Save as default for this device" checkbox below the credential picker (device mode only - the checkbox does not render for the Debug menu's ad-hoc surface, which has no Device row to persist to). Tick the box, fill the form, click Connect; if the connection succeeds, Pulse writes your username and credential choice to the device row, and the next open of this device row auto-fires with no form. The persistence happens **only after the connection reaches `connected`** - a failed handshake never writes incorrect defaults, regardless of whether the box was ticked. The posture is explicit opt-in rather than silent-persist-on-every-success: shared or jumphost credentials in a multi-operator team would otherwise stomp each other's defaults on autopilot, and one extra click per "make this the default" is the right trade against that. A small "Clear saved defaults" button appears below the Connect button when the device row has either default field populated; tapping it nils both fields in one transaction, leaving the device in the un-configured state where the next open shows the empty form. If saving the defaults fails (a SwiftData write error, full disk), the audit log under `category == "ssh.session"` carries the error and your session continues uninterrupted - the persistence is opportunistic and never blocks the operator's terminal.
 
 The first SSH connection of an app session triggers two biometric prompts back-to-back. The first signs the user-auth handshake against the Secure Enclave credential; the second unwraps the session-recording wrapping key if recording is enabled on the credential. Subsequent connections during the same app session re-trigger the signing prompt (per ADR §1, there is no per-session cache) but reuse the already-unwrapped recording key.
 
@@ -167,14 +167,14 @@ A small set of operator preferences live as global `@AppStorage` keys. Defaults 
 
 **Bell behaviour.** When the server emits BEL (`^G`, `0x07`), Pulse fires an audible beep and a brief visual flash on the terminal area by default. Both axes are independently toggleable:
 
-- `pulse.terminal.bell.audible` — Bool, defaults `true`. Audible beep on `^G`. macOS uses `NSSound.beep` (respects your Sound preferences and system volume); iOS uses a warning haptic in lieu of audio because most ops happen on devices in silent mode. Audible bells are rate-limited to ~4 Hz (a 250 ms sliding window between fires) so a server sending `\a` in a tight loop produces a recognisable beep cadence rather than a continuous tone or a queue of beep calls.
-- `pulse.terminal.bell.visual` — Bool, defaults `true`. Brief 120 ms white overlay at 18 % opacity. Long enough to register peripherally without obscuring contents; repeated bells from a runaway script hold the flash and fade cleanly once the bell storm subsides.
+- `pulse.terminal.bell.audible` - Bool, defaults `true`. Audible beep on `^G`. macOS uses `NSSound.beep` (respects your Sound preferences and system volume); iOS uses a warning haptic in lieu of audio because most ops happen on devices in silent mode. Audible bells are rate-limited to ~4 Hz (a 250 ms sliding window between fires) so a server sending `\a` in a tight loop produces a recognisable beep cadence rather than a continuous tone or a queue of beep calls.
+- `pulse.terminal.bell.visual` - Bool, defaults `true`. Brief 120 ms white overlay at 18 % opacity. Long enough to register peripherally without obscuring contents; repeated bells from a runaway script hold the flash and fade cleanly once the bell storm subsides.
 
 The closure that handles the bell reads both keys from `UserDefaults` at fire time (not at session-connect time), so toggling either preference mid-session takes effect on the next bell without a reconnect.
 
-**Font size.** Pulse pins the terminal font to a single global size for consistency across reconnects and across device targets — font preference is a personal-environment setting, not a per-device one (matches Terminal.app, iTerm, Ghostty).
+**Font size.** Pulse pins the terminal font to a single global size for consistency across reconnects and across device targets - font preference is a personal-environment setting, not a per-device one (matches Terminal.app, iTerm, Ghostty).
 
-- `pulse.terminal.fontSize` — Double, defaults `12.0`, clamped to the range `[9.0, 24.0]`. The clamp applies on read and on write so a stale UserDefaults value outside the bound still produces a sane render.
+- `pulse.terminal.fontSize` - Double, defaults `12.0`, clamped to the range `[9.0, 24.0]`. The clamp applies on read and on write so a stale UserDefaults value outside the bound still produces a sane render.
 
 Adjust the size at runtime:
 
@@ -195,7 +195,7 @@ The mismatch sheet displays:
 
 - The host and port being connected to.
 - The **stored** fingerprint, the algorithm under which it was pinned, and the date Pulse first saw it.
-- The **presented** fingerprint and algorithm — what the server is offering right now.
+- The **presented** fingerprint and algorithm - what the server is offering right now.
 - Three operator actions.
 
 The three actions:
@@ -208,7 +208,7 @@ The three actions:
 
 The sheet has a **90-second decision timeout**. If you walk away or get distracted, the sheet self-dismisses after 90 seconds and the connection rejects with `reason: "decision_timeout"` in the audit log. This bounds the half-open SSH channel: a real operator decision takes seconds, and 90 seconds is plenty for "actually read both fingerprints and decide".
 
-**Parent-task cancellation** (you closed the terminal window mid-decision, or navigation popped the view) resolves the decide call **immediately** with `reason: "cancelled"` rather than holding for the 90-second timeout. The audit log distinguishes "walked away" (`decision_timeout`) from "closed the window" (`cancelled`); operations runbooks should treat them differently — walked-away suggests the operator was interrupted and may return; closed-the-window suggests the operator deliberately abandoned the connection attempt.
+**Parent-task cancellation** (you closed the terminal window mid-decision, or navigation popped the view) resolves the decide call **immediately** with `reason: "cancelled"` rather than holding for the 90-second timeout. The audit log distinguishes "walked away" (`decision_timeout`) from "closed the window" (`cancelled`); operations runbooks should treat them differently - walked-away suggests the operator was interrupted and may return; closed-the-window suggests the operator deliberately abandoned the connection attempt.
 
 **Contract-violation degrade.** The mismatch coordinator's contract is one decision at a time per terminal view. If two `decide` calls overlap (a defect in calling code, not the operator's fault), the second resolves to `reason: "concurrent_decide"` and a `hostkey.coordinator.concurrent_decide` fault-level event lands in the unified log. The first decision continues normally. This is a release-build degrade, not a crash; the SIEM signal is the diagnosis hook for the upstream defect.
 
@@ -230,45 +230,45 @@ The full reject-reason vocabulary is documented in the ADR (`docs/architecture/0
    - **Cancellation.** Open the sheet and close the parent window via Cmd-W. Confirm `host.mismatch.rejected reason="cancelled"` lands *immediately* (not at the 90-second mark) and the sheet clears.
 6. Restore the original sshd host keys: `sudo cp /tmp/ssh-keys-backup/ssh_host_* /etc/ssh/ && sudo /usr/sbin/launchctl kickstart -k system/com.openssh.sshd`. Reconnect from Pulse and either Accept or Forget to clear the now-stale pin.
 
-If every action lands the expected events at the expected level with the expected token names, the mismatch flow is intact. Any deviation — especially `host.mismatch.accepted` landing *after* a `.commit_failed` event, or `cancelled` taking the full 90 seconds — is a regression to investigate before shipping.
+If every action lands the expected events at the expected level with the expected token names, the mismatch flow is intact. Any deviation - especially `host.mismatch.accepted` landing *after* a `.commit_failed` event, or `cancelled` taking the full 90 seconds - is a regression to investigate before shipping.
 
 ## Session recording
 
 Each credential carries a `recordSessions: Bool` toggle, off by default. Operators flip it from Settings → SSH (right-click a credential row → "Record sessions"). When on, every SSH session driven by that credential writes an encrypted log to disk under `<Application Support>/Pulse/Sessions/dev-<Device.id>/<timestamp>_<sessionUUID>.{pulselog,meta}` (or `Pulse/Sessions/unassigned/` for ad-hoc connections that aren't tied to a NetBox device). Recording is enabled after the fact, not at creation: the create sheet does not pre-tick or suggest it, and a new credential ships recording-off. Turn it on afterwards from the credential's context menu (the "Record sessions" action above) for break-glass and production-change credentials. The default-off posture matches ADR §6's opt-in stance.
 
-The `.pulselog` is JSONL with one base64-encoded `AES.GCM.SealedBox.combined` per line. The session's symmetric key (256-bit) is wrapped to a device-resident Secure-Enclave ECDH-P256 key (the "log wrapping key", one per device) via `ECDH + HKDF<SHA256> + AES.GCM`, end-to-end CryptoKit-native. Every record carries a `prev` field with the SHA-256 of the previous record's ciphertext bytes — a hash chain that detects insertion, deletion, reordering, and single-byte tampering at replay time.
+The `.pulselog` is JSONL with one base64-encoded `AES.GCM.SealedBox.combined` per line. The session's symmetric key (256-bit) is wrapped to a device-resident Secure-Enclave ECDH-P256 key (the "log wrapping key", one per device) via `ECDH + HKDF<SHA256> + AES.GCM`, end-to-end CryptoKit-native. Every record carries a `prev` field with the SHA-256 of the previous record's ciphertext bytes - a hash chain that detects insertion, deletion, reordering, and single-byte tampering at replay time.
 
-The `.meta` sidecar is unencrypted searchable metadata: device ID, credential ID, username, host, port, opened/closed timestamps, exit cause, record count, and the chain-head hash. Readable without biometric; lets a future browser list and search recordings without prompting per row. Decrypting a `.pulselog` requires biometric on this device's wrapping key — the unwrap happens through `SecureEnclave.P256.KeyAgreement.PrivateKey.sharedSecretFromKeyAgreement`, which fires Touch ID / device passcode the same way SSH signing does.
+The `.meta` sidecar is unencrypted searchable metadata: device ID, credential ID, username, host, port, opened/closed timestamps, exit cause, record count, and the chain-head hash. Readable without biometric; lets a future browser list and search recordings without prompting per row. Decrypting a `.pulselog` requires biometric on this device's wrapping key - the unwrap happens through `SecureEnclave.P256.KeyAgreement.PrivateKey.sharedSecretFromKeyAgreement`, which fires Touch ID / device passcode the same way SSH signing does.
 
-**File-protection posture, honestly.** On iOS, the recording directory carries `FileProtectionType.complete` as defence-in-depth. On macOS there is no per-file protection class equivalent — `FileProtectionType` symbols compile but only `.none` carries real semantics outside the iOS family, so the macOS at-rest answer is FileVault (whole-volume) and we don't manufacture macOS-side ceremony that wouldn't add real protection. The actual confidentiality guarantee on both platforms is the SE-wrapped per-session key: `.pulselog` ciphertext is unreadable without biometric on the device that recorded it, FileVault or no FileVault. This iOS-vs-macOS asymmetry is documented openly rather than papered over.
+**File-protection posture, honestly.** On iOS, the recording directory carries `FileProtectionType.complete` as defence-in-depth. On macOS there is no per-file protection class equivalent - `FileProtectionType` symbols compile but only `.none` carries real semantics outside the iOS family, so the macOS at-rest answer is FileVault (whole-volume) and we don't manufacture macOS-side ceremony that wouldn't add real protection. The actual confidentiality guarantee on both platforms is the SE-wrapped per-session key: `.pulselog` ciphertext is unreadable without biometric on the device that recorded it, FileVault or no FileVault. This iOS-vs-macOS asymmetry is documented openly rather than papered over.
 
-**Retention** is configurable per tenant; the default is one year. A retention pass runs at every app launch on a detached background task — never on the critical path for first paint. Failures emit `session.recording.purgeFailed` under category `ssh.recording` and the app continues; the next launch retries.
+**Retention** is configurable per tenant; the default is one year. A retention pass runs at every app launch on a detached background task - never on the critical path for first paint. Failures emit `session.recording.purgeFailed` under category `ssh.recording` and the app continues; the next launch retries.
 
 **Recordings do not migrate.** This is the operator-facing implication of "the wrapping key is device-bound":
 
 - The wrapping-key keychain item is `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and `kSecAttrSynchronizable: false`. It cannot leave the Secure Enclave, cannot be exported, cannot follow you to a new Mac.
-- `.pulselog` and `.meta` files do appear in Time Machine and Migration Assistant backups (they're regular files under Application Support). The wrapping key does not. So on a new Mac after a restore, the files are present but unreadable — biometric will fire, the SE will refuse the ECDH, and replay will surface as "session key unwrap failed". This is by design and inherits the same trust-boundary posture as SSH credentials themselves.
+- `.pulselog` and `.meta` files do appear in Time Machine and Migration Assistant backups (they're regular files under Application Support). The wrapping key does not. So on a new Mac after a restore, the files are present but unreadable - biometric will fire, the SE will refuse the ECDH, and replay will surface as "session key unwrap failed". This is by design and inherits the same trust-boundary posture as SSH credentials themselves.
 - The "Forget this credential" gesture and "Delete this device's recordings" gesture (future Slice) both make the recordings recoverable only via an off-device archive that was made before deletion. There is no key-recovery path.
 
 Operators who need long-term audit archives outside the device should use the future biometric-gated export flow (deferred from the recording stack as it ships today) to materialise a decrypted bundle for placement in their existing archive system. The off-device chain-head attestation surface, signed chain heads forwarded to FreeIPA or an internal log service, is scheduled for v2 per ADR §6.
 
-**Mid-session failures are visible.** A `.pulselog` is either complete-and-chain-validated end to end, or it ended early and `.meta.exit_cause` says `recording_failed_midstream`. There are no "valid chain with holes" recordings and no sentinel gap records — the writer transitions to a terminal stop on the first structural failure (encryption error, disk full, internal queue overflow) and emits `session.recording.failed` under category `ssh.recording`. The SSH session itself continues unaffected; the byte pump never blocks on recording.
+**Mid-session failures are visible.** A `.pulselog` is either complete-and-chain-validated end to end, or it ended early and `.meta.exit_cause` says `recording_failed_midstream`. There are no "valid chain with holes" recordings and no sentinel gap records - the writer transitions to a terminal stop on the first structural failure (encryption error, disk full, internal queue overflow) and emits `session.recording.failed` under category `ssh.recording`. The SSH session itself continues unaffected; the byte pump never blocks on recording.
 
 **Audit events** under the `pulse` subsystem, category `ssh.recording` (plus `ssh.credentials` for the toggle):
 
-- `credential.recording.enabled`, `credential.recording.disabled` — operator gestures.
-- `session.recording.opened`, `session.recording.closed` — recording lifecycle; `closed` carries record count, chain-head hash, and duration.
-- `session.recording.failed` — terminal-stop with `reason` field (`seal_failure`, `write_failure`, `encode_failure`, `back_pressure_overflow`).
-- `session.recording.replayUnwrapped` — biometric succeeded; the operator now has access to the recorded plaintext. Fires regardless of subsequent chain state.
-- `session.recording.replayChainBroken` — chain validation failed during replay. Distinct event so SIEM rules can fire cleanly on tamper-after-access.
-- `session.recording.purged`, `session.recording.purgeFailed` — launch-time retention outcomes.
+- `credential.recording.enabled`, `credential.recording.disabled` - operator gestures.
+- `session.recording.opened`, `session.recording.closed` - recording lifecycle; `closed` carries record count, chain-head hash, and duration.
+- `session.recording.failed` - terminal-stop with `reason` field (`seal_failure`, `write_failure`, `encode_failure`, `back_pressure_overflow`).
+- `session.recording.replayUnwrapped` - biometric succeeded; the operator now has access to the recorded plaintext. Fires regardless of subsequent chain state.
+- `session.recording.replayChainBroken` - chain validation failed during replay. Distinct event so SIEM rules can fire cleanly on tamper-after-access.
+- `session.recording.purged`, `session.recording.purgeFailed` - launch-time retention outcomes.
 
-Filter the full set with `log show --predicate 'subsystem == "pulse" AND category BEGINSWITH "ssh"'`. Session bytes and key material are never carried in audit signal — only identifiers and outcomes.
+Filter the full set with `log show --predicate 'subsystem == "pulse" AND category BEGINSWITH "ssh"'`. Session bytes and key material are never carried in audit signal - only identifiers and outcomes.
 
 **Lab procedure.** An end-to-end round-trip to verify the recording stack on a fresh build. Done on an Apple Silicon Mac with Touch ID enabled, Remote Login enabled, and a credential targeting the loopback dev Mac.
 
 1. In Settings → SSH, right-click a credential and toggle **Record sessions** on. Confirm `credential.recording.enabled` lands in `log show --predicate 'subsystem == "pulse" AND category == "ssh.credentials"' --last 1m`.
-2. Open the terminal against the dev Mac via the device row context menu. Expect two biometric prompts back-to-back per the "Connecting to a device" section — the first signs the SSH user-auth handshake, the second unwraps the recording wrapping key.
+2. Open the terminal against the dev Mac via the device row context menu. Expect two biometric prompts back-to-back per the "Connecting to a device" section - the first signs the SSH user-auth handshake, the second unwraps the recording wrapping key.
 3. With the terminal connected, confirm the recording badge (red `record.circle.fill` SF Symbol + "Recording" caption) appears in the window toolbar.
 4. Run a short interactive session that exercises the readline path: `ls`, `echo "lab-marker-$(date +%s)"`, type a sentence and use Backspace plus arrow keys to edit it before pressing Return.
 5. Close the terminal window. Confirm `session.recording.closed` lands with `recordCount`, `chainHeadHash`, and `durationMs`. Confirm the badge clears (visible via the toolbar pill's Disconnected state).
@@ -288,11 +288,11 @@ Filter the full set with `log show --predicate 'subsystem == "pulse" AND categor
    Replay the same `.meta` again. Confirm `session.recording.replayChainBroken brokenAtSeq=<N>` lands and that plaintext stops at sequence `<N>` rather than continuing past the break.
 9. (Cleanup) Toggle **Record sessions** off on the credential when finished. Confirm `credential.recording.disabled`.
 
-If every step matches expectations, the recording stack is intact end to end. Any deviation — particularly step 7's plaintext mismatch, or step 8 surfacing plaintext past the tamper point — is a regression to investigate before shipping.
+If every step matches expectations, the recording stack is intact end to end. Any deviation - particularly step 7's plaintext mismatch, or step 8 surfacing plaintext past the tamper point - is a regression to investigate before shipping.
 
 ## No iCloud sync
 
-Nothing in Pulse's SSH credential model is syncable. Both tiers are `ThisDeviceOnly`. The `kSecAttrSynchronizable` flag is explicitly set to `false` on Secure Enclave keys (defence-in-depth — the default for the data-protection keychain is already non-syncing, but Pulse sets it explicitly so a future code change can't quietly opt in). Legacy keys use `AfterFirstUnlockThisDeviceOnly`, which is also non-syncing.
+Nothing in Pulse's SSH credential model is syncable. Both tiers are `ThisDeviceOnly`. The `kSecAttrSynchronizable` flag is explicitly set to `false` on Secure Enclave keys (defence-in-depth - the default for the data-protection keychain is already non-syncing, but Pulse sets it explicitly so a future code change can't quietly opt in). Legacy keys use `AfterFirstUnlockThisDeviceOnly`, which is also non-syncing.
 
 Operators with multiple Macs maintain separate credential sets per machine. The Inspect feature on either machine should show the same access group string (because it's derived from team + bundle, which are identical across machines), but the credentials themselves are independent. Audit logs from each machine show distinct fingerprints.
 
@@ -316,14 +316,14 @@ A five-minute end-to-end procedure to run before pushing changes that touch SSH 
 3. Click the clipboard icon on the `Lab-1` row. Icon flips to a green checkmark for ~1.5 s. Paste somewhere (TextEdit, Terminal). Confirm the line begins `ecdsa-sha2-nistp256 ` and ends with ` Lab-1`. Run `ssh-keygen -lf -` and paste the line followed by Ctrl-D; the printed SHA256 fingerprint must match the row.
 4. Right-click `Lab-1` → **Inspect key attributes**. Confirm:
    - Access group ends in `.com.yourorg.pulse` (or your fork's bundle ID, prefixed by your team ID).
-   - Token ID reads `(CryptoKit SE.P256 — generic-password storage)`. Current builds store SE keys as opaque CryptoKit `dataRepresentation` blobs in `kSecClassGenericPassword` items, which carry no `kSecAttrTokenID`. A `com.apple.setoken` value here would indicate a pre-migration orphan that should not appear on a fresh build (see the **Debug inspection** section's Token ID note).
+   - Token ID reads `(CryptoKit SE.P256 - generic-password storage)`. Current builds store SE keys as opaque CryptoKit `dataRepresentation` blobs in `kSecClassGenericPassword` items, which carry no `kSecAttrTokenID`. A `com.apple.setoken` value here would indicate a pre-migration orphan that should not appear on a fresh build (see the **Debug inspection** section's Token ID note).
    - Synchronizable is `false`.
    - Access control is `biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`.
 5. Delete the `Lab-1` row. Confirmation dialog. Confirm.
 6. Create `Lab-2`. Force-quit Pulse (Cmd-Q or Activity Monitor). Re-launch. Confirm `Lab-2` still appears in the list with its original fingerprint.
 7. Click **Import legacy key (PEM)…**. Confirm the first screen says "Legacy (portable key)" in orange. Continue. Paste a known Ed25519 PEM. Validate. Expect "Detected: Ed25519 (OPENSSH PRIVATE KEY)" and no passphrase prompt. Import. Confirm the row has an orange Legacy badge.
 
-If every step matches expectations, the credential model is intact for this build. Any deviation — particularly in step 4's Inspect output — is a signal to investigate before shipping.
+If every step matches expectations, the credential model is intact for this build. Any deviation - particularly in step 4's Inspect output - is a signal to investigate before shipping.
 
 ## NZISM and similar regulatory frameworks
 
@@ -337,5 +337,4 @@ Outstanding:
 
 ## Related
 
-- [ADR 0001 — SSH terminal & in-app web foundations](architecture/0001-ssh-terminal-and-web-foundations.md) — the underlying decisions.
-- [CLAUDE.md](../CLAUDE.md) — repository conventions.
+- [SSH and web foundations](architecture/0001-ssh-terminal-and-web-foundations.md): credential, trust, and session-recording model.

@@ -2,13 +2,13 @@
 
 Pulse mirrors a subset of NetBox into local SwiftData. The **first** launch (and any launch with no changelog watermark) does a full pull, including interfaces, cables, rack fillers, device bays, and front ports. After that, boot applies `/api/core/object-changes/` since the last applied change id. Settings → Database → **Full Resync** still does a complete mirror.
 
-A watermark older than NetBox’s retained changelog (default 90 days — `CHANGELOG_RETENTION` must exceed the longest expected offline gap) or a wiped store with a leftover watermark forces a full mirror. A weekly safety mirror covers edits made without request context (shell, migrations).
+A watermark older than NetBox’s retained changelog (default 90 days - `CHANGELOG_RETENTION` must exceed the longest expected offline gap) or a wiped store with a leftover watermark forces a full mirror. A weekly safety mirror covers edits made without request context (shell, migrations).
 
 After a failed delta, the watermark does not move; the next run retries from the same id.
 
 ## Token
 
-In Settings, enter the NetBox API URL (must be `https://` with a host) and a token. An empty token is refused — Pulse will not send an unauthenticated request. `http://` is rejected even on the local network.
+In Settings, enter the NetBox API URL (must be `https://` with a host) and a token. An empty token is refused - Pulse will not send an unauthenticated request. `http://` is rejected even on the local network.
 
 - Tokens that do **not** start with `nbt_` are sent as `Authorization: Token …` (v1).
 - Tokens that start with `nbt_` are sent as `Authorization: Bearer …` (v2).
@@ -27,11 +27,25 @@ Pulse does **not** send `If-Match`. Concurrent edits last-write-wins. A 412 from
 
 Sync stores every device, device type, and device role. There is no `manufacturer_id__n` or `role_id__n` on the pull. Fetch and local delete stay aligned (the whole instance).
 
-What you see is **Settings → Roles** (`RolePresentation`). Those toggles never delete rows. Omega defaults treat roles 6, 7, 18, and 27 (blank, cable management, patch panel, shelf) as rack hardware: hidden from the site graph and device list, drawn in the rack, not monitored.
+What you see is **Settings → Roles**. Those toggles never delete rows. Roles 6, 7, 18, and 27 (blank, cable management, patch panel, shelf) default to rack hardware: hidden from the site graph and device list, drawn in the rack, not monitored.
 
-A future per-device subscription will count roles that appear on the site graph, in the device list, or in the rack as a named device. **As hardware** does not count. There is no operator License toggle; the count is derived so it cannot be switched off independently. The count is not enforced yet.
+Seats count roles that appear on the site graph, in the device list, or in the rack as a named device. **As hardware** does not count. See the [user guide](user-guide.md).
 
 After this change, run **Full Resync** once so previously excluded Generic devices, roles 29/30, and their interfaces land in the store.
+
+## Custom fields (Zabbix host id)
+
+Pulse matches a NetBox device to Zabbix using a **custom field on `dcim.device`**. Create it in NetBox (Customization → Custom Fields) if it is not already there. Pulse does not create the field.
+
+| NetBox key | Type | Purpose |
+|---|---|---|
+| `zabbix_id` | Integer | Zabbix host id for this device. Required for live items, charts, and problems. `0` or empty means no Zabbix host. |
+| `zabbix_instance` | Integer | Optional Zabbix instance discriminator when more than one Zabbix server is in play. |
+| `coordinate_x`, `coordinate_y` | Decimal | Site-graph layout. Not used for Zabbix. |
+
+The slug must be exactly `zabbix_id` (and `zabbix_instance` if you use it). Pulse reads these on sync and stores them on the local device. Interface, cable, and rack writes do not send `custom_fields` unless that key changed.
+
+Without `zabbix_id`, the device still appears from NetBox. It has no monitoring colour, no item charts, and no problem feed.
 
 ## Forced resync
 
@@ -55,12 +69,12 @@ The script fails if the instance host is still present in the vendored YAML or g
 
 From a device's Interfaces table or faceplate popover:
 
-- Edit a description and press Return — PATCH `/api/dcim/interfaces/{id}/` with `description` only
-- Toggle Enabled — PATCH with `enabled` only
-- **Connect…** — pick a free interface at the site (filter by device or name), then POST `/api/dcim/cables/` with `a_terminations` / `b_terminations` `{"object_type":"dcim.interface","object_id":N}`. The open site graph reloads after the write.
-- **Disconnect** — asks first, then DELETE `/api/dcim/cables/{id}/`. If the local row has no cable id (interfaces synced before that field existed), Pulse reads the live interface first. Right-click a row if the button is hard to hit.
+- Edit a description and press Return - PATCH `/api/dcim/interfaces/{id}/` with `description` only
+- Toggle Enabled - PATCH with `enabled` only
+- **Connect…** - pick a free interface at the site (filter by device or name), then POST `/api/dcim/cables/` with `a_terminations` / `b_terminations` `{"object_type":"dcim.interface","object_id":N}`. The open site graph reloads after the write.
+- **Disconnect** - asks first, then DELETE `/api/dcim/cables/{id}/`. If the local row has no cable id (interfaces synced before that field existed), Pulse reads the live interface first. Right-click a row if the button is hard to hit.
 
-Every successful write re-reads the object from NetBox. If the write never reaches NetBox (offline, 403, validation), Pulse discards the edit and shows the last stored value. Offline is **NetBox is unreachable. The change was not saved.** — the cable or description stays as it was. There is no queued retry; reconnect and submit again.
+Every successful write re-reads the object from NetBox. If the write never reaches NetBox (offline, 403, validation), Pulse discards the edit and shows the last stored value. Offline is **NetBox is unreachable. The change was not saved.** - the cable or description stays as it was. There is no queued retry; reconnect and submit again.
 
 To see a **validation** body: **Connect…** on a free interface, pick a port under **Already connected**, and Connect. NetBox rejects a second cable (occupied termination / duplicate). Pulse shows that JSON and does not change the local row.
 

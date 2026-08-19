@@ -1,6 +1,6 @@
 # Device Web companion
 
-Operator guide to opening a device's web UI inside Pulse. For the architecture, see [ADR 0001](architecture/0001-ssh-terminal-and-web-foundations.md); the SSH terminal has its own guide in [credentials.md](credentials.md).
+Operator guide to opening a device's web UI inside Pulse. The SSH terminal has its own guide in [credentials.md](credentials.md). The trust model is in [SSH and web foundations](architecture/0001-ssh-terminal-and-web-foundations.md).
 
 The Web companion is a second operator window, a sibling to the SSH terminal. It renders a device's management web UI (Proxmox, OPNsense, a backup server, an appliance console) inside Pulse, so you do not leave the app to reach a device's browser interface.
 
@@ -93,5 +93,5 @@ A self-signed appliance that serves a large RSA key (for example 4096-bit) compl
 
 ## Related
 
-- [ADR 0001](architecture/0001-ssh-terminal-and-web-foundations.md) for the architecture and the trust model.
+- [SSH and web foundations](architecture/0001-ssh-terminal-and-web-foundations.md): credential, trust, and session-recording model.
 - [credentials.md](credentials.md) for the SSH terminal and its host-key trust, which the Web companion mirrors.

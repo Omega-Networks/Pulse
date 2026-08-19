@@ -1,6 +1,6 @@
 # Pulse user guide
 
-This guide covers day-to-day operation of Pulse: connecting your data sources, navigating the app, monitoring infrastructure, and connecting to devices over SSH. For installation and build setup see the [README](../README.md). For the SSH credential model in depth see the [SSH credentials guide](credentials.md). For architecture and design rationale see [ADR 0001](architecture/0001-ssh-terminal-and-web-foundations.md).
+This guide covers day-to-day operation of Pulse: connecting your data sources, navigating the app, monitoring infrastructure, and connecting to devices over SSH. For installation and build setup see the [README](../README.md). For the SSH credential model in depth see the [SSH credentials guide](credentials.md).
 
 Pulse is local-first: all data lives on your device, sourced live from your own NetBox and Zabbix servers. Nothing is sent to a cloud service.
 
@@ -18,6 +18,8 @@ In the **Settings** tab:
 3. Click **Apply Settings**. Pulse validates the connection and begins syncing.
 
 The first sync pulls sites, devices, roles, and types from NetBox. Later launches refresh in the background.
+
+Live monitoring needs a NetBox **custom field** on each device: slug `zabbix_id`, integer, set to that host's Zabbix id. Pulse does not create the field. Devices without it still sync from NetBox; they have no charts or problems. See [NetBox sync](netbox-sync.md#custom-fields-zabbix-host-id).
 
 ### Device Roles
 
@@ -107,5 +109,5 @@ A few terminal preferences (audible / visual bell, font size) are stored as app 
 - [README](../README.md) for installation and build setup.
 - [SSH credentials guide](credentials.md) for the credential and recording model.
 - [Web companion guide](web-companion.md) for the device web window and its certificate-trust prompt.
-- [Architecture (ADR 0001)](architecture/0001-ssh-terminal-and-web-foundations.md) for design decisions.
+- [SSH and web foundations](architecture/0001-ssh-terminal-and-web-foundations.md): credential, trust, and session-recording model.
 - The project [Wiki](https://github.com/omega-networks/pulse/wiki) and issue tracker for anything else.

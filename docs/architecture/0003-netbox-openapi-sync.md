@@ -1,4 +1,4 @@
-# ADR 0003 — NetBox OpenAPI Sync
+# ADR 0003 - NetBox OpenAPI Sync
 
 | | |
 |---|---|
@@ -41,7 +41,7 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 
 ## Transport (P1 amendment)
 
-P1 list traffic uses `NetBoxLiveFetcher` (URLSession + typed `URLQueryItem` + offset pages). That is the ratified P1 transport: generated list types require fields the lab omits, so ingest goes through `NetBoxRecord` DTOs and the per-element decoder, not `Client`. `NetBoxClientFactory` and `NetBoxAuthMiddleware` stay in tree as the future generated-transport path (typed operations, P4 writes) and must not grow a second Token/Bearer implementation. Both the live fetcher and the middleware call the single `NetBoxAuthorization` / `NetBoxServerURL` rule (fail-closed empty token, `https` + host). Wiring the generated client as the runtime transport is a later, explicit change — not a silent dual stack.
+P1 list traffic uses `NetBoxLiveFetcher` (URLSession + typed `URLQueryItem` + offset pages). That is the ratified P1 transport: generated list types require fields the lab omits, so ingest goes through `NetBoxRecord` DTOs and the per-element decoder, not `Client`. `NetBoxClientFactory` and `NetBoxAuthMiddleware` stay in tree as the future generated-transport path (typed operations, P4 writes) and must not grow a second Token/Bearer implementation. Both the live fetcher and the middleware call the single `NetBoxAuthorization` / `NetBoxServerURL` rule (fail-closed empty token, `https` + host). Wiring the generated client as the runtime transport is a later, explicit change - not a silent dual stack.
 
 ## Interfaces (P2 amendment)
 
@@ -55,7 +55,7 @@ The interface walk is a full-sync stage after services, on the launch progress b
 
 Delete All includes `Interface`. Map pin colour reads stored severity fields on `Site` / `Device` (`refreshSeverityFromEvents` at event ingest and after boot sync) so `body` never walks `Event.rClock` after a wipe.
 
-`InterfaceCache` and `.interfacesDidUpdate` are gone. Site open does not call NetBox for interfaces, cables, racks, fillers, or bays — `SiteDataService.loadAllSiteData` is Zabbix items only. Consumers load `InterfaceVO` via an indexed `FetchDescriptor`. `SiteGraphView` and `LayoutManager` share `SiteTopologyEdges` (one local per-site fetch + undirected join on `connectedEndpointId`). Duplicate cable rendering (once per end) is collapsed to a single edge — accepted visual change. `Cable` rows persist tenant, length, colour, and the DELETE id; they do not own the graph join.
+`InterfaceCache` and `.interfacesDidUpdate` are gone. Site open does not call NetBox for interfaces, cables, racks, fillers, or bays - `SiteDataService.loadAllSiteData` is Zabbix items only. Consumers load `InterfaceVO` via an indexed `FetchDescriptor`. `SiteGraphView` and `LayoutManager` share `SiteTopologyEdges` (one local per-site fetch + undirected join on `connectedEndpointId`). Duplicate cable rendering (once per end) is collapsed to a single edge - accepted visual change. `Cable` rows persist tenant, length, colour, and the DELETE id; they do not own the graph join.
 
 `deleteStale` still full-table-scans the type (P1 pattern). Fine at the 12K lab if measured. At tens of millions of rows that scan is P2 debt; do not invent a new delete primitive here.
 
@@ -67,10 +67,10 @@ Delete All includes `Interface`. Map pin colour reads stored severity fields on 
 
 | Gate | Status |
 |---|---|
-| Gate 1 — lab count parity, skip+delete, network kill, Add Site disabled | In progress (lab) |
-| Gate 2 — offline interfaces | Lab 2026-08-13: startup sync, offline site open, edge parity (minus accepted dedupe), Delete All signed off. Owner waived proxy capture, P1-store upgrade, Instruments, headless re-run. Cables deferred. |
-| Gate 3 — changelog converge | Deferred by owner (2026-08-17). Does not block further work on this branch. Lab matrix still required before a formal P3 merge to a parent. |
-| Gate 4 — write round-trips | Lab 2026-08-13: interface enable/description (including clear) and cable create/delete signed. Disconnect confirms first. Owner deferred further cable UI. 412, validation-body, custom_fields changelog diff, and read-only token not signed. `If-Match` stays off. Remaining Gate 4 items deferred with Gate 3 (2026-08-17). |
+| Gate 1 - lab count parity, skip+delete, network kill, Add Site disabled | In progress (lab) |
+| Gate 2 - offline interfaces | Lab 2026-08-13: startup sync, offline site open, edge parity (minus accepted dedupe), Delete All signed off. Owner waived proxy capture, P1-store upgrade, Instruments, headless re-run. Cables deferred. |
+| Gate 3 - changelog converge | Deferred by owner (2026-08-17). Does not block further work on this branch. Lab matrix still required before a formal P3 merge to a parent. |
+| Gate 4 - write round-trips | Lab 2026-08-13: interface enable/description (including clear) and cable create/delete signed. Disconnect confirms first. Owner deferred further cable UI. 412, validation-body, custom_fields changelog diff, and read-only token not signed. `If-Match` stays off. Remaining Gate 4 items deferred with Gate 3 (2026-08-17). |
 
 ## Delete All and SwiftData
 
@@ -94,21 +94,21 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 
 ## Revision history
 
-- 2026-08-13 — P1 accepted. Ingest-DTO lesson recorded after generated types skipped lab tenants, sites, racks, devices, and services.
-- 2026-08-13 — Delete All / SwiftData invalidation: P1 stop-crash recorded; store-replace and severity-as-data named as the real design.
-- 2026-08-13 — Transport: `NetBoxLiveFetcher` ratified for P1; factory/middleware retained for the generated path; one `NetBoxAuthorization` rule. Store apply hops to user-initiated QoS.
-- 2026-08-13 — P2: persisted `Interface`, streaming ingest, out-of-scope vs skipped, VO edges, cache deleted. Gate 2 still lab.
-- 2026-08-13 — P2 lab: owner signed startup/offline/edges/Delete All. Site-open interface HTTP already removed. Cables into SwiftData deferred.
-- 2026-08-13 — P3: `lastObjectChangeId`/`Time` are NetBox server values, advanced only after a fully applied delta. Boot uses delta when the watermark is present and retained; full mirror on empty store, missing watermark, 404 watermark, or weekly safety. Settings → Full Resync is always a mirror. Unknown `changed_object_type` is skipped. `dcim.cable` re-fetches both interface ends.
-- 2026-08-13 — P4: hand-written write bodies (generated `PatchedWritable*Request` is not Encodable; client not regenerated). Interface PATCH (enabled/description) and cable POST/DELETE are live. Device/site methods exist and refuse. `If-Match` is off (weak ETag). Post-write re-fetch uses the delta-apply path. Add Site stays disabled and never POSTs.
-- 2026-08-13 — P4 lab: description/enable/clear and cable connect/disconnect signed. Empty description sends `""`. Disconnect asks first. Successful writes post `netBoxStoreDidApply` so the open site graph reloads.
-- 2026-08-14 — Cables and racks in SwiftData. `Cable` and `DeviceBay` `@Model`s; device port/bay counts; filler roles pulled with devices (even when manufacturer 5 is excluded) and hidden from the site graph; site-open filler HTTP and `StaticDeviceCache` / `DeviceBayCache` deleted. Cable tenant/length/colour/description persist; `bundleId` stored unused.
-- 2026-08-14 — Sync no longer excludes manufacturer 5 or roles 29/30. Role presentation is the only filter. The future billable-device count is derived from graph / list / named-in-rack, not a License toggle. Full Resync required once.
-- 2026-08-14 — `SiteLocation` and `RackRole` persist; New rack sends `location` and `role`. Rack drag uses the occupant snapshot under the pointer (not a detached preview from the window origin). Hover highlight is per face and clears when the mouse is released.
+- 2026-08-13 - P1 accepted. Ingest-DTO lesson recorded after generated types skipped lab tenants, sites, racks, devices, and services.
+- 2026-08-13 - Delete All / SwiftData invalidation: P1 stop-crash recorded; store-replace and severity-as-data named as the real design.
+- 2026-08-13 - Transport: `NetBoxLiveFetcher` ratified for P1; factory/middleware retained for the generated path; one `NetBoxAuthorization` rule. Store apply hops to user-initiated QoS.
+- 2026-08-13 - P2: persisted `Interface`, streaming ingest, out-of-scope vs skipped, VO edges, cache deleted. Gate 2 still lab.
+- 2026-08-13 - P2 lab: owner signed startup/offline/edges/Delete All. Site-open interface HTTP already removed. Cables into SwiftData deferred.
+- 2026-08-13 - P3: `lastObjectChangeId`/`Time` are NetBox server values, advanced only after a fully applied delta. Boot uses delta when the watermark is present and retained; full mirror on empty store, missing watermark, 404 watermark, or weekly safety. Settings → Full Resync is always a mirror. Unknown `changed_object_type` is skipped. `dcim.cable` re-fetches both interface ends.
+- 2026-08-13 - P4: hand-written write bodies (generated `PatchedWritable*Request` is not Encodable; client not regenerated). Interface PATCH (enabled/description) and cable POST/DELETE are live. Device/site methods exist and refuse. `If-Match` is off (weak ETag). Post-write re-fetch uses the delta-apply path. Add Site stays disabled and never POSTs.
+- 2026-08-13 - P4 lab: description/enable/clear and cable connect/disconnect signed. Empty description sends `""`. Disconnect asks first. Successful writes post `netBoxStoreDidApply` so the open site graph reloads.
+- 2026-08-14 - Cables and racks in SwiftData. `Cable` and `DeviceBay` `@Model`s; device port/bay counts; filler roles pulled with devices (even when manufacturer 5 is excluded) and hidden from the site graph; site-open filler HTTP and `StaticDeviceCache` / `DeviceBayCache` deleted. Cable tenant/length/colour/description persist; `bundleId` stored unused.
+- 2026-08-14 - Sync no longer excludes manufacturer 5 or roles 29/30. Role presentation is the only filter. The future billable-device count is derived from graph / list / named-in-rack, not a License toggle. Full Resync required once.
+- 2026-08-14 - `SiteLocation` and `RackRole` persist; New rack sends `location` and `role`. Rack drag uses the occupant snapshot under the pointer (not a detached preview from the window origin). Hover highlight is per face and clears when the mouse is released.
 
 ## Writes (P4 amendment)
 
-Views call `NetBoxSyncEngine`. The engine owns `NetBoxWriteService`, which encodes `NetBoxWriteBody` values and sends them through `NetBoxFetching.send`. Generated write types stay unused. After a 2xx the engine re-fetches the object (both interface ends for a cable) through `applyDeltaItem` — the write response is not applied locally.
+Views call `NetBoxSyncEngine`. The engine owns `NetBoxWriteService`, which encodes `NetBoxWriteBody` values and sends them through `NetBoxFetching.send`. Generated write types stay unused. After a 2xx the engine re-fetches the object (both interface ends for a cable) through `applyDeltaItem` - the write response is not applied locally.
 
 `NetBoxWritePolicy.shipped` is last-write-wins: no `If-Match`. NetBox 4.6 emits `ETag: W/"<last_updated>"`. RFC 7232 strong comparison never matches a weak validator; do not turn `sendIfMatch` on until the lab proves both the 412 path and a successful match. 412 still surfaces as `NetBox conflict (412): <server body>`.
 

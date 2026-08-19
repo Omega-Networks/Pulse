@@ -1,4 +1,4 @@
-# ADR 0002 — Billing & Distribution for Pulse
+# ADR 0002 - Billing & Distribution for Pulse
 
 | | |
 |---|---|
@@ -11,30 +11,30 @@
 
 | Round | What changed | Driver |
 |---|---|---|
-| Initial (2026-06-04) | Acceptance — three-tier subscription, App Store distribution via dual-licence posture, structural cap enforcement, intro offer on Pro monthly, no Family Sharing, subscription-lapse degrade-don't-delete | Research synthesis (five-angle deep-research pass, June 2026) |
+| Initial (2026-06-04) | Acceptance - three-tier subscription, App Store distribution via dual-licence posture, structural cap enforcement, intro offer on Pro monthly, no Family Sharing, subscription-lapse degrade-don't-delete | Research synthesis (five-angle deep-research pass, June 2026) |
 | Seats amendment (2026-08-17) | Cap table, insert-path enforcement, lapse ranking, intro product, and grant durability superseded as enumerated below. | Owner ratification after RolePresentation count and full-instance sync |
 | Pricing (2026-08-19) | Plus renamed Growth. Caps Free 50 / Growth 250 / Pro 1,500 / Unlimited none. List prices NZD 14.99 / 24.99 / 49.99 monthly; annual is 10 × monthly (two months free). | Owner ratification |
 | Upgrade timing (2026-08-19) | A higher-rank auto-renew product is the live tier immediately. A lower-rank change stays pending until period end. | StoreKit Testing / App Store leave upgrades on `autoRenewPreference` until the next transaction |
 
 ## Principle
 
-**Governance is code, applied to billing.** The same structural-enforcement discipline that landed ADR 0001 applies here. Caps are not soft suggestions enforced by UI — the data model refuses inserts past the limit. Compliance choices are not runtime flags — `ITSAppUsesNonExemptEncryption` is set in the bundle. Family Sharing is not handled in code by exception — it is disabled at the App Store Connect tier and the `.familyShared` ownership type is unreachable.
+**Governance is code, applied to billing.** The same structural-enforcement discipline that landed ADR 0001 applies here. Caps are not soft suggestions enforced by UI - the data model refuses inserts past the limit. Compliance choices are not runtime flags - `ITSAppUsesNonExemptEncryption` is set in the bundle. Family Sharing is not handled in code by exception - it is disabled at the App Store Connect tier and the `.familyShared` ownership type is unreachable.
 
 Pulse's billing has to defend three properties:
 
 1. **The free tier is honest.** 15 devices is the limit. The App Store listing says so. The data layer enforces it. No soft warnings, no "you can go over a bit," no creep over time.
-2. **The paid tiers are not security tiers.** Every capability from ADR 0001 — hardware-attested credentials, session recording, audit trail, host certificate machinery — is available on every tier including free. The only variable is device count. A free-tier credential and a paid-tier credential are cryptographically identical.
+2. **The paid tiers are not security tiers.** Every capability from ADR 0001 - hardware-attested credentials, session recording, audit trail, host certificate machinery - is available on every tier including free. The only variable is device count. A free-tier credential and a paid-tier credential are cryptographically identical.
 3. **Forks are first-class.** AGPL source on GitHub; the App Store binary is a proprietary licence Omega grants itself as sole copyright holder via the Contributor License Agreement's §2 sublicensing grant. Community forks build their own App Store presence or distribute outside it. Neither path is privileged in the architecture.
 
 ## Context
 
-Pulse is local-first, operator-controlled, and is the operator's console for infrastructure work — SSH access, web companion, live monitoring, network topology, NetBox inventory, PowerSense grid telemetry. The functional category is "integrated operator console" — closer to enterprise tools (Forescout, Auvik, Datadog Network Monitoring) than to single-purpose SSH clients (Termius, Prompt 3). Consumer-prosumer pricing for an enterprise-functional category is the deliberate positioning: broad operator adoption rather than enterprise revenue extraction.
+Pulse is local-first, operator-controlled, and is the operator's console for infrastructure work - SSH access, web companion, live monitoring, network topology, NetBox inventory, PowerSense grid telemetry. The functional category is "integrated operator console" - closer to enterprise tools (Forescout, Auvik, Datadog Network Monitoring) than to single-purpose SSH clients (Termius, Prompt 3). Consumer-prosumer pricing for an enterprise-functional category is the deliberate positioning: broad operator adoption rather than enterprise revenue extraction.
 
 Three constraints shape the billing decision:
 
-1. **Apple App Store distribution is the primary channel** — for reach to individual operators, homelabbers, and prosumer markets that wouldn't engage with a direct-download enterprise tool.
+1. **Apple App Store distribution is the primary channel** - for reach to individual operators, homelabbers, and prosumer markets that wouldn't engage with a direct-download enterprise tool.
 2. **Pulse's source is AGPL-3.0.** Binary distribution on the App Store requires dual-licensing. This is enabled by Omega being the sole pre-CLA copyright holder and the CLA's §2 grant for post-CLA contributions ("the right to license your Contribution under any license, including AGPL-3.0 (or later) or commercial licenses").
-3. **Enterprise is a separate product** — role-based, multi-user, multi-hub, license-key activation via Omega's own backend. Deferred from this ADR; tracked separately.
+3. **Enterprise is a separate product** - role-based, multi-user, multi-hub, license-key activation via Omega's own backend. Deferred from this ADR; tracked separately.
 
 Within those constraints, the billing model must work at consumer-prosumer subscription rates through Apple's StoreKit 2, with conversion economics that survive RevenueCat's 2026 benchmarks (median 2.1% freemium → 10.7% hard-paywall Day-35 conversion).
 
@@ -44,13 +44,13 @@ Within those constraints, the billing model must work at consumer-prosumer subsc
 
 | Tier | Device cap | Monthly | Annual | Intro offer | Family Sharing |
 |---|---|---|---|---|---|
-| **Free** | 15 | $0 | $0 | — | — |
+| **Free** | 15 | $0 | $0 | - | - |
 | **Pro** | 100 | $9.99 | $99.00 | $2.49/mo × 3 months on monthly | Off |
 | **Unlimited** | No cap | $24.99 | $249.00 | None | Off |
 
 All three tiers have identical feature surfaces. The only variable is `maxDevices`, sourced from a static lookup against `SubscriptionTier`. There is no other billing-driven feature variation in v1 and there will not be in v2.
 
-The Unlimited tier exists as a **bridge for adopters with > 100 devices who need Pulse before Enterprise ships**. It is not a long-term consumer-ceiling product. When Enterprise launches via direct sales, Unlimited may sunset (with operator grandfathering — see §Operational consequences) or be retained at Omega's discretion based on adoption data.
+The Unlimited tier exists as a **bridge for adopters with > 100 devices who need Pulse before Enterprise ships**. It is not a long-term consumer-ceiling product. When Enterprise launches via direct sales, Unlimited may sunset (with operator grandfathering - see §Operational consequences) or be retained at Omega's discretion based on adoption data.
 
 Prices are USD base values. Apple's pricing tier system auto-renders local equivalents in each storefront; for NZ, USD $9.99/month resolves to approximately NZ$16.99/month after Apple's 15% GST inclusion and FX-rounding.
 
@@ -58,7 +58,7 @@ Prices are USD base values. Apple's pricing tier system auto-renders local equiv
 
 `Device.init` (or the equivalent NetBox sync insert path in `ProviderModelActor`) checks the current entitlement before insert. If the device count would exceed the tier cap, the insert throws `BillingError.tierCapReached`. There is no alternate insert path.
 
-NetBox auto-sync hits the same insert path as manual add. When the cap is reached during sync, the sync stops with a user-facing message — no partial sync, no silent device dropping. Message text (canonical):
+NetBox auto-sync hits the same insert path as manual add. When the cap is reached during sync, the sync stops with a user-facing message - no partial sync, no silent device dropping. Message text (canonical):
 
 > *Free tier limit reached (15 devices). Upgrade to Pro to sync up to 100 devices, or remove a device to make room.*
 
@@ -71,9 +71,9 @@ The cap is **structural, not configurable**. It cannot be bypassed by:
 
 ### 3. Family Sharing is disabled
 
-In App Store Connect, the Family Sharing toggle on every Pulse subscription product is **OFF**. `Transaction.ownershipType == .familyShared` will never appear in practice. The code path includes a defensive `assertionFailure` if it ever does — that's a configuration drift indicator, not a feature to handle.
+In App Store Connect, the Family Sharing toggle on every Pulse subscription product is **OFF**. `Transaction.ownershipType == .familyShared` will never appear in practice. The code path includes a defensive `assertionFailure` if it ever does - that's a configuration drift indicator, not a feature to handle.
 
-Rationale: Pulse is a professional tool. Each operator has their own infrastructure context. Family Sharing would let a single subscriber's family use Pulse at no marginal cost, which is not the intent of the model. The decision is reversible later if data shows genuine demand (it won't — this is operator software, not media).
+Rationale: Pulse is a professional tool. Each operator has their own infrastructure context. Family Sharing would let a single subscriber's family use Pulse at no marginal cost, which is not the intent of the model. The decision is reversible later if data shows genuine demand (it won't - this is operator software, not media).
 
 ### 4. Annual default, monthly secondary
 
@@ -85,7 +85,7 @@ Annual default optimises for Y1 revenue per converter. RevenueCat's 2026 data sh
 
 The Pro **monthly** subscription has a single introductory offer: **$2.49/month for 3 months**, then $9.99/month rolling. Pay-as-you-go payment mode, three billing cycles, configured in App Store Connect.
 
-Eligibility is checked via `Product.SubscriptionInfo.isEligibleForIntroOffer(for: groupID)` before displaying the offer on the paywall. Apple enforces eligibility at the *subscription group* level per Apple ID, lifetime — taking the intro on Pro burns the intro for the whole group, so a user who later upgrades to Unlimited will not get a second intro.
+Eligibility is checked via `Product.SubscriptionInfo.isEligibleForIntroOffer(for: groupID)` before displaying the offer on the paywall. Apple enforces eligibility at the *subscription group* level per Apple ID, lifetime - taking the intro on Pro burns the intro for the whole group, so a user who later upgrades to Unlimited will not get a second intro.
 
 The Pro annual subscription and both Unlimited subscriptions do not have intro offers in v1. Operators committing to annual or Unlimited are by definition more committed and do not need the intro to convert.
 
@@ -93,11 +93,11 @@ Three months is calibrated for Pulse's evaluation horizon: operators need 2–3 
 
 ### 6. No feature gating across tiers
 
-ADR 0001's structural capabilities — SE credentials, session recording, host trust polymorphism, audit logs, web companion — are available on every tier including Free. There is no `feature.requiresProTier(_:)` check anywhere in the code. The only billing-driven check in the entire codebase is `device.canBeInserted(currentTier:)`.
+ADR 0001's structural capabilities - SE credentials, session recording, host trust polymorphism, audit logs, web companion - are available on every tier including Free. There is no `feature.requiresProTier(_:)` check anywhere in the code. The only billing-driven check in the entire codebase is `device.canBeInserted(currentTier:)`.
 
 Any future feature-gating proposal must explicitly amend this ADR with a §amendment. Reviewers can grep `requiresProTier` and find zero results; that's the structural guarantee.
 
-This commitment is load-bearing for the security model. Gating SE-backed credentials behind a paywall would mean the free tier is structurally less safe than the paid tier — that's not a position Pulse can defend, and it contradicts ADR 0001 §1.
+This commitment is load-bearing for the security model. Gating SE-backed credentials behind a paywall would mean the free tier is structurally less safe than the paid tier - that's not a position Pulse can defend, and it contradicts ADR 0001 §1.
 
 ### 7. The App Store listing is the contract
 
@@ -105,7 +105,7 @@ The App Store product page must clearly state the device caps and the prices. Th
 
 The in-app cap-reached message uses identical phrasing to the listing. Operators agreed to the contract when they downloaded; the in-app message reminds them of what they agreed to, not introduces a surprise.
 
-**No surprise gating** — every cap that exists in code is documented on the listing. **No expanding gating** — caps cannot tighten over time without a new App Store version submission and an updated listing.
+**No surprise gating** - every cap that exists in code is documented on the listing. **No expanding gating** - caps cannot tighten over time without a new App Store version submission and an updated listing.
 
 ### 8. Subscription lapse degrades, doesn't delete
 
@@ -113,15 +113,15 @@ When a Pro or Unlimited subscription lapses (cancellation, billing failure, refu
 
 - All credentials remain accessible
 - All previously-synced devices remain in SwiftData
-- The first 15 devices (sorted by `Device.lastActivityAt` descending, falling back to `createdAt` descending) remain *interactive* — SSH, web companion, recording all work
-- Devices 16+ remain *visible but action-disabled* — they appear in the inventory but the actions menu items are greyed out with a "Subscribe to resume" affordance
+- The first 15 devices (sorted by `Device.lastActivityAt` descending, falling back to `createdAt` descending) remain *interactive* - SSH, web companion, recording all work
+- Devices 16+ remain *visible but action-disabled* - they appear in the inventory but the actions menu items are greyed out with a "Subscribe to resume" affordance
 
 This is a deliberate departure from the "hard refusal" pattern for new inserts. Existing data is preserved; only behavioural reach shrinks to the free-tier surface. Resubscribing restores full functionality immediately; no re-sync or re-configuration needed.
 
 ### 9. Export and IP compliance is bundle-level, not runtime
 
 - `ITSAppUsesNonExemptEncryption = YES` in `Info.plist`. Set per-build, not configurable at runtime.
-- App Store Connect submission answers: "Does your app use encryption? **YES**. Does it qualify for any exemptions? **YES**" — citing 15 CFR §740.17(b)(1) License Exception ENC for standard cryptography (AES, ECDSA P-256, SHA-256, ECIES, SSH protocol algorithms; no proprietary or non-standard crypto).
+- App Store Connect submission answers: "Does your app use encryption? **YES**. Does it qualify for any exemptions? **YES**" - citing 15 CFR §740.17(b)(1) License Exception ENC for standard cryptography (AES, ECDSA P-256, SHA-256, ECIES, SSH protocol algorithms; no proprietary or non-standard crypto).
 - Annual BIS Self-Classification Report (ECCN 5D002, Authorization Type ENC, Item Type "network communications/infrastructure") filed by **Feb 1 each year** to `crypt-supp8@bis.doc.gov` and `enc@nsa.gov`. NON-U.S. Components and NON-U.S. Manufacturing Locations both = New Zealand.
 - NZ NSGL: General Software Note carve-out documented in `docs/compliance/nzsgl-assessment.md` citing Wassenaar Cat 5 Part 2 Note 3 publicly-available-software exemption. No MFAT consent required.
 - App Store Small Business Program enrolment **before** first paid sale. New developers with no prior App Store revenue qualify automatically and should enrol immediately.
@@ -133,10 +133,10 @@ Required UX elements:
 - Price and billing period visible on the paywall in ≥ 16pt type.
 - Terms of Use AND Privacy Policy linked from *inside* the paywall, not only from the App Store listing.
 - Restore Purchases button present and labelled.
-- **No "free trial toggle" UI** — Apple began rejecting these in January 2026 as misleading.
+- **No "free trial toggle" UI** - Apple began rejecting these in January 2026 as misleading.
 - Intro-offer language uses the full price after the intro: *"$2.49 for the first 3 months, then $9.99/month."*
 
-These are not aesthetic guidelines — they are review-blocking requirements in 2026 enforcement.
+These are not aesthetic guidelines - they are review-blocking requirements in 2026 enforcement.
 
 ## Structural enforcements
 
@@ -164,7 +164,7 @@ The following invariants cannot be bypassed by configuration, runtime state, or 
 - BIS annual CSV filed
 - NZ NSGL assessment in repo
 
-### v2 — Enterprise (deferred from this ADR)
+### v2 - Enterprise (deferred from this ADR)
 
 - Distributed direct from omeganetworks.nz, not the App Store
 - License-key activation via Omega's own backend
@@ -223,20 +223,20 @@ When Enterprise ships, the Unlimited App Store tier's future is re-evaluated. De
 - **Distribute outside the App Store via Developer ID.** Rejected. App Store reach is the primary asset for individual-operator adoption; the sovereignty gain from direct distribution is marginal at consumer-prosumer scale. Enterprise will distribute direct anyway, so the sovereignty story is preserved.
 - **Server-side receipt validation.** Rejected per ADR 0001. Pulse is local-first; introducing a billing backend for receipt checks contradicts the architectural principle. StoreKit 2's client-side cryptographic verification is sufficient and Apple-recommended.
 - **Hard quotas per organisation (centralised).** Rejected for App Store distribution; org-level quotas aren't appropriate for individual Apple ID subscriptions. Deferred to Enterprise where they make sense.
-- **Free tier > 15 devices.** Considered. Higher free caps are more generous but materially hurt freemium → paid conversion (RevenueCat 2026: 2.1% freemium vs 10.7% hard-paywall Day-35 — a 5× delta). The 15-device cap triggers immediately for any real NetBox sync, functioning as a hard paywall. The free tier is for evaluation and small homelabs, not full deployments.
+- **Free tier > 15 devices.** Considered. Higher free caps are more generous but materially hurt freemium → paid conversion (RevenueCat 2026: 2.1% freemium vs 10.7% hard-paywall Day-35 - a 5× delta). The 15-device cap triggers immediately for any real NetBox sync, functioning as a hard paywall. The free tier is for evaluation and small homelabs, not full deployments.
 - **Per-feature pricing.** Rejected per ADR 0001. Security features cannot be tier-gated without compromising the safety model.
 - **No introductory offer.** Rejected. Pulse requires 2–3 sprint cycles of real-infrastructure use before operators can validate its value. The intro offer gives them that runway.
 - **Free trial (zero cost) instead of paid intro offer.** Rejected. RevenueCat data shows paid intro offers outperform free trials in many cohorts; charging $2.49 filters tire-kickers and validates payment details up front.
-- **Subscription model only, no Unlimited tier.** Rejected — operators with > 100 devices need an option *now*, before Enterprise ships. Unlimited is the bridge.
+- **Subscription model only, no Unlimited tier.** Rejected - operators with > 100 devices need an option *now*, before Enterprise ships. Unlimited is the bridge.
 - **Lifetime / perpetual licence instead of subscription.** Rejected. App Store doesn't support non-consumable IAPs as primary monetisation for tools needing ongoing maintenance, and one-time pricing doesn't fund the multi-year roadmap. Subscription is the correct model.
 - **Stable cross-bundle access group (per the ADR 0001 Option A discussion).** Rejected. Bundle-coupled access group is the choice per ADR 0001 §1; billing inherits that posture. Forks re-enrol; this is correct.
 - **Same intro offer on Pro Annual.** Rejected for v1. Annual subscribers self-select as committed; the intro is for risk-mitigating monthly converters.
 
 ## Cross-references
 
-- [ADR 0001 — SSH Terminal & In-App Web: Architectural Foundations](./0001-ssh-terminal-and-web-foundations.md) — security model that this ADR must not compromise
-- [Pulse Credentials Guide](../credentials.md) — operator-facing credentials documentation
-- Billing research synthesis (June 2026, local working file) — five-angle research pass that informed this ADR's evidence base
+- [ADR 0001 - SSH Terminal & In-App Web: Architectural Foundations](./0001-ssh-terminal-and-web-foundations.md) - security model that this ADR must not compromise
+- [Pulse Credentials Guide](../credentials.md) - operator-facing credentials documentation
+- Billing research synthesis (June 2026, local working file) - five-angle research pass that informed this ADR's evidence base
 
 ## Seats amendment (2026-08-17)
 
