@@ -28,6 +28,9 @@ import SwiftData
 import UserNotifications
 import TipKit
 import OSLog
+#if os(macOS)
+import AppKit
+#endif
 
 /**
  Manages the state and progress of application initialization.
@@ -43,9 +46,9 @@ class InitializationState: ObservableObject {
     @Published var contentViewReady = false
     @Published var startExitAnimation = false
     @Published var isConfigured = false
-    /// Eleven NetBox types (including interfaces) plus TipKit. Matches the
-    /// last `updateProgress` step inside `verifyContainer`.
-    let totalSteps = 12.0
+    /// Sixteen NetBox stages plus TipKit. Matches the last
+    /// `updateProgress` step inside `verifyContainer`.
+    let totalSteps = 16.0
     
     /**
       Updates the initialization progress and step description.
@@ -77,8 +80,11 @@ struct PulseApp: App {
     let notificationHandler = NotificationHandler()
     let modelContainer: ModelContainer
     let netBoxSyncEngine: NetBoxSyncEngine
-    var clusteringService: ClusteringService?
-    var monitorService: PowerSenseMonitorService?
+    let rolePresentationStore = RolePresentationStore()
+    let entitlementStore: EntitlementStore
+    let licenseSeatStore = LicenseSeatStore()
+    @State private var clusteringService: ClusteringService?
+    @State private var monitorService: PowerSenseMonitorService?
 
     init() {
         do {
@@ -88,11 +94,16 @@ struct PulseApp: App {
                 Region.self,
                 DeviceRole.self,
                 DeviceType.self,
+                SiteLocation.self,
+                RackRole.self,
                 Rack.self,
                 SiteGroup.self,
                 Site.self,
                 Device.self,
                 Interface.self,
+                Cable.self,
+                DeviceBay.self,
+                FrontPort.self,
                 Service.self,
                 WebHostTrust.self,
                 Event.self,
@@ -103,18 +114,22 @@ struct PulseApp: App {
                 KnownHost.self
             )
 
-            netBoxSyncEngine = NetBoxSyncEngine(modelContainer: modelContainer)
+            // Load-bearing: engine write gates read this store, not
+            // UserDefaults. Capture the class before assigning stored
+            // properties — App.init cannot close over self.entitlementStore
+            // until every `let` is set. A missed injection fail-closes
+            // at Free/50 and splits the UI (live StoreKit) from writes.
+            let entitlements = EntitlementStore()
+            entitlements.startAtLaunch()
+            entitlementStore = entitlements
+            netBoxSyncEngine = NetBoxSyncEngine(
+                modelContainer: modelContainer,
+                subscriptionTier: { entitlements.tier }
+            )
 
-            // Initialize clustering service with model container
-            clusteringService = try ClusteringService(modelContainer: modelContainer)
-
-            // Initialize PowerSense monitor service
-            if let clustering = clusteringService {
-                monitorService = PowerSenseMonitorService(
-                    clusteringService: clustering,
-                    modelContainer: modelContainer
-                )
-            }
+            // PowerSense services stay nil until Settings enables them.
+            // ClusteringService used to prefetch every PowerSense device
+            // here, which loaded the integration even when it was off.
         } catch {
             fatalError("Failed to initialize modelContainer: \(error)")
         }
@@ -135,7 +150,7 @@ struct PulseApp: App {
      Throws a fatal error if initialization fails.
      */
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: PulseMenuBarActivation.mainWindowID) {
             Group {
                 if showContentView {
                     ContentView()
@@ -147,9 +162,25 @@ struct PulseApp: App {
                         .task {
                             await initializePowerSense()
                         }
+                        .onReceive(NotificationCenter.default.publisher(for: .powerSenseConfigurationDidChange)) { _ in
+                            Task { await initializePowerSense() }
+                        }
                 } else {
                     LoadingView(state: initState)
                 }
+            }
+            .pulseBilling(
+                entitlements: entitlementStore,
+                seats: licenseSeatStore,
+                roles: rolePresentationStore
+            )
+            .background {
+                SeatReconcilerHost(
+                    entitlements: entitlementStore,
+                    seats: licenseSeatStore,
+                    roles: rolePresentationStore,
+                    container: modelContainer
+                )
             }
             .task {
                 await verifyContainer()
@@ -160,19 +191,14 @@ struct PulseApp: App {
         #if os(macOS)
 
 
+        // Default `.menu` style. `.window` on an empty extra is what
+        // produced the blank click; the previous `square.fill` is the
+        // tile in the menu bar.
         MenuBarExtra {
-           // Empty for now
+            PulseStatusMenu(modelContainer: modelContainer)
         } label: {
-           ZStack {
-               Image(systemName: "square.fill")
-                   .foregroundColor(.white)
-               
-               Image("omega-swirl.symbols")
-                   .foregroundColor(showContentView ? .blue : .red)
-           }
-           .frame(width: 24, height: 24)
+            PulseStatusMenuLabel()
         }
-        .menuBarExtraStyle(.window)
 
         // Per-Site Site View, keyed on the nominal `SiteWindowTarget`
         // value type (per ADR 0001 §9, the window model). `Site.ID` and `Device.ID` both resolve
@@ -187,6 +213,11 @@ struct PulseApp: App {
                 if let target {
                     SiteView(siteId: target.siteID)
                         .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                        .pulseBilling(
+                            entitlements: entitlementStore,
+                            seats: licenseSeatStore,
+                            roles: rolePresentationStore
+                        )
                         .modelContainer(modelContainer)
                 }
             }
@@ -206,6 +237,13 @@ struct PulseApp: App {
         Settings {
             SettingsView()
                 .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                .environment(clusteringService)
+                .environment(monitorService)
+                .pulseBilling(
+                    entitlements: entitlementStore,
+                    seats: licenseSeatStore,
+                    roles: rolePresentationStore
+                )
                 .modelContainer(modelContainer)
         }
 
@@ -222,12 +260,22 @@ struct PulseApp: App {
         // gives single-window-per-device behaviour via SwiftUI's
         // per-value `WindowGroup` activation semantics. See
         // `SSHTerminalScene` for the wrapping rationale.
-        SSHTerminalScene(modelContainer: modelContainer)
+        SSHTerminalScene(
+            modelContainer: modelContainer,
+            entitlements: entitlementStore,
+            seats: licenseSeatStore,
+            roles: rolePresentationStore
+        )
 
         // Operator-facing Device Web window, routed per `DeviceWindowTarget`
         // (the same nominal envelope the SSH terminal uses). See
         // `DeviceWebScene` for the routing rationale.
-        DeviceWebScene(modelContainer: modelContainer)
+        DeviceWebScene(
+            modelContainer: modelContainer,
+            entitlements: entitlementStore,
+            seats: licenseSeatStore,
+            roles: rolePresentationStore
+        )
 
         #if DEBUG
         WindowGroup("Debug SSH", id: DebugSSHWindow.windowID) {
@@ -286,15 +334,15 @@ struct PulseApp: App {
                 }
             }
 
-            initState.updateProgress(11, "Setting up Tips...")
+            initState.updateProgress(16, "Setting up Tips...")
             tipManager.configure()
             await SiteDataService(modelContainer: modelContainer).refreshSeverities()
 
-            initState.updateProgress(12, "Ready")
+            initState.updateProgress(16, "Ready")
         } catch {
             logger.error("NetBox sync failed: \(error.localizedDescription)")
             if let netboxError = error as? NetBoxSyncError {
-                await netboxError.publish()
+                netboxError.publish()
             } else {
                 await MainActor.run {
                     RequestStatusManager.shared.updateStatus(
@@ -337,46 +385,47 @@ struct PulseApp: App {
     }
 
     /**
-     Initialize PowerSense background processing if configured and enabled.
-
-     This method checks if PowerSense is properly configured before initializing
-     the monitor service and starting background event polling.
+     Start PowerSense only when Settings has it enabled and configured.
+     Tear the services down otherwise so clustering and polling do not run.
      */
     private func initializePowerSense() async {
-        // Check feature flag (defaults to true if not set)
-        let featureFlagValue = UserDefaults.standard.object(forKey: "enablePowerSenseBackground")
-        let featureFlagEnabled = featureFlagValue as? Bool ?? true  // Default to enabled
-
-        guard featureFlagEnabled else {
-            logger.info("PowerSense background processing disabled (feature flag)")
-            return
-        }
-
-        // Check if PowerSense is configured and enabled
         let config = await Configuration.shared
         let isConfigured = await config.isPowerSenseConfigured()
         let isEnabled = await config.isPowerSenseEnabled()
 
         guard isConfigured && isEnabled else {
-            logger.info("Skipping PowerSense initialization: not configured/enabled")
+            if monitorService != nil || clusteringService != nil {
+                logger.info("PowerSense disabled — stopping monitor and releasing clustering")
+                monitorService?.stopMonitoring()
+                await monitorService?.clearCachedResults()
+                monitorService = nil
+                clusteringService = nil
+            } else {
+                logger.info("Skipping PowerSense initialization: not configured/enabled")
+            }
             return
         }
-
-        // Ensure monitor service exists
-        guard let service = monitorService else {
-            logger.error("PowerSense monitor service not initialized")
-            return
-        }
-
-        logger.info("Initializing PowerSense background processing...")
 
         do {
-            // Initialize service (pre-warm GPU, perform initial clustering)
-            try await service.initialize()
+            if clusteringService == nil {
+                clusteringService = try ClusteringService(modelContainer: modelContainer)
+            }
+            if monitorService == nil, let clustering = clusteringService {
+                monitorService = PowerSenseMonitorService(
+                    clusteringService: clustering,
+                    modelContainer: modelContainer
+                )
+            }
+            guard let service = monitorService else {
+                logger.error("PowerSense monitor service not initialized")
+                return
+            }
 
-            // Start 60-second event polling
+            logger.info("Initializing PowerSense background processing...")
+            if !service.isInitialized {
+                try await service.initialize()
+            }
             service.startMonitoring()
-
             logger.info("PowerSense background processing started successfully")
         } catch {
             logger.error("PowerSense initialization failed: \(error.localizedDescription)")
@@ -468,4 +517,107 @@ struct LoadingView: View {
         }
     }
 }
+
+enum PulseMenuBarActivation {
+    static let mainWindowID = "pulse-main"
+
+    #if os(macOS)
+    @MainActor
+    static func revealMainWindow(openWindow: OpenWindowAction) {
+        NSApp.activate()
+        if let window = NSApp.windows.first(where: isReusableMainWindow) {
+            window.deminiaturize(nil)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        openWindow(id: mainWindowID)
+    }
+
+    @MainActor
+    private static func isReusableMainWindow(_ window: NSWindow) -> Bool {
+        guard window.canBecomeMain, window.level == .normal else { return false }
+        let className = String(describing: type(of: window))
+        if className.contains("StatusBar") || className.contains("StatusItem") {
+            return false
+        }
+        switch window.title {
+        case "Site View", "New Site", "Settings", "Debug SSH":
+            return false
+        default:
+            return true
+        }
+    }
+    #endif
+}
+
+#if os(macOS)
+/// Menu-bar extra. Pulse swirl as a 16×16pt template (circular extras
+/// match system weight at 16pt; the slot is 22pt, the bar is 24pt).
+/// Do not use `omega-swirl.symbols` here — that SVG is the 3300×2200
+/// SF Symbols sheet, not a status-item glyph.
+struct PulseStatusMenuLabel: View {
+    var body: some View {
+        Image(nsImage: Self.templateIcon)
+            .accessibilityLabel("Pulse")
+    }
+
+    private static let templateIcon: NSImage = {
+        let base = NSImage(named: "MenuBarSwirl") ?? NSImage(size: NSSize(width: 16, height: 16))
+        let image = base.copy() as? NSImage ?? base
+        image.isTemplate = true
+        image.size = NSSize(width: 16, height: 16)
+        return image
+    }()
+}
+
+struct PulseStatusMenu: View {
+    let modelContainer: ModelContainer
+    @Environment(\.openWindow) private var openWindow
+    private var statusManager = RequestStatusManager.shared
+    @State private var isRetryingZabbix = false
+
+    init(modelContainer: ModelContainer) {
+        self.modelContainer = modelContainer
+    }
+
+    var body: some View {
+        Button("Open Pulse") {
+            PulseMenuBarActivation.revealMainWindow(openWindow: openWindow)
+        }
+        if let zabbixWarning {
+            Divider()
+            Section(zabbixWarning) {
+                Button(isRetryingZabbix ? "Checking…" : "Retry Zabbix") {
+                    retryZabbix()
+                }
+                .disabled(isRetryingZabbix)
+            }
+        }
+        Divider()
+        Button("Quit Pulse") {
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    private var zabbixWarning: String? {
+        switch statusManager.currentStatus[.zabbix] {
+        case .connectionError(let text),
+             .authenticationFailure(_, let text),
+             .dataError(_, let text),
+             .unknownError(let text):
+            return text
+        default:
+            return nil
+        }
+    }
+
+    private func retryZabbix() {
+        isRetryingZabbix = true
+        Task {
+            await SiteDataService(modelContainer: modelContainer).getProblems()
+            await MainActor.run { isRetryingZabbix = false }
+        }
+    }
+}
+#endif
 

@@ -30,6 +30,7 @@ struct AcknowledgedCell: View {
     @State private var isShowingSheet: Bool = false
     var acknowledgedString: String
     var acknowledgedColor: Color
+    var allowsUpdate: Bool = true
 //    #if os(macOS)
     @State private var isHovering: Bool = false
 //    #endif
@@ -39,8 +40,10 @@ struct AcknowledgedCell: View {
             .foregroundColor(isHovering ? Color.blue : acknowledgedColor)
             .underline()
             .onTapGesture {
+                guard allowsUpdate else { return }
                 isShowingSheet = true
             }
+            .help(allowsUpdate ? "Update event" : "Subscribe to resume")
             .sheet(isPresented: $isShowingSheet) {
                 UpdateModal(selectedEvents: selectedEvents)
             }

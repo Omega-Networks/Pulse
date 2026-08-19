@@ -41,7 +41,7 @@ import Security
 /// keyed by `(service, account)` = `("<bundle-id>.ssh", credentialUUID)`.
 /// The service name is derived from `Bundle.main.bundleIdentifier` at runtime
 /// so it tracks the operator's `BUNDLE_IDENTIFIER` xcconfig setting (e.g.,
-/// `nz.net.omega.pulse` → `nz.net.omega.pulse.ssh`). Forks or beta channels
+/// `com.yourorg.pulse` → `com.yourorg.pulse.ssh`). Forks or beta channels
 /// that change the bundle ID automatically get a disjoint keychain namespace,
 /// which is the structural enforcement of ADR §1's bundle-ID reachability
 /// contract: a re-signed build's credentials are never reachable from a

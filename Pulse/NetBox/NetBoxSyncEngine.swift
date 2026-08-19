@@ -37,8 +37,12 @@ import SwiftUI
 actor NetBoxSyncEngine {
     private let modelContainer: ModelContainer
     private let fetcher: any NetBoxFetching
-    private let filter: NetBoxFilterConfiguration
     private let writePolicy: NetBoxWritePolicy
+    /// Live StoreKit tier. Defaults fail closed (Free) so a missed
+    /// injection cannot read a spoofable UserDefaults cache.
+    /// PulseApp must pass `{ entitlementStore.tier }` — tests that
+    /// omit the argument are exercising Free, not production.
+    private let subscriptionTier: @Sendable () -> SubscriptionTier
     private let logger = Logger(subsystem: "netbox", category: "sync")
     private var inFlight: Task<Void, Error>?
     private var writes: Task<Void, Error>?
@@ -46,13 +50,13 @@ actor NetBoxSyncEngine {
     init(
         modelContainer: ModelContainer,
         fetcher: any NetBoxFetching = NetBoxLiveFetcher(),
-        filter: NetBoxFilterConfiguration = .default,
-        writePolicy: NetBoxWritePolicy = .shipped
+        writePolicy: NetBoxWritePolicy = .shipped,
+        subscriptionTier: @escaping @Sendable () -> SubscriptionTier = { .free }
     ) {
         self.modelContainer = modelContainer
         self.fetcher = fetcher
-        self.filter = filter
         self.writePolicy = writePolicy
+        self.subscriptionTier = subscriptionTier
     }
 
     private var writer: NetBoxWriteService {
@@ -76,6 +80,7 @@ actor NetBoxSyncEngine {
         defer { inFlight = nil }
         do {
             try await task.value
+            await announceStoreDidApply()
         } catch {
             logger.error("NetBox sync failed: \(error.localizedDescription)")
             throw error
@@ -90,13 +95,15 @@ actor NetBoxSyncEngine {
             return
         }
         let task = Task(priority: .userInitiated) {
+            let cursor = try? await self.latestChangelogCursor()
             try await self.performFullSync(progress: progress)
-            try await self.stampFullSuccess()
+            try await self.stampFullSuccess(cursor: cursor)
         }
         inFlight = task
         defer { inFlight = nil }
         do {
             try await task.value
+            await announceStoreDidApply()
         } catch {
             logger.error("NetBox full sync failed: \(error.localizedDescription)")
             throw error
@@ -112,10 +119,15 @@ actor NetBoxSyncEngine {
             ("Synchronising Regions...", { try await self.syncRegions() }),
             ("Synchronising Site Groups...", { try await self.syncSiteGroups() }),
             ("Synchronising Sites...", { try await self.syncSites() }),
+            ("Synchronising Locations...", { try await self.syncLocations() }),
+            ("Synchronising Rack Roles...", { try await self.syncRackRoles() }),
             ("Synchronising Racks...", { try await self.syncRacks() }),
             ("Synchronising Devices...", { try await self.syncDevices() }),
+            ("Synchronising Device Bays...", { try await self.syncDeviceBays() }),
+            ("Synchronising Front Ports...", { try await self.syncFrontPorts() }),
             ("Synchronising Services...", { try await self.syncServices() }),
             ("Synchronising Interfaces...", { try await self.syncInterfaces() }),
+            ("Synchronising Cables...", { try await self.syncCables() }),
         ]
         for (index, stage) in stages.enumerated() {
             progress?(index, stage.0)
@@ -130,13 +142,18 @@ actor NetBoxSyncEngine {
         switch plan {
         case .full(let reason):
             logger.info("NetBox full mirror (\(reason, privacy: .public))")
+            let cursor = try? await latestChangelogCursor()
             try await performFullSync(progress: progress)
-            try await stampFullSuccess()
+            try await stampFullSuccess(cursor: cursor)
         case .delta(let watermarkID):
-            if await changelogRecordMissing(id: watermarkID) {
+            // 0 is the empty-changelog stamp, not a real object-change
+            // id. Probing `/object-changes/0/` 404s and would force a
+            // full mirror on every boot of a fresh instance.
+            if watermarkID > 0, await changelogRecordMissing(id: watermarkID) {
                 logger.error("Watermark \(watermarkID) is gone; forcing full mirror")
+                let cursor = try? await latestChangelogCursor()
                 try await performFullSync(progress: progress)
-                try await stampFullSuccess()
+                try await stampFullSuccess(cursor: cursor)
                 return
             }
             progress?(0, "Applying NetBox changes...")
@@ -174,6 +191,11 @@ actor NetBoxSyncEngine {
 
     func patchInterface(id: Int64, enabled: Bool? = nil, description: String? = nil) async throws {
         try await performWrite {
+            let tier = self.subscriptionTier()
+            try await self.applyOnStore { context in
+                let deviceID = try LicenseSeatEvaluator.deviceID(forInterface: id, in: context)
+                try LicenseSeatEvaluator.requireSeated(deviceID: deviceID, in: context, tier: tier)
+            }
             let body = NetBoxWriteBody.InterfacePatch(
                 enabled: enabled,
                 description: description
@@ -193,25 +215,123 @@ actor NetBoxSyncEngine {
 
     func createCable(from a: Int64, to b: Int64) async throws {
         try await performWrite {
+            let tier = self.subscriptionTier()
+            try await self.applyOnStore { context in
+                let left = try LicenseSeatEvaluator.deviceID(forInterface: a, in: context)
+                let right = try LicenseSeatEvaluator.deviceID(forInterface: b, in: context)
+                try LicenseSeatEvaluator.requireLink(a: left, b: right, in: context, tier: tier)
+            }
             let created = try await self.writer.createCable(.connecting(a, to: b))
-            try await self.refreshCableInterfaces(id: created.id)
+            try await self.applyCableAndEnds(id: created.id)
+        }
+    }
+
+    func createCable(
+        fromFrontPort a: Int64,
+        toInterface b: Int64
+    ) async throws {
+        try await performWrite {
+            let tier = self.subscriptionTier()
+            try await self.applyOnStore { context in
+                let left = try LicenseSeatEvaluator.deviceID(forFrontPort: a, in: context)
+                let right = try LicenseSeatEvaluator.deviceID(forInterface: b, in: context)
+                try LicenseSeatEvaluator.requireLink(a: left, b: right, in: context, tier: tier)
+            }
+            let created = try await self.writer.createCable(
+                .connectingFrontPort(a, toInterface: b)
+            )
+            try await self.applyCableAndEnds(id: created.id)
+        }
+    }
+
+    func createCable(
+        fromFrontPort a: Int64,
+        toFrontPort b: Int64
+    ) async throws {
+        try await performWrite {
+            let tier = self.subscriptionTier()
+            try await self.applyOnStore { context in
+                let left = try LicenseSeatEvaluator.deviceID(forFrontPort: a, in: context)
+                let right = try LicenseSeatEvaluator.deviceID(forFrontPort: b, in: context)
+                try LicenseSeatEvaluator.requireLink(a: left, b: right, in: context, tier: tier)
+            }
+            let created = try await self.writer.createCable(
+                .connectingFrontPorts(a, to: b)
+            )
+            try await self.applyCableAndEnds(id: created.id)
+        }
+    }
+
+    func disconnectFrontPort(id: Int64, knownCableId: Int64?) async throws {
+        try await performWrite {
+            let tier = self.subscriptionTier()
+            try await self.applyOnStore { context in
+                try LicenseSeatEvaluator.requireLinkIfPeerKnown(
+                    deviceID: try LicenseSeatEvaluator.deviceID(forFrontPort: id, in: context),
+                    peer: try? LicenseSeatEvaluator.peerDeviceID(forFrontPort: id, in: context),
+                    in: context,
+                    tier: tier
+                )
+            }
+            let cableId = try await self.resolveFrontPortCableID(id: id, known: knownCableId)
+            let peer = try await self.applyOnStore { context -> (type: String, id: Int64)? in
+                let descriptor = FetchDescriptor<FrontPort>(
+                    predicate: #Predicate<FrontPort> { $0.id == id }
+                )
+                guard let row = try context.fetch(descriptor).first,
+                      let peerID = row.connectedEndpointId,
+                      let type = row.connectedEndpointType else {
+                    return nil
+                }
+                return (type, peerID)
+            }
+            try await self.writer.deleteCable(id: cableId)
+            try await self.deleteLocalCableAndRefreshEnds(id: cableId)
+            try await self.applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .frontPort,
+                    objectID: id,
+                    action: "update",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+            if let peer {
+                if peer.type == "dcim.interface" {
+                    try await self.applyDeltaItem(
+                        NetBoxDeltaItem(
+                            kind: .interface,
+                            objectID: peer.id,
+                            action: "update",
+                            changeID: 0,
+                            time: nil
+                        )
+                    )
+                } else if peer.type == "dcim.frontport" {
+                    try await self.applyDeltaItem(
+                        NetBoxDeltaItem(
+                            kind: .frontPort,
+                            objectID: peer.id,
+                            action: "update",
+                            changeID: 0,
+                            time: nil
+                        )
+                    )
+                }
+            }
         }
     }
 
     func deleteCable(id: Int64, refreshing interfaceIDs: [Int64]) async throws {
         try await performWrite {
-            try await self.writer.deleteCable(id: id)
-            for interfaceID in interfaceIDs {
-                try await self.applyDeltaItem(
-                    NetBoxDeltaItem(
-                        kind: .interface,
-                        objectID: interfaceID,
-                        action: "update",
-                        changeID: 0,
-                        time: nil
-                    )
+            let tier = self.subscriptionTier()
+            try await self.applyOnStore { context in
+                try LicenseSeatEvaluator.requireSeatedEnds(
+                    interfaceIDs: interfaceIDs, in: context, tier: tier
                 )
             }
+            try await self.writer.deleteCable(id: id)
+            try await self.deleteLocalCableAndRefreshEnds(id: id, extraInterfaceIDs: interfaceIDs)
         }
     }
 
@@ -223,21 +343,20 @@ actor NetBoxSyncEngine {
         refreshing interfaceIDs: [Int64]
     ) async throws {
         try await performWrite {
+            let tier = self.subscriptionTier()
+            try await self.applyOnStore { context in
+                try LicenseSeatEvaluator.requireLinkIfPeerKnown(
+                    deviceID: try LicenseSeatEvaluator.deviceID(forInterface: id, in: context),
+                    peer: try? LicenseSeatEvaluator.peerDeviceID(forInterface: id, in: context),
+                    in: context,
+                    tier: tier
+                )
+            }
             let cableId = try await self.resolveCableID(interfaceID: id, known: knownCableId)
             try await self.writer.deleteCable(id: cableId)
             var ends = Set(interfaceIDs)
             ends.insert(id)
-            for interfaceID in ends {
-                try await self.applyDeltaItem(
-                    NetBoxDeltaItem(
-                        kind: .interface,
-                        objectID: interfaceID,
-                        action: "update",
-                        changeID: 0,
-                        time: nil
-                    )
-                )
-            }
+            try await self.deleteLocalCableAndRefreshEnds(id: cableId, extraInterfaceIDs: Array(ends))
         }
     }
 
@@ -259,8 +378,32 @@ actor NetBoxSyncEngine {
         return cableID
     }
 
+    private func resolveFrontPortCableID(id: Int64, known: Int64?) async throws -> Int64 {
+        if let known { return known }
+        let data = try await fetcher.get(path: "/api/dcim/front-ports/\(id)/", query: [])
+        let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.FrontPort.self, from: data)
+        _ = try await applyOnStore {
+            try NetBoxStore.applyFrontPorts(
+                [row], fetchComplete: false, skipped: 0, keeping: [], in: $0
+            )
+        }
+        guard let cableID = row.cableID else {
+            throw NetBoxSyncError.httpStatus(
+                code: 404,
+                body: "NetBox has no cable on front port \(id)"
+            )
+        }
+        return cableID
+    }
+
     func patchDevice(id: Int64, body: NetBoxWriteBody.DevicePatch) async throws {
         try await performWrite {
+            if self.writePolicy.deviceAndSiteWritesEnabled {
+                let tier = self.subscriptionTier()
+                try await self.applyOnStore { context in
+                    try LicenseSeatEvaluator.requireSeated(deviceID: id, in: context, tier: tier)
+                }
+            }
             _ = try await self.writer.patchDevice(id: id, body: body)
             try await self.applyDeltaItem(
                 NetBoxDeltaItem(
@@ -276,6 +419,21 @@ actor NetBoxSyncEngine {
 
     func createDevice(_ body: NetBoxWriteBody.DeviceCreate) async throws {
         try await performWrite {
+            if self.writePolicy.deviceAndSiteWritesEnabled {
+                let tier = self.subscriptionTier()
+                do {
+                    try await self.applyOnStore { context in
+                        try LicenseSeatEvaluator.requireAdmit(
+                            roleID: body.role, in: context, tier: tier
+                        )
+                    }
+                } catch {
+                    self.logger.error(
+                        "createDevice admit refused (tier \(tier.displayName, privacy: .public)): \(error.localizedDescription)"
+                    )
+                    throw error
+                }
+            }
             let response = try await self.writer.createDevice(body)
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Device.self, from: response.body)
             try await self.applyDeltaItem(
@@ -304,6 +462,22 @@ actor NetBoxSyncEngine {
             try await self.applyDeltaItem(
                 NetBoxDeltaItem(
                     kind: .site,
+                    objectID: row.id,
+                    action: "create",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+        }
+    }
+
+    func createRack(_ body: NetBoxWriteBody.RackCreate) async throws {
+        try await performWrite {
+            let response = try await self.writer.createRack(body)
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Rack.self, from: response.body)
+            try await self.applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .rack,
                     objectID: row.id,
                     action: "create",
                     changeID: 0,
@@ -354,12 +528,9 @@ actor NetBoxSyncEngine {
     }
 
     private func syncDeviceRoles() async throws {
-        let extra = filter.excludedRoleQueryAsInts.map {
-            URLQueryItem(name: "id__n", value: String($0))
-        }
         let (rows, skipped) = try await fetchAll(
             path: "/api/dcim/device-roles/",
-            extraQuery: extra,
+            extraQuery: [],
             as: Components.Schemas.DeviceRole.self
         )
         let records = rows.map(NetBoxMapping.deviceRole)
@@ -371,12 +542,9 @@ actor NetBoxSyncEngine {
     }
 
     private func syncDeviceTypes() async throws {
-        let extra = filter.excludedManufacturerQuery.map {
-            URLQueryItem(name: "manufacturer_id__n", value: String($0))
-        }
         let (rows, skipped) = try await fetchAll(
             path: "/api/dcim/device-types/",
-            extraQuery: extra,
+            extraQuery: [],
             as: Components.Schemas.DeviceType.self
         )
         let records = rows.map(NetBoxMapping.deviceType)
@@ -441,6 +609,32 @@ actor NetBoxSyncEngine {
         }
     }
 
+    private func syncLocations() async throws {
+        let (rows, skipped) = try await fetchAll(
+            path: "/api/dcim/locations/",
+            extraQuery: [],
+            as: NetBoxRecord.Location.self
+        )
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyLocations(
+                rows, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
+    }
+
+    private func syncRackRoles() async throws {
+        let (rows, skipped) = try await fetchAll(
+            path: "/api/dcim/rack-roles/",
+            extraQuery: [],
+            as: NetBoxRecord.RackRole.self
+        )
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyRackRoles(
+                rows, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
+    }
+
     private func syncRacks() async throws {
         let (rows, skipped) = try await fetchAll(
             path: "/api/dcim/racks/",
@@ -455,20 +649,157 @@ actor NetBoxSyncEngine {
     }
 
     private func syncDevices() async throws {
-        var extra = filter.excludedManufacturerQuery.map {
-            URLQueryItem(name: "manufacturer_id__n", value: String($0))
-        }
-        extra += filter.excludedRoleQueryAsStrings.map {
-            URLQueryItem(name: "role_id__n", value: $0)
-        }
         let (rows, skipped) = try await fetchAll(
             path: "/api/dcim/devices/",
-            extraQuery: extra,
+            extraQuery: [],
             as: NetBoxRecord.Device.self
         )
         _ = try await applyOnStore { context in
             try NetBoxStore.applyDevices(
-                rows, fetchComplete: true, skipped: skipped, in: context
+                rows,
+                fetchComplete: true,
+                skipped: skipped,
+                in: context
+            )
+        }
+    }
+
+    private func syncDeviceBays() async throws {
+        let keeping = AcceptedInterfaceIDs()
+        let missingShelves = AcceptedInterfaceIDs()
+        let walk = try await NetBoxPageIterator.streamDecoded(
+            path: "/api/dcim/device-bays/",
+            extraQuery: [],
+            as: NetBoxRecord.DeviceBay.self,
+            using: fetcher,
+            maxPages: NetBoxPageIterator.interfaceMaxPages
+        ) { page, _ in
+            let result = try await self.applyOnStore { context in
+                try NetBoxStore.applyDeviceBays(
+                    page,
+                    fetchComplete: false,
+                    skipped: 0,
+                    keeping: [],
+                    in: context
+                )
+            }
+            await keeping.formUnion(result.acceptedIDs)
+            await missingShelves.formUnion(result.missingParentIDs)
+        }
+        let missing = await missingShelves.ids
+        var retrySkipped = 0
+        if !missing.isEmpty {
+            try await fetchAndApplyDevices(ids: missing)
+            for shelfID in missing.sorted() {
+                let extra = [URLQueryItem(name: "device_id", value: String(shelfID))]
+                let (rows, skipped) = try await fetchAll(
+                    path: "/api/dcim/device-bays/",
+                    extraQuery: extra,
+                    as: NetBoxRecord.DeviceBay.self
+                )
+                retrySkipped += skipped
+                let retry = try await applyOnStore { context in
+                    try NetBoxStore.applyDeviceBays(
+                        rows, fetchComplete: false, skipped: 0, keeping: [], in: context
+                    )
+                }
+                await keeping.formUnion(retry.acceptedIDs)
+                if !retry.missingParentIDs.isEmpty {
+                    let sample = retry.missingParentIDs.sorted().prefix(5).map(String.init).joined(separator: ", ")
+                    logger.error(
+                        "Dropped device bays whose shelf is still missing after retrieve (\(retry.missingParentIDs.count) devices, e.g. \(sample))."
+                    )
+                }
+            }
+        }
+        let seen = await keeping.ids
+        let skipped = walk.skipped + retrySkipped
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyDeviceBays(
+                [],
+                fetchComplete: true,
+                skipped: skipped,
+                keeping: seen,
+                in: context
+            )
+        }
+    }
+
+    private func syncFrontPorts() async throws {
+        let keeping = AcceptedInterfaceIDs()
+        let missingDevices = AcceptedInterfaceIDs()
+        let walk = try await NetBoxPageIterator.streamDecoded(
+            path: "/api/dcim/front-ports/",
+            extraQuery: [],
+            as: NetBoxRecord.FrontPort.self,
+            using: fetcher,
+            maxPages: NetBoxPageIterator.interfaceMaxPages
+        ) { page, _ in
+            let result = try await self.applyOnStore { context in
+                try NetBoxStore.applyFrontPorts(
+                    page,
+                    fetchComplete: false,
+                    skipped: 0,
+                    keeping: [],
+                    in: context
+                )
+            }
+            await keeping.formUnion(result.acceptedIDs)
+            await missingDevices.formUnion(result.missingParentIDs)
+        }
+        let missing = await missingDevices.ids
+        var retrySkipped = 0
+        if !missing.isEmpty {
+            try await fetchAndApplyDevices(ids: missing)
+            for deviceID in missing.sorted() {
+                let extra = [URLQueryItem(name: "device_id", value: String(deviceID))]
+                let (rows, skipped) = try await fetchAll(
+                    path: "/api/dcim/front-ports/",
+                    extraQuery: extra,
+                    as: NetBoxRecord.FrontPort.self
+                )
+                retrySkipped += skipped
+                let retry = try await applyOnStore { context in
+                    try NetBoxStore.applyFrontPorts(
+                        rows, fetchComplete: false, skipped: 0, keeping: [], in: context
+                    )
+                }
+                await keeping.formUnion(retry.acceptedIDs)
+                if !retry.missingParentIDs.isEmpty {
+                    let sample = retry.missingParentIDs.sorted().prefix(5).map(String.init).joined(separator: ", ")
+                    logger.error(
+                        "Dropped front ports whose device is still missing after retrieve (\(retry.missingParentIDs.count) devices, e.g. \(sample))."
+                    )
+                }
+            }
+        }
+        let seen = await keeping.ids
+        let skipped = walk.skipped + retrySkipped
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyFrontPorts(
+                [],
+                fetchComplete: true,
+                skipped: skipped,
+                keeping: seen,
+                in: context
+            )
+        }
+    }
+
+    /// Parents named by bays or front ports that were not in the store
+    /// yet. Fetch by id and store so the children can attach.
+    private func fetchAndApplyDevices(ids: Set<Int64>) async throws {
+        guard !ids.isEmpty else { return }
+        let extra = ids.sorted().map { URLQueryItem(name: "id", value: String($0)) }
+        let (rows, _) = try await fetchAll(
+            path: "/api/dcim/devices/",
+            extraQuery: extra,
+            as: NetBoxRecord.Device.self
+        )
+        guard !rows.isEmpty else { return }
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyDevices(
+                rows, fetchComplete: false, skipped: 0, in: context
             )
         }
     }
@@ -487,13 +818,10 @@ actor NetBoxSyncEngine {
     }
 
     private func syncInterfaces() async throws {
-        let extra = filter.excludedRoleQueryAsInts.map {
-            URLQueryItem(name: "device_role_id__n", value: String($0))
-        }
         let keeping = AcceptedInterfaceIDs()
         let walk = try await NetBoxPageIterator.streamDecoded(
             path: "/api/dcim/interfaces/",
-            extraQuery: extra,
+            extraQuery: [],
             as: NetBoxRecord.Interface.self,
             using: fetcher,
             maxPages: NetBoxPageIterator.interfaceMaxPages
@@ -512,6 +840,38 @@ actor NetBoxSyncEngine {
         let seen = await keeping.ids
         _ = try await applyOnStore { context in
             try NetBoxStore.applyInterfaces(
+                [],
+                fetchComplete: true,
+                skipped: walk.skipped,
+                keeping: seen,
+                in: context
+            )
+        }
+    }
+
+    private func syncCables() async throws {
+        let keeping = AcceptedInterfaceIDs()
+        let walk = try await NetBoxPageIterator.streamDecoded(
+            path: "/api/dcim/cables/",
+            extraQuery: [],
+            as: NetBoxRecord.Cable.self,
+            using: fetcher,
+            maxPages: NetBoxPageIterator.interfaceMaxPages
+        ) { page, _ in
+            let result = try await self.applyOnStore { context in
+                try NetBoxStore.applyCables(
+                    page,
+                    fetchComplete: false,
+                    skipped: 0,
+                    keeping: [],
+                    in: context
+                )
+            }
+            await keeping.formUnion(result.acceptedIDs)
+        }
+        let seen = await keeping.ids
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyCables(
                 [],
                 fetchComplete: true,
                 skipped: walk.skipped,
@@ -639,12 +999,16 @@ actor NetBoxSyncEngine {
     }
 
     private func applyDeltaItem(_ item: NetBoxDeltaItem) async throws {
-        if item.action == "delete" {
-            try await deleteObject(kind: item.kind, id: item.objectID)
+        if item.kind == .cable {
+            if item.action == "delete" {
+                try await deleteLocalCableAndRefreshEnds(id: item.objectID)
+            } else {
+                try await applyCableAndEnds(id: item.objectID)
+            }
             return
         }
-        if item.kind == .cable {
-            try await refreshCableInterfaces(id: item.objectID)
+        if item.action == "delete" {
+            try await deleteObject(kind: item.kind, id: item.objectID)
             return
         }
         do {
@@ -658,15 +1022,57 @@ actor NetBoxSyncEngine {
         }
     }
 
-    private func refreshCableInterfaces(id: Int64) async throws {
+    /// Persist the cable row and re-fetch both interface ends.
+    private func applyCableAndEnds(id: Int64) async throws {
         let data: Data
         do {
             data = try await fetcher.get(path: "/api/dcim/cables/\(id)/", query: [])
         } catch NetBoxSyncError.httpStatus(let code, _) where code == 404 {
+            try await deleteLocalCableAndRefreshEnds(id: id)
             return
         }
         let cable = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: data)
+        _ = try await applyOnStore {
+            try NetBoxStore.applyCables(
+                [cable], fetchComplete: false, skipped: 0, keeping: [], in: $0
+            )
+        }
         for interfaceID in cable.interfaceIDs {
+            try await applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .interface,
+                    objectID: interfaceID,
+                    action: "update",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+        }
+        for portID in cable.frontPortIDs {
+            try await applyDeltaItem(
+                NetBoxDeltaItem(
+                    kind: .frontPort,
+                    objectID: portID,
+                    action: "update",
+                    changeID: 0,
+                    time: nil
+                )
+            )
+        }
+    }
+
+    private func deleteLocalCableAndRefreshEnds(
+        id: Int64,
+        extraInterfaceIDs: [Int64] = []
+    ) async throws {
+        let stored = try await applyOnStore { context -> [Int64] in
+            let ends = try Self.localCableEnds(id: id, in: context)
+            _ = try NetBoxStore.deleteIDs(Cable.self, ids: [id], in: context)
+            return ends
+        }
+        var ends = Set(stored)
+        ends.formUnion(extraInterfaceIDs)
+        for interfaceID in ends {
             try await applyDeltaItem(
                 NetBoxDeltaItem(
                     kind: .interface,
@@ -679,6 +1085,14 @@ actor NetBoxSyncEngine {
         }
     }
 
+    private static func localCableEnds(id: Int64, in context: ModelContext) throws -> [Int64] {
+        let descriptor = FetchDescriptor<Cable>(
+            predicate: #Predicate<Cable> { $0.id == id }
+        )
+        guard let cable = try context.fetch(descriptor).first else { return [] }
+        return [cable.aInterfaceId, cable.bInterfaceId].compactMap { $0 }
+    }
+
     private func upsertRetrieved(kind: NetBoxChangeKind, data: Data) async throws {
         switch kind {
         case .tenantGroup:
@@ -688,19 +1102,11 @@ actor NetBoxSyncEngine {
             }
         case .deviceRole:
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.DeviceRole.self, from: data)
-            guard filter.includesDeviceRole(id: Int(row.id)) else {
-                try await deleteObject(kind: .deviceRole, id: row.id)
-                return
-            }
             _ = try await applyOnStore {
                 try NetBoxStore.applyDeviceRoles([row], fetchComplete: false, skipped: 0, in: $0)
             }
         case .deviceType:
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.DeviceType.self, from: data)
-            guard filter.includesDeviceType(manufacturerID: Int(row.manufacturerID)) else {
-                try await deleteObject(kind: .deviceType, id: row.id)
-                return
-            }
             _ = try await applyOnStore {
                 try NetBoxStore.applyDeviceTypes([row], fetchComplete: false, skipped: 0, in: $0)
             }
@@ -724,6 +1130,16 @@ actor NetBoxSyncEngine {
             _ = try await applyOnStore {
                 try NetBoxStore.applySites([row], fetchComplete: false, skipped: 0, in: $0)
             }
+        case .location:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Location.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyLocations([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .rackRole:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.RackRole.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyRackRoles([row], fetchComplete: false, skipped: 0, in: $0)
+            }
         case .rack:
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Rack.self, from: data)
             _ = try await applyOnStore {
@@ -731,15 +1147,22 @@ actor NetBoxSyncEngine {
             }
         case .device:
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Device.self, from: data)
-            guard filter.includesDevice(
-                manufacturerID: row.manufacturerID.map(Int.init),
-                roleID: Int(row.roleID)
-            ) else {
-                try await deleteObject(kind: .device, id: row.id)
-                return
-            }
             _ = try await applyOnStore {
                 try NetBoxStore.applyDevices([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .deviceBay:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.DeviceBay.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyDeviceBays(
+                    [row], fetchComplete: false, skipped: 0, keeping: [], in: $0
+                )
+            }
+        case .frontPort:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.FrontPort.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyFrontPorts(
+                    [row], fetchComplete: false, skipped: 0, keeping: [], in: $0
+                )
             }
         case .interface:
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Interface.self, from: data)
@@ -754,7 +1177,12 @@ actor NetBoxSyncEngine {
                 try NetBoxStore.applyServices([row], fetchComplete: false, skipped: 0, in: $0)
             }
         case .cable:
-            break
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyCables(
+                    [row], fetchComplete: false, skipped: 0, keeping: [], in: $0
+                )
+            }
         }
     }
 
@@ -768,11 +1196,15 @@ actor NetBoxSyncEngine {
             case .region: return try NetBoxStore.deleteIDs(Region.self, ids: [id], in: context)
             case .siteGroup: return try NetBoxStore.deleteIDs(SiteGroup.self, ids: [id], in: context)
             case .site: return try NetBoxStore.deleteIDs(Site.self, ids: [id], in: context)
+            case .location: return try NetBoxStore.deleteIDs(SiteLocation.self, ids: [id], in: context)
+            case .rackRole: return try NetBoxStore.deleteIDs(RackRole.self, ids: [id], in: context)
             case .rack: return try NetBoxStore.deleteIDs(Rack.self, ids: [id], in: context)
             case .device: return try NetBoxStore.deleteIDs(Device.self, ids: [id], in: context)
+            case .deviceBay: return try NetBoxStore.deleteIDs(DeviceBay.self, ids: [id], in: context)
+            case .frontPort: return try NetBoxStore.deleteIDs(FrontPort.self, ids: [id], in: context)
             case .interface: return try NetBoxStore.deleteIDs(Interface.self, ids: [id], in: context)
             case .service: return try NetBoxStore.deleteIDs(Service.self, ids: [id], in: context)
-            case .cable: return 0
+            case .cable: return try NetBoxStore.deleteIDs(Cable.self, ids: [id], in: context)
             }
         }
     }
@@ -792,8 +1224,7 @@ actor NetBoxSyncEngine {
         return (first.id, first.time)
     }
 
-    private func stampFullSuccess() async throws {
-        let cursor = try? await latestChangelogCursor()
+    private func stampFullSuccess(cursor: (id: Int64, time: Date?)?) async throws {
         _ = try await applyOnStore { context in
             let now = Date()
             let provider = try Self.upsertProvider(in: context)
@@ -834,6 +1265,12 @@ actor NetBoxSyncEngine {
         context.insert(created)
         return created
     }
+
+    private func announceStoreDidApply() async {
+        await MainActor.run {
+            NotificationCenter.default.post(name: .netBoxStoreDidApply, object: nil)
+        }
+    }
 }
 
 private extension NetBoxSyncError {
@@ -852,8 +1289,8 @@ private actor AcceptedInterfaceIDs {
 // MARK: - Environment
 
 extension Notification.Name {
-    /// Posted on the main actor after a successful write has been
-    /// re-fetched into SwiftData. Site graph, faceplate, and tables reload.
+    /// Posted on the main actor after a successful write, full mirror,
+    /// or delta apply has been re-fetched into SwiftData.
     static let netBoxStoreDidApply = Notification.Name("netbox.storeDidApply")
 }
 

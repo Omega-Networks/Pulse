@@ -30,6 +30,7 @@ struct DeviceRow: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openWindow) private var openWindow
+    @Environment(LicenseSeatStore.self) private var seats
     var deviceId: Int64
     @Query var device: [Device]
     @Binding var selectedDevice: Device?
@@ -41,6 +42,10 @@ struct DeviceRow: View {
         _device = Query(filter: #Predicate<Device> { $0.id == deviceId } )
     }
     
+    private var seated: Bool {
+        seats.allowsActions(deviceID: deviceId)
+    }
+
     var body: some View {
         HStack {
             ZStack(alignment: .center) {
@@ -95,12 +100,15 @@ struct DeviceRow: View {
                     openWindow(id: "ssh-terminal", value: DeviceWindowTarget(deviceID: device.id))
                 }
             }) {
-                Label("Open SSH Terminal", systemImage: "terminal.fill")
+                Label(
+                    seated ? "Open SSH Terminal" : "Subscribe to resume",
+                    systemImage: "terminal.fill"
+                )
             }
             // Disabled when the device has no primary IP recorded in
             // NetBox: the operator-facing terminal needs a routable
-            // host to connect to.
-            .disabled(device.first?.primaryIP?.isEmpty != false)
+            // host to connect to. Also off when the device is unseated.
+            .disabled(!seated || device.first?.primaryIP?.isEmpty != false)
 
             Button(action: {
                 if let device = device.first {
@@ -111,11 +119,14 @@ struct DeviceRow: View {
                     openWindow(id: "device-web", value: DeviceWindowTarget(deviceID: device.id))
                 }
             }) {
-                Label("Open Web UI", systemImage: "globe")
+                Label(
+                    seated ? "Open Web UI" : "Subscribe to resume",
+                    systemImage: "globe"
+                )
             }
             // Disabled unless NetBox declares a web-serving (HTTP/HTTPS) service
             // for this device. WebServiceResolver is the source-of-truth rule.
-            .disabled(device.first.flatMap { WebServiceResolver.primaryTarget(for: $0) } == nil)
+            .disabled(!seated || device.first.flatMap { WebServiceResolver.primaryTarget(for: $0) } == nil)
 
             Button(role: .destructive, action: {
                 if let device = device.first {

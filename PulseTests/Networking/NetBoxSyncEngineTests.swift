@@ -29,7 +29,8 @@ final class NetBoxSyncEngineTests: XCTestCase {
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self, WebHostTrust.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
@@ -50,7 +51,11 @@ final class NetBoxSyncEngineTests: XCTestCase {
         XCTAssertTrue(fetcher.paths.contains("/api/tenancy/tenant-groups/"))
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/regions/"))
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/devices/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/dcim/device-bays/"))
         XCTAssertTrue(fetcher.paths.contains("/api/ipam/services/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/dcim/cables/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/dcim/locations/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/dcim/rack-roles/"))
     }
 
     func testFailureDoesNotStampAndDoesNotDelete() async throws {
@@ -152,22 +157,28 @@ final class NetBoxSyncEngineTests: XCTestCase {
         XCTAssertEqual(tenants.first?.group?.id, 4)
     }
 
-    func testDeviceQueryUsesFilterExcludes() async throws {
+    func testDeviceQueryHasNoManufacturerOrRoleExcludes() async throws {
         let container = try makeContainer()
         let fetcher = MockNetBoxFetcher()
         fetcher.emptySuccess = true
         let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
         try await engine.fullSync()
-        let deviceQuery = try XCTUnwrap(fetcher.queries["/api/dcim/devices/"])
-        let names = deviceQuery.map(\.name)
-        XCTAssertTrue(names.contains("manufacturer_id__n"))
-        XCTAssertTrue(names.contains("role_id__n"))
-        XCTAssertEqual(deviceQuery.first { $0.name == "manufacturer_id__n" }?.value, "5")
-        XCTAssertTrue(deviceQuery.contains { $0.name == "role_id__n" && $0.value == "29" })
-        XCTAssertTrue(deviceQuery.contains { $0.name == "role_id__n" && $0.value == "30" })
+        let deviceQueries = fetcher.queryLog.filter { $0.path == "/api/dcim/devices/" }.map(\.query)
+        XCTAssertFalse(deviceQueries.isEmpty)
+        XCTAssertFalse(deviceQueries.contains { query in
+            query.contains { $0.name == "manufacturer_id__n" || $0.name == "role_id__n" || $0.name == "role_id" }
+        })
+        let typeQueries = fetcher.queryLog.filter { $0.path == "/api/dcim/device-types/" }.map(\.query)
+        XCTAssertFalse(typeQueries.contains { query in
+            query.contains { $0.name == "manufacturer_id__n" }
+        })
+        let roleQueries = fetcher.queryLog.filter { $0.path == "/api/dcim/device-roles/" }.map(\.query)
+        XCTAssertFalse(roleQueries.contains { query in
+            query.contains { $0.name == "id__n" }
+        })
     }
 
-    func testInterfaceWalkIsPartOfFullSyncAndUsesRoleExclude() async throws {
+    func testInterfaceWalkIsPartOfFullSyncWithoutRoleExclude() async throws {
         let container = try makeContainer()
         let fetcher = MockNetBoxFetcher()
         fetcher.emptySuccess = true
@@ -178,8 +189,7 @@ final class NetBoxSyncEngineTests: XCTestCase {
         let interfaceIndex = try XCTUnwrap(fetcher.paths.firstIndex(of: "/api/dcim/interfaces/"))
         XCTAssertGreaterThan(interfaceIndex, servicesIndex)
         let query = try XCTUnwrap(fetcher.queries["/api/dcim/interfaces/"])
-        XCTAssertTrue(query.contains { $0.name == "device_role_id__n" && $0.value == "29" })
-        XCTAssertTrue(query.contains { $0.name == "device_role_id__n" && $0.value == "30" })
+        XCTAssertFalse(query.contains { $0.name == "device_role_id__n" })
     }
 
     func testInterfaceMidWalkFailureDoesNotStampOrDelete() async throws {
@@ -224,6 +234,7 @@ final class NetBoxSyncEngineTests: XCTestCase {
 private final class MockNetBoxFetcher: NetBoxFetching, @unchecked Sendable {
     var paths: [String] = []
     var queries: [String: [URLQueryItem]] = [:]
+    var queryLog: [(path: String, query: [URLQueryItem])] = []
     var bodies: [String: Data] = [:]
     var sequentialBodies: [String: [Data]] = [:]
     var sequentialIndex: [String: Int] = [:]
@@ -240,6 +251,7 @@ private final class MockNetBoxFetcher: NetBoxFetching, @unchecked Sendable {
         }
         paths.append(path)
         queries[path] = query
+        queryLog.append((path, query))
         if path == failPath {
             throw NetBoxSyncError.httpStatus(code: 500, body: "boom")
         }

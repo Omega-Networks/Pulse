@@ -33,6 +33,7 @@ struct EventTable: View {
     @State private var isPopoverShown = false
     @State private var selectedEvent: Event?
     @Query private var devices: [Device]
+    @Environment(LicenseSeatStore.self) private var seats
     
     //Properties for the table
     @State private var sortOrder = [KeyPathComparator(\Event.formattedClock)]
@@ -72,13 +73,14 @@ struct EventTable: View {
         // Applying predication to devices and events
         let siteId = site.id
         self._devices = Query(filter: #Predicate<Device> { device in
-            device.site?.id == siteId})
+            device.siteId == siteId
+        })
     }
     
     var body: some View {
         VStack {
             //TODO: Determine how to enable multi-selection in iOS
-            Table(events, selection: $selection, sortOrder: $sortOrder) {
+            Table(events, selection: seatedSelection, sortOrder: $sortOrder) {
                 TableColumn("Time", value: \.formattedClock) { value in
                     if isCompact {
                         HStack {
@@ -141,7 +143,16 @@ struct EventTable: View {
                 }.width(100)
                 
                 TableColumn("Device") { value in
-                    Text(value.device?.name ?? "Unknown")
+                    if isSeated(value) {
+                        Text(value.device?.name ?? "Unknown")
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(value.device?.name ?? "Unknown")
+                                .foregroundStyle(.secondary)
+                            SubscribeToResumeLabel()
+                                .font(.caption)
+                        }
+                    }
                 }
                 .width(min: 80, ideal: 100, max: 200)
                 
@@ -152,7 +163,12 @@ struct EventTable: View {
                     .width(90)
                 
                 TableColumn("Ack", value: \.acknowledgedString) { value in
-                    AcknowledgedCell(selectedEvents: [value], acknowledgedString: value.acknowledgedString, acknowledgedColor: value.acknowledgedColor)
+                    AcknowledgedCell(
+                        selectedEvents: [value],
+                        acknowledgedString: value.acknowledgedString,
+                        acknowledgedColor: value.acknowledgedColor,
+                        allowsUpdate: isSeated(value)
+                    )
                 }.width(25)
             }
             .onChange(of: sortOrder) { newValue, _ in
@@ -168,6 +184,22 @@ struct EventTable: View {
             }
         }
     }
+
+    private func isSeated(_ event: Event) -> Bool {
+        guard let deviceID = event.device?.id else { return false }
+        return seats.allowsActions(deviceID: deviceID)
+    }
+
+    private var seatedSelection: Binding<Set<Event.ID>> {
+        Binding(
+            get: { selection },
+            set: { newValue in
+                selection = Set(
+                    events.filter { newValue.contains($0.id) && isSeated($0) }.map(\.id)
+                )
+            }
+        )
+    }
 }
 
 #Preview("Event Table", traits: .modifier(PreviewData())) {
@@ -175,6 +207,7 @@ struct EventTable: View {
     
     if let previewSite = sites.first {
         EventTable(site: previewSite)
+            .environment(LicenseSeatStore())
             .frame(width: 600, height: 400) // Good size for table preview
     }
 }

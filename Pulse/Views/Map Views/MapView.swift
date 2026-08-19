@@ -32,8 +32,7 @@ import OSLog
 struct MapView: View {
     @Environment(\.openWindow) var openWindow
     @Environment(\.modelContext) private var modelContext
-    @Environment(ClusteringService.self) private var clusteringService
-    @Environment(PowerSenseMonitorService.self) private var monitorService
+    @Environment(PowerSenseMonitorService.self) private var monitorService: PowerSenseMonitorService?
     @Query private var sites: [Site]
 
     // Phase 3: GPU-accelerated spatial clustering for outage visualization
@@ -160,7 +159,7 @@ struct MapView: View {
                     logger.info("Cleared spatial clusters - overlay disabled")
                 }
             }
-            .onChange(of: monitorService.cachedResult) { _, newResult in
+            .onChange(of: monitorService?.cachedResult) { _, newResult in
                 // Auto-update polygons when background polling detects changes
                 guard showPowerSenseOverlay, let result = newResult else {
                     // Clear stale clusters and stats when cachedResult is nil (e.g. after event deletion)
@@ -490,6 +489,11 @@ struct MapView: View {
 
     /// Display cached clusters from monitor service (fast path: <0.4s)
     private func showCachedClusters() async {
+        guard let monitorService else {
+            logger.info("Skipping PowerSense clusters — integration is not loaded")
+            return
+        }
+
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // Try to get cached result from monitor service
@@ -536,6 +540,12 @@ struct MapView: View {
 
         await MainActor.run {
             isClusteringInProgress = true
+        }
+
+        guard let monitorService else {
+            logger.info("Skipping fresh clustering — PowerSense is not loaded")
+            await MainActor.run { isClusteringInProgress = false }
+            return
         }
 
         do {

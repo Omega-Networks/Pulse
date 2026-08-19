@@ -29,29 +29,19 @@ import Foundation
 struct DeviceInRackView: View {
     var device: Device
     let unitHeight: CGFloat
+    /// EIA chassis width (17.75 in). Callers pass `EIA310.chassisWidth`.
     let rackWidth: CGFloat
     
     var body: some View {
         ZStack {
-            // Outer clear rectangle with gray stroke
-            RoundedRectangle(cornerRadius: rackUnitCornerRadius)
-                .fill(Color.clear)
-                .overlay(
-                    RoundedRectangle(cornerRadius: rackUnitCornerRadius)
-                        .stroke(Color.gray.opacity(0.5), lineWidth: 0.5)
-                )
-            
-            // Colored severity rectangle
             RoundedRectangle(cornerRadius: rackUnitCornerRadius)
                 .fill(device.severityColor)
-                .frame(width: rackWidth - 25, height: unitHeight)
-            
-            // Device name
             Text(device.name ?? "Unnamed Device")
-                .font(.system(size: 14))
+                .font(.system(size: min(12, max(8, unitHeight * 0.5))))
                 .foregroundColor(.black)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .padding(.horizontal, 6)
         }
         .frame(width: rackWidth, height: unitHeight)
         .applyCommonModifiers()

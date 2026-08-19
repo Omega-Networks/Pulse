@@ -1,6 +1,6 @@
 # NetBox sync (operator)
 
-Pulse mirrors a subset of NetBox into local SwiftData. The **first** launch (and any launch with no changelog watermark) does a full pull, including interfaces. After that, boot applies `/api/core/object-changes/` since the last applied change id. Settings → Database → **Full Resync** still does a complete mirror.
+Pulse mirrors a subset of NetBox into local SwiftData. The **first** launch (and any launch with no changelog watermark) does a full pull, including interfaces, cables, rack fillers, device bays, and front ports. After that, boot applies `/api/core/object-changes/` since the last applied change id. Settings → Database → **Full Resync** still does a complete mirror.
 
 A watermark older than NetBox’s retained changelog (default 90 days — `CHANGELOG_RETENTION` must exceed the longest expected offline gap) or a wiped store with a leftover watermark forces a full mirror. A weekly safety mirror covers edits made without request context (shell, migrations).
 
@@ -19,21 +19,19 @@ Use a **dedicated service account**. Read-only tokens still work for sync. Write
 - model/action-scoped permissions: `dcim.interface` change, `dcim.cable` add/delete
 - v1 `Token …` or v2 `Bearer nbt_…` (same as read)
 
-A token without write permission returns 403; Pulse shows NetBox's body and does not change local data. Device and site writes exist in the service but are gated off — Add Site never POSTs.
+A token without write permission returns 403; Pulse shows NetBox's body and does not change local data.
 
 Pulse does **not** send `If-Match`. Concurrent edits last-write-wins. A 412 from the server is shown as a conflict, not applied.
 
 ## Filters
 
-Fetch and local delete share one configuration (`NetBoxFilterConfiguration`). Defaults match the previous baked-in query so a first sync is a parity run, not a scope change.
+Sync stores every device, device type, and device role. There is no `manufacturer_id__n` or `role_id__n` on the pull. Fetch and local delete stay aligned (the whole instance).
 
-| Filter | Default | Used on |
-|---|---|---|
-| Exclude manufacturer IDs | `5` | device types, devices |
-| Exclude role IDs | `29`, `30` | device roles, devices, interfaces (`device_role_id__n`) |
-| Static-device role IDs | `6`, `7`, `18`, `27` | on-demand rack fillers (blank plate, cable management, patch panel, shelf) |
+What you see is **Settings → Roles** (`RolePresentation`). Those toggles never delete rows. Omega defaults treat roles 6, 7, 18, and 27 (blank, cable management, patch panel, shelf) as rack hardware: hidden from the site graph and device list, drawn in the rack, not monitored.
 
-Changing these is configuration, not a code edit. A Settings UI comes later.
+A future per-device subscription will count roles that appear on the site graph, in the device list, or in the rack as a named device. **As hardware** does not count. There is no operator License toggle; the count is derived so it cannot be switched off independently. The count is not enforced yet.
+
+After this change, run **Full Resync** once so previously excluded Generic devices, roles 29/30, and their interfaces land in the store.
 
 ## Forced resync
 
@@ -75,3 +73,13 @@ Validation errors (duplicate cable, missing field) show the server JSON.
 **New site** is the map window **+**. Tap the map first if you want coordinates and a reverse-geocoded address; then **+**. The form sends `name`, a slug derived from the name, `status`, and optional region/group/tenant. Address is the MapKit full line, clipped to 200 characters. Coordinates are rounded to 5 decimals. Region is preselected when a stored region name appears in that address. A failed POST leaves no local site.
 
 **New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/`, then Pulse loads that device’s interfaces so template ports (FortiAP and similar) show immediately. A failed POST leaves no local device. Serial, primary IP, and other fields are not on this form yet.
+
+## Rack edit
+
+Racks live in Site View's right-hand **Rack View** tab and scroll left to right, aligned to the top of the pane. Elevations follow EIA-310-D / IEC 60297: 1 RU is 1.75 in, the frame is 19 in, equipment chassis is 17.75 in between the rails, and blank plates / patch panels span the full 19 in.
+
+The pencil next to **+** arms edit mode. Drag is off until then, so a glance cannot unrack a device. In edit mode, drag a graph node onto a U, drag a racked device to another U or another rack, or drop it on the graph (or empty strip) to unrack. Click an empty U to place an existing unracked device or **Create new…** (the same New Device form, including tenant). Each rack has a Front / Rear control; occupancy is per face. In edit mode, right-click a device to move it to the other face.
+
+Click a patch-panel port to Connect (to a free interface or another front port at the site) or Disconnect. That POSTs / DELETEs `/api/dcim/cables/` with `dcim.frontport` terminations. Ports stay numbered placeholders until a Full Resync has stored FrontPort rows. While you drag, the original stays put and the target Us highlight until you drop. **Undo** / **Cancel** / **Save** sit next to **Racks**. Undo and Cancel stay local. **Save** PATCHes each device (`rack` + `position` + `face`, or nulls on unrack). Creating a new device POSTs immediately. A failed write stops the rest and does not queue a retry.
+
+**+** on the Racks row POSTs `/api/dcim/racks/` with name, site, status, `u_height`, form factor, width, mounting depth, outer dimensions, airflow, tenant, location, rack role, and the other optional fields on the form. Empty optionals are omitted. Location and rack-role pickers read `/api/dcim/locations/` and `/api/dcim/rack-roles/` (Full Resync once after this change).

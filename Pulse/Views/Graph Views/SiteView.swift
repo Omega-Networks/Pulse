@@ -34,6 +34,9 @@ struct SiteView: View {
     @Environment(\.openWindow) var openWindow
     @Environment(\.modelContext) private var modelContext
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Environment(RolePresentationStore.self) private var rolePresentation
+    @Environment(LicenseSeatStore.self) private var seats
+    @Environment(EntitlementStore.self) private var entitlements
     
     // Query for the site and its devices
     @SceneStorage("selected-site-id") var storedSiteId: String = ""
@@ -62,6 +65,7 @@ struct SiteView: View {
     
     //Properties for showing the sheet for configuring Devices
     @State private var showingNewDeviceSheet = false
+    @State private var rackEdit = RackEditSession()
     
     //Properties to alter the laout
     @State var isHorizontalLayout: Bool = true
@@ -84,7 +88,7 @@ struct SiteView: View {
                     VStack(alignment: .leading) {
                         ScrollView(.vertical) {
                             LazyVStack(alignment: .leading) {
-                                ForEach(sites.first?.devices?.sorted { device1, device2 in
+                                ForEach(sites.first?.devices?.filter { !rolePresentation.policy(for: $0.deviceRole?.id).hideFromDeviceList }.sorted { device1, device2 in
                                     if device1.highestSeverity != device2.highestSeverity {
                                         return device1.highestSeverity > device2.highestSeverity
                                     }
@@ -125,11 +129,18 @@ struct SiteView: View {
                                     isHorizontalLayout: $isHorizontalLayout
                                 )
                                 .frame(width: 5000, height: 5000)
+                                .dropDestination(for: String.self) { items, _ in
+                                    RackEditActions.unrack(
+                                        items: items,
+                                        site: site,
+                                        session: rackEdit,
+                                        seats: seats,
+                                        presentation: rolePresentation.presentation
+                                    )
+                                }
                             }
                         }
-
                     } else {
-                        // Handle the case where site is nil
                         EmptyView()
                     }
                 }
@@ -138,7 +149,11 @@ struct SiteView: View {
                 //MARK: Right
                 if showRight {
                     if let site = sites.first {
-                        DeviceDetailsPanelView(site: site, selectedDevice: $selectedDevice)
+                        DeviceDetailsPanelView(
+                            site: site,
+                            selectedDevice: $selectedDevice,
+                            enableGestures: $enableGestures
+                        )
                     }
                 }
             }
@@ -157,8 +172,14 @@ struct SiteView: View {
         .toolbar(content: toolbarContent)
         .navigationTitle(sites.first?.name ?? "Unknown")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(rackEdit)
+        .task(id: rackEdit.draggingDeviceID) {
+            await RackEditActions.clearHoverWhenMouseReleased(session: rackEdit)
+        }
         .onChange(of: selectedDevice) {
-            showRight = selectedDevice != nil
+            if selectedDevice != nil {
+                showRight = true
+            }
         }
         .task {
             do {
@@ -169,8 +190,15 @@ struct SiteView: View {
             }
         }
         .sheet(isPresented: $showingNewDeviceSheet) {
-            NewDeviceSheet(siteId: siteId, onDismiss: { showingNewDeviceSheet = false })
+            NewDeviceSheet(
+                siteId: siteId,
+                defaultTenantID: sites.first?.tenant?.id,
+                onDismiss: { showingNewDeviceSheet = false }
+            )
                 .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                .environment(entitlements)
+                .environment(seats)
+                .environment(rolePresentation)
         }
     }
 }
@@ -201,7 +229,13 @@ extension SiteView {
             
             Spacer()
         }
+        .sharedBackgroundVisibility(.hidden)
         
+        ToolbarItem(placement: .status) {
+            ZabbixToolbarWarning()
+        }
+        .sharedBackgroundVisibility(.hidden)
+
         ToolbarItemGroup (placement: .primaryAction) {
             Button {
                 showingNewDeviceSheet = true
@@ -312,7 +346,9 @@ extension SiteView {
             .buttonStyle(.plain)
             .padding(.all, 5.0)
         }
+        .sharedBackgroundVisibility(.hidden)
     }
+
 }
 
 #endif

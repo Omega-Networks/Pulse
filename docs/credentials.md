@@ -32,7 +32,7 @@ The intent: every SSH session, and every authenticated action within it, has a h
 
 Pulse has two credential tiers, distinguished by where the private material lives.
 
-**Secure Enclave (default).** Private key material resides in the Enclave hardware and never leaves. The Keychain holds only an opaque reference — CryptoKit's `SecureEnclave.P256.Signing.PrivateKey.dataRepresentation`, an SE-encrypted blob that's useless to any other app and any other device. The blob lives in a `kSecClassGenericPassword` item under service `<bundle-id>.ssh` (for the Omega distribution build: `nz.net.omega.pulse.ssh`) and account `<credentialUUID>`. The service deriving from `Bundle.main.bundleIdentifier` rather than a hardcoded string makes the bundle reachability contract structural: a fork with a different `BUNDLE_IDENTIFIER` automatically lands credentials in a disjoint keychain namespace. The item lives under the access group `<TeamID>.<BundleID>`, uses access class `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, is pinned to the data-protection keychain, and is explicitly non-synchronisable.
+**Secure Enclave (default).** Private key material resides in the Enclave hardware and never leaves. The Keychain holds only an opaque reference — CryptoKit's `SecureEnclave.P256.Signing.PrivateKey.dataRepresentation`, an SE-encrypted blob that's useless to any other app and any other device. The blob lives in a `kSecClassGenericPassword` item under service `<bundle-id>.ssh` (for example `com.yourorg.pulse.ssh`) and account `<credentialUUID>`. The service deriving from `Bundle.main.bundleIdentifier` rather than a hardcoded string makes the bundle reachability contract structural: a fork with a different `BUNDLE_IDENTIFIER` automatically lands credentials in a disjoint keychain namespace. The item lives under the access group `<TeamID>.<BundleID>`, uses access class `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, is pinned to the data-protection keychain, and is explicitly non-synchronisable.
 
 **Legacy portable (PEM).** Private key material is a PEM-encoded byte string in the regular file-based Keychain, at key `ssh-cred-<UUID>-privateKey`. Access class `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` so background polling can read it when the device is unlocked-but-locked-screen. The `ssh-cred-<UUID>-passphrase` accessor is reserved schema for future encrypted-PEM support; v1 rejects encrypted PEMs at import (see the import note below), so nothing is written there today.
 
@@ -42,13 +42,13 @@ Neither tier syncs to iCloud. Both are `ThisDeviceOnly`. A credential created on
 
 This is the section to read carefully.
 
-The access group on every Secure Enclave credential is `<TeamID>.<BundleID>`. For example, a build signed under team `ABCDE12345` with bundle ID `nz.net.omega.pulse` resolves to:
+The access group on every Secure Enclave credential is `<TeamID>.<BundleID>`. For example, a build signed under team `ABCDE12345` with bundle ID `com.yourorg.pulse` resolves to:
 
 ```
-ABCDE12345.nz.net.omega.pulse
+ABCDE12345.com.yourorg.pulse
 ```
 
-Where `ABCDE12345` stands in for your Apple Developer team ID and `nz.net.omega.pulse` is the bundle identifier the app is signed under.
+Where `ABCDE12345` stands in for your Apple Developer team ID and `com.yourorg.pulse` is the bundle identifier the app is signed under.
 
 The Enclave uses the access group as part of how it authorises Keychain reads: only an app signed by the same team, under the same bundle ID, can ask the Enclave for that key reference. Change either half of the tuple and existing SE credentials become unreachable.
 
@@ -89,7 +89,7 @@ In Debug builds of Pulse, right-clicking any credential row shows an **Inspect k
 
 ```
 Credential: Lab-1
-Access group: ABCDE12345.nz.net.omega.pulse
+Access group: ABCDE12345.com.yourorg.pulse
 Token ID: (CryptoKit SE.P256 — generic-password storage)
 Synchronizable: false
 Access control: biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly
@@ -163,7 +163,7 @@ For lab testing, the Debug menu's "Open SSH Test Window" surface offers a device
 
 ## Terminal preferences
 
-A small set of operator preferences live as global `@AppStorage` keys. Defaults are sensible and Pulse ships without a Settings UI surface for them; operators who need to change them can override via `defaults write nz.net.omega.pulse <key> <value>` while Pulse is not running. A future Settings → SSH "Terminal preferences" sub-pane will surface the toggles without migrating storage.
+A small set of operator preferences live as global `@AppStorage` keys. Defaults are sensible and Pulse ships without a Settings UI surface for them; operators who need to change them can override via `defaults write com.yourorg.pulse <key> <value>` while Pulse is not running. A future Settings → SSH "Terminal preferences" sub-pane will surface the toggles without migrating storage.
 
 **Bell behaviour.** When the server emits BEL (`^G`, `0x07`), Pulse fires an audible beep and a brief visual flash on the terminal area by default. Both axes are independently toggleable:
 
@@ -315,7 +315,7 @@ A five-minute end-to-end procedure to run before pushing changes that touch SSH 
 2. Open Pulse → Settings → SSH → **Create Secure Enclave credential**. Label it `Lab-1`. Click Generate. Expect no biometric prompt (creation doesn't sign anything; the prompt only fires on first signature). New row with green badge and SHA256 fingerprint.
 3. Click the clipboard icon on the `Lab-1` row. Icon flips to a green checkmark for ~1.5 s. Paste somewhere (TextEdit, Terminal). Confirm the line begins `ecdsa-sha2-nistp256 ` and ends with ` Lab-1`. Run `ssh-keygen -lf -` and paste the line followed by Ctrl-D; the printed SHA256 fingerprint must match the row.
 4. Right-click `Lab-1` → **Inspect key attributes**. Confirm:
-   - Access group ends in `.nz.net.omega.pulse` (or your fork's bundle ID, prefixed by your team ID).
+   - Access group ends in `.com.yourorg.pulse` (or your fork's bundle ID, prefixed by your team ID).
    - Token ID reads `(CryptoKit SE.P256 — generic-password storage)`. Current builds store SE keys as opaque CryptoKit `dataRepresentation` blobs in `kSecClassGenericPassword` items, which carry no `kSecAttrTokenID`. A `com.apple.setoken` value here would indicate a pre-migration orphan that should not appear on a fresh build (see the **Debug inspection** section's Token ID note).
    - Synchronizable is `false`.
    - Access control is `biometryAny OR devicePasscode, privateKeyUsage, WhenUnlockedThisDeviceOnly`.

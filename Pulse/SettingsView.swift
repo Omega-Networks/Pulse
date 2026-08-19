@@ -33,7 +33,10 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PowerSenseMonitorService.self) private var monitorService: PowerSenseMonitorService?
     @Environment(ClusteringService.self) private var clusteringService: ClusteringService?
+    @Environment(EntitlementStore.self) private var entitlements
+    @Environment(LicenseSeatStore.self) private var seats
     @StateObject private var tipManager = TipManager.shared
+    @State private var showingPaywall = false
 
     private let logger = Logger(subsystem: "powersense", category: "settings")
 
@@ -83,24 +86,69 @@ struct SettingsView: View {
     
     var body: some View {
         #if os(iOS)
-        NavigationView {
-            settingsForm
-                .navigationTitle("Settings")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Apply") {
-                            Task {
-                                await applySettings()
-                            }
-                        }
+        NavigationStack {
+            List {
+                Section("Subscription") {
+                    LabeledContent("Plan", value: entitlements.tier.displayName)
+                    if let caption = entitlements.periodCaption {
+                        Text(caption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Cancel") {
-                            dismiss()
+                    subscriptionSeatsRow
+                    Button("Subscribe") {
+                        showingPaywall = true
+                    }
+                    Button("Restore Purchases") {
+                        Task { @MainActor in
+                            await entitlements.restore()
                         }
                     }
                 }
+                Section("Connection") {
+                    NavigationLink("API credentials") {
+                        settingsForm
+                            .navigationTitle("API credentials")
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) {
+                                    Button("Apply") {
+                                        Task { await applySettings() }
+                                    }
+                                }
+                            }
+                    }
+                }
+                Section("NetBox") {
+                    NavigationLink("Device Roles") {
+                        RolePresentationSettings()
+                    }
+                    NavigationLink("Database") {
+                        SyncDashboardView()
+                            .navigationTitle("Database")
+                    }
+                }
+                Section("Access") {
+                    NavigationLink("SSH") {
+                        SSHCredentialsSettings()
+                    }
+                    NavigationLink("Web Trust") {
+                        WebTrustSettingsView()
+                    }
+                }
+                Section("Power") {
+                    NavigationLink("PowerSense") {
+                        powerSenseSettingsForm
+                            .navigationTitle("PowerSense")
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .modifier(SubscriptionPaywallSheet(isPresented: $showingPaywall))
         }
         #else
         TabView {
@@ -109,6 +157,11 @@ struct SettingsView: View {
             .tabItem {
                 Label("Settings", systemImage: "gearshape.fill")
             }
+
+            RolePresentationSettings()
+                .tabItem {
+                    Label("Roles", systemImage: "server.rack")
+                }
 
             ///PowerSense Configuration & Testing
             powerSenseSettingsForm
@@ -135,14 +188,51 @@ struct SettingsView: View {
                 }
         }
         .padding(20)
+        .modifier(SubscriptionPaywallSheet(isPresented: $showingPaywall))
         
         #endif
+    }
+
+    private var subscriptionSeatsRow: some View {
+        LabeledContent("Seats") {
+            HStack(spacing: 4) {
+                Text(entitlements.tier.meterLabel(seated: seats.seatedIDs.count))
+                SeatLicenseInfoButton()
+            }
+        }
     }
         
     // MARK: - Form Content
 
     private var settingsForm: some View {
         Form {
+            #if os(macOS)
+            Section(header: Text("            Subscription")
+                .font(.title3)
+                .fontWeight(.bold)
+            ) {
+                LabeledContent("Plan", value: entitlements.tier.displayName)
+                if let caption = entitlements.periodCaption {
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                subscriptionSeatsRow
+                HStack {
+                    Button("Subscribe") {
+                        showingPaywall = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Restore Purchases") {
+                        Task { @MainActor in
+                            await entitlements.restore()
+                        }
+                    }
+                }
+            }
+            .padding(.bottom, 8)
+            #endif
+
             Section(header: Text("            NetBox Settings")
                 .font(.title3)
                 .fontWeight(.bold)
@@ -265,16 +355,11 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(!powerSenseEnabled || powerSenseZabbixServer.isEmpty || isFullSyncing)
-                
-                Spacer()
-                
+
                 if isFullSyncing {
+                    Spacer()
                     ProgressView()
                         .scaleEffect(0.8)
-                } else {
-                    Text("Syncs all 120k devices")
-                        .foregroundColor(.secondary)
-                        .font(.caption)
                 }
              }
 

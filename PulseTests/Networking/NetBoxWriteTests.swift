@@ -88,6 +88,7 @@ final class NetBoxWriteTests: XCTestCase {
                 role: 6,
                 site: 4,
                 status: "active",
+                tenant: 1,
                 customFields: [NetBoxCustomFields.coordinateX: .double(10)]
             )
         )
@@ -98,8 +99,116 @@ final class NetBoxWriteTests: XCTestCase {
             "role": 6,
             "site": 4,
             "status": "active",
+            "tenant": 1,
         ])
         XCTAssertEqual(NetBoxWriteBody.SiteCreate.slug(from: "Lab Site 1"), "lab-site-1")
+
+        let frontCable = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.CableCreate.connectingFrontPort(80, toInterface: 12)
+        )
+        assertJSON(frontCable, [
+            "a_terminations": [["object_id": 80, "object_type": "dcim.frontport"]],
+            "b_terminations": [["object_id": 12, "object_type": "dcim.interface"]],
+        ])
+
+        let rack = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.RackCreate(name: "R1", site: 4, status: "active", uHeight: 42)
+        )
+        assertJSON(rack, [
+            "name": "R1",
+            "site": 4,
+            "status": "active",
+            "u_height": 42,
+        ])
+
+        let full = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.RackCreate(
+                name: "01.1 - Primary Rack",
+                site: 534,
+                status: "active",
+                uHeight: 18,
+                startingUnit: 1,
+                formFactor: "4-post-cabinet",
+                width: 19,
+                mountingDepth: 500,
+                outerWidth: 600,
+                outerHeight: 1008,
+                outerDepth: 600,
+                outerUnit: "mm",
+                airflow: "front-to-rear",
+                tenant: 1,
+                location: 9,
+                role: 3,
+                weight: 54,
+                maxWeight: 800,
+                weightUnit: "kg"
+            )
+        )
+        assertJSON(full, [
+            "airflow": "front-to-rear",
+            "form_factor": "4-post-cabinet",
+            "location": 9,
+            "max_weight": 800,
+            "mounting_depth": 500,
+            "name": "01.1 - Primary Rack",
+            "outer_depth": 600,
+            "outer_height": 1008,
+            "outer_unit": "mm",
+            "outer_width": 600,
+            "role": 3,
+            "site": 534,
+            "starting_unit": 1,
+            "status": "active",
+            "tenant": 1,
+            "u_height": 18,
+            "weight": 54,
+            "weight_unit": "kg",
+            "width": 19,
+        ])
+    }
+
+    func testDevicePatchSendsRackPositionFaceAndNullsOnUnrack() throws {
+        let placed = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.DevicePatch(
+                rack: 44,
+                position: 12,
+                face: "front"
+            )
+        )
+        assertJSON(placed, [
+            "face": "front",
+            "position": 12,
+            "rack": 44,
+        ])
+
+        let unracked = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.DevicePatch(clearRack: true)
+        )
+        assertJSON(unracked, [
+            "position": NSNull(),
+            "rack": NSNull(),
+        ])
+
+        let created = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.DeviceCreate(
+                name: "PP-1",
+                deviceType: 3,
+                role: 18,
+                site: 4,
+                rack: 44,
+                position: 10,
+                face: "front"
+            )
+        )
+        assertJSON(created, [
+            "device_type": 3,
+            "face": "front",
+            "name": "PP-1",
+            "position": 10,
+            "rack": 44,
+            "role": 18,
+            "site": 4,
+        ])
     }
 
     func testShippedPolicyDoesNotSendIfMatch() async throws {
@@ -261,6 +370,10 @@ final class NetBoxWriteTests: XCTestCase {
         let connected = try ModelContext(container).fetch(FetchDescriptor<Interface>())
         XCTAssertEqual(connected.count, 2)
         XCTAssertTrue(connected.allSatisfy { $0.cableId == 9 })
+        let stored = try ModelContext(container).fetch(FetchDescriptor<Cable>())
+        XCTAssertEqual(stored.map(\.id), [9])
+        XCTAssertEqual(stored.first?.aInterfaceId, 88)
+        XCTAssertEqual(stored.first?.bInterfaceId, 89)
 
         fetcher.sends.removeAll()
         fetcher.sendQueue = [
@@ -277,6 +390,7 @@ final class NetBoxWriteTests: XCTestCase {
         XCTAssertEqual(fetcher.sends.first?.path, "/api/dcim/cables/9/")
         let free = try ModelContext(container).fetch(FetchDescriptor<Interface>())
         XCTAssertTrue(free.allSatisfy { $0.cableId == nil })
+        XCTAssertTrue(try ModelContext(container).fetch(FetchDescriptor<Cable>()).isEmpty)
     }
 
     func testDisconnectResolvesCableIdFromInterfaceRetrieve() async throws {
@@ -324,6 +438,19 @@ final class NetBoxWriteTests: XCTestCase {
                 error,
                 .httpStatus(code: 404, body: "NetBox has no cable on interface 88")
             )
+        }
+        XCTAssertTrue(fetcher.sends.isEmpty)
+    }
+
+    func testDeleteCableFailsClosedWhenEndsDoNotResolve() async throws {
+        let container = try makeContainer()
+        let fetcher = WriteFetcher()
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.deleteCable(id: 1, refreshing: [999])
+            XCTFail("unresolved cable ends must fail closed")
+        } catch let error as BillingError {
+            XCTAssertEqual(error, .linkRequiresBothSeats)
         }
         XCTAssertTrue(fetcher.sends.isEmpty)
     }
@@ -442,6 +569,185 @@ final class NetBoxWriteTests: XCTestCase {
         XCTAssertEqual(ifaces.first?.deviceId, 30)
     }
 
+    func testRequireSeatedSkipsRackHardware() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let fillerRole = DeviceRole(id: 6)
+        context.insert(fillerRole)
+        let blank = Device(id: 9000)
+        blank.deviceRole = fillerRole
+        context.insert(blank)
+        let switchRole = DeviceRole(id: 1)
+        context.insert(switchRole)
+        let granted = Date(timeIntervalSince1970: 1_600_000_000)
+        for id in 1...50 {
+            let device = Device(id: Int64(id))
+            device.deviceRole = switchRole
+            device.seatGrantedAt = granted
+            context.insert(device)
+        }
+        let unseated = Device(id: 9001)
+        unseated.deviceRole = switchRole
+        context.insert(unseated)
+        try context.save()
+
+        let defaults = UserDefaults(suiteName: "pulse.tests.fillerSeat")!
+        defaults.removePersistentDomain(forName: "pulse.tests.fillerSeat")
+        RolePresentationStorage.save(.omegaDefault(), to: defaults)
+
+        try LicenseSeatEvaluator.requireSeated(
+            deviceID: 9000, in: context, defaults: defaults, tier: .free
+        )
+        XCTAssertThrowsError(
+            try LicenseSeatEvaluator.requireSeated(
+                deviceID: 9001, in: context, defaults: defaults, tier: .free
+            )
+        ) { error in
+            XCTAssertEqual(error as? BillingError, .deviceNotSeated)
+        }
+    }
+
+    func testCreateBillableDeviceAtCapIsRefused() async throws {
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 4))
+        let role = DeviceRole(id: 1)
+        seed.insert(role)
+        seed.insert(DeviceType(id: 8))
+        let granted = Date(timeIntervalSince1970: 1_600_000_000)
+        for id in 1...50 {
+            let device = Device(id: Int64(id))
+            device.created = granted
+            device.seatGrantedAt = granted
+            device.deviceRole = role
+            seed.insert(device)
+        }
+        try seed.save()
+
+        let fetcher = WriteFetcher()
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.createDevice(
+                NetBoxWriteBody.DeviceCreate(
+                    name: "over-cap", deviceType: 8, role: 1, site: 4, status: "active"
+                )
+            )
+            XCTFail("billable create at cap must refuse")
+        } catch let error as BillingError {
+            XCTAssertEqual(error, .tierCapReached(.free))
+        }
+        XCTAssertTrue(fetcher.sends.isEmpty)
+    }
+
+    func testEngineUsesInjectedEntitlementStoreTier() async throws {
+        let entitlements = EntitlementStore(previewTier: .growth)
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 4))
+        let role = DeviceRole(id: 1)
+        seed.insert(role)
+        seed.insert(DeviceType(id: 8))
+        let granted = Date(timeIntervalSince1970: 1_600_000_000)
+        for id in 1...50 {
+            let device = Device(id: Int64(id))
+            device.created = granted
+            device.seatGrantedAt = granted
+            device.deviceRole = role
+            seed.insert(device)
+        }
+        try seed.save()
+
+        let created = Data(
+            #"{"id":51,"name":"plus-1","site":{"id":4},"role":{"id":1},"device_type":{"id":8}}"#.utf8
+        )
+        let fetcher = WriteFetcher()
+        fetcher.sendQueue = [
+            NetBoxHTTPResponse(status: 201, body: created, etag: nil),
+        ]
+        fetcher.getBodies["/api/dcim/devices/51/"] = created
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            subscriptionTier: { entitlements.tier }
+        )
+        try await engine.createDevice(
+            NetBoxWriteBody.DeviceCreate(
+                name: "plus-1", deviceType: 8, role: 1, site: 4, status: "active"
+            )
+        )
+        XCTAssertEqual(fetcher.sends.map(\.path), ["/api/dcim/devices/"])
+        XCTAssertTrue(
+            try ModelContext(container).fetch(FetchDescriptor<Device>()).contains { $0.id == 51 }
+        )
+    }
+
+    func testUserDefaultsTierDoesNotLiftEngineCap() async throws {
+        // Attack under test: the engine must ignore this key. Cap
+        // source is the injected closure (default Free), not storage.
+        UserDefaults.standard.set(SubscriptionTier.unlimited.rawValue, forKey: EntitlementStorage.key)
+        defer { UserDefaults.standard.removeObject(forKey: EntitlementStorage.key) }
+
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 4))
+        let role = DeviceRole(id: 1)
+        seed.insert(role)
+        seed.insert(DeviceType(id: 8))
+        let granted = Date(timeIntervalSince1970: 1_600_000_000)
+        for id in 1...50 {
+            let device = Device(id: Int64(id))
+            device.created = granted
+            device.seatGrantedAt = granted
+            device.deviceRole = role
+            seed.insert(device)
+        }
+        try seed.save()
+
+        let fetcher = WriteFetcher()
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.createDevice(
+                NetBoxWriteBody.DeviceCreate(
+                    name: "over-cap", deviceType: 8, role: 1, site: 4, status: "active"
+                )
+            )
+            XCTFail("spoofed defaults must not lift the engine cap")
+        } catch let error as BillingError {
+            XCTAssertEqual(error, .tierCapReached(.free))
+        }
+        XCTAssertTrue(fetcher.sends.isEmpty)
+    }
+
+    func testCreateRackPostsWhenEnabled() async throws {
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 4))
+        try seed.save()
+
+        let rackJSON = Data("""
+        {
+          "id": 44, "url": "u", "display": "R1", "name": "R1",
+          "site": { "id": 4, "url": "u", "display": "Lab", "name": "Lab", "slug": "lab" },
+          "status": { "value": "active", "label": "Active" },
+          "u_height": 42, "starting_unit": 1
+        }
+        """.utf8)
+        let fetcher = WriteFetcher()
+        fetcher.sendQueue = [
+            NetBoxHTTPResponse(status: 201, body: rackJSON, etag: nil),
+        ]
+        fetcher.getBodies["/api/dcim/racks/44/"] = rackJSON
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.createRack(
+            NetBoxWriteBody.RackCreate(name: "R1", site: 4, status: "active", uHeight: 42)
+        )
+        XCTAssertEqual(fetcher.sends.map(\.method), ["POST"])
+        XCTAssertEqual(fetcher.sends.map(\.path), ["/api/dcim/racks/"])
+        XCTAssertTrue(
+            try ModelContext(container).fetch(FetchDescriptor<Rack>()).contains { $0.id == 44 }
+        )
+    }
+
     func testSitePinHygieneAndRegionSuggestion() throws {
         XCTAssertEqual(
             NetBoxGeo.physicalAddress("328 Paremata Haywards Hill Rd, Judgeford, Porirua 5381, New Zealand"),
@@ -556,7 +862,8 @@ final class NetBoxWriteTests: XCTestCase {
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
             WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
             PowerSenseEvent.self, SSHCredential.self, KnownHost.self
         ])

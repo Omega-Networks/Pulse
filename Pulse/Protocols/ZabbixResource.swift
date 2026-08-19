@@ -77,18 +77,23 @@ final class ZabbixAPI: @unchecked Sendable {
         logger.debug("Request generation took: \(Date().timeIntervalSince(requestStartTime))s")
         
         let networkStartTime = Date()
-        let (data, _) = try await URLSession.shared.data(for: urlRequest)
+        let data: Data
+        do {
+            (data, _) = try await URLSession.shared.data(for: urlRequest)
+        } catch {
+            throw ZabbixError.fromTransport(error)
+        }
         logger.debug("Network request took: \(Date().timeIntervalSince(networkStartTime))s")
         
-        let jsonObject = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
+        let jsonObject = try zabbixJSONObject(from: data)
         
-        if let result = jsonObject?["result"] as? String {
+        if let result = jsonObject["result"] as? String {
             await sessionState.setToken(result)
             logger.debug("Successfully retrieved and cached new session token")
             logger.debug("Total token retrieval took: \(Date().timeIntervalSince(startTime))s")
             return result
         } else {
-            let errorDescription = jsonObject?["error"] as? String ?? "Unknown error"
+            let errorDescription = jsonObject["error"] as? String ?? "Unknown error"
             logger.error("Failed to retrieve session token: \(errorDescription)")
             throw NSError(domain: "InvalidResult", code: -1, userInfo: [NSLocalizedDescriptionKey: errorDescription])
         }
@@ -154,20 +159,61 @@ extension ZabbixResource {
     }
 }
 
-enum ZabbixError: Error {
+/// Empty or non-JSON bodies mean the server did not answer JSON-RPC
+/// (down, reset, HTML error page). Do not surface Cocoa's
+/// "isn't in the correct format".
+func zabbixJSONObject(from data: Data) throws -> [String: Any] {
+    guard !data.isEmpty else {
+        throw ZabbixError.unreachable
+    }
+    do {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ZabbixError.unreachable
+        }
+        return object
+    } catch is ZabbixError {
+        throw ZabbixError.unreachable
+    } catch {
+        throw ZabbixError.unreachable
+    }
+}
+
+enum ZabbixError: Error, LocalizedError, Equatable {
     case invalidRequest
     case invalidResponse(String)
     case authenticationFailed
     case sessionExpired
     case missingParameters(String)
-    
-    var localizedDescription: String {
+    case unreachable
+
+    var errorDescription: String? {
         switch self {
-        case .invalidRequest: return "Invalid request configuration"
-        case .invalidResponse(let message): return "Invalid response: \(message)"
-        case .authenticationFailed: return "Authentication failed"
-        case .sessionExpired: return "Session expired"
+        case .invalidRequest: return "Zabbix is not configured."
+        case .invalidResponse(let message): return "Zabbix returned an error: \(message)"
+        case .authenticationFailed: return "Zabbix authentication failed. Check the API user and token in Settings."
+        case .sessionExpired: return "The Zabbix session expired."
         case .missingParameters(let params): return "Missing required parameters: \(params)"
+        case .unreachable: return "Zabbix is unreachable. Check that the server is up and reachable from this Mac."
+        }
+    }
+
+    static func fromTransport(_ error: Error) -> ZabbixError {
+        if let zabbix = error as? ZabbixError { return zabbix }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain { return .unreachable }
+        if ns.domain == NSCocoaErrorDomain && ns.code == 3840 { return .unreachable }
+        return .invalidResponse(error.localizedDescription)
+    }
+
+    static func status(from error: Error) -> RequestStatusManager.RequestStatus {
+        let zabbix = fromTransport(error)
+        switch zabbix {
+        case .unreachable, .invalidRequest:
+            return .connectionError(zabbix.localizedDescription)
+        case .authenticationFailed, .sessionExpired:
+            return .authenticationFailure(code: 401, message: zabbix.localizedDescription)
+        case .invalidResponse, .missingParameters:
+            return .dataError(code: 0, message: zabbix.localizedDescription)
         }
     }
 }
@@ -346,16 +392,21 @@ func fetchHostEvents(hostIds: [String]? = nil, eventIds: [String]? = nil) async 
     )
     
     let request = try await resource.request
-    let (data, _) = try await URLSession.shared.data(for: request)
+    let data: Data
+    do {
+        (data, _) = try await URLSession.shared.data(for: request)
+    } catch {
+        throw ZabbixError.fromTransport(error)
+    }
     
-    let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-    if let result = jsonObject?["result"] as? [[String: Any]] {
+    let jsonObject = try zabbixJSONObject(from: data)
+    if let result = jsonObject["result"] as? [[String: Any]] {
         let jsonData = try JSONSerialization.data(withJSONObject: result)
         let events = try JSONDecoder().decode([EventProperties].self, from: jsonData)
         logger.debug("Successfully fetched \(events.count) events")
         return events
     } else {
-        let errorDescription = jsonObject?["error"] as? String ?? "Unknown error"
+        let errorDescription = jsonObject["error"] as? String ?? "Unknown error"
         logger.error("Error fetching events: \(errorDescription)")
         throw ZabbixError.invalidResponse(errorDescription)
     }
@@ -376,16 +427,21 @@ func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) asyn
     )
     
     let request = try await resource.request
-    let (data, _) = try await URLSession.shared.data(for: request)
+    let data: Data
+    do {
+        (data, _) = try await URLSession.shared.data(for: request)
+    } catch {
+        throw ZabbixError.fromTransport(error)
+    }
     
-    let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-    if let result = jsonObject?["result"] as? [[String: Any]] {
+    let jsonObject = try zabbixJSONObject(from: data)
+    if let result = jsonObject["result"] as? [[String: Any]] {
         let jsonData = try JSONSerialization.data(withJSONObject: result)
         let problems = try JSONDecoder().decode([EventProperties].self, from: jsonData)
         logger.debug("Successfully fetched \(problems.count) problems")
         return problems
     } else {
-        let errorDescription = jsonObject?["error"] as? String ?? "Unknown error"
+        let errorDescription = jsonObject["error"] as? String ?? "Unknown error"
         logger.error("Error fetching problems: \(errorDescription)")
         throw ZabbixError.invalidResponse(errorDescription)
     }
@@ -422,16 +478,21 @@ func fetchItems(hostId: Int64) async throws -> [ItemProperties] {
     
     let resource = RetrieveItemResource(methodPath: "", hostId: hostId)
     let request = try await resource.request
-    let (data, _) = try await URLSession.shared.data(for: request)
+    let data: Data
+    do {
+        (data, _) = try await URLSession.shared.data(for: request)
+    } catch {
+        throw ZabbixError.fromTransport(error)
+    }
     
-    let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-    if let result = jsonObject?["result"] as? [[String: Any]] {
+    let jsonObject = try zabbixJSONObject(from: data)
+    if let result = jsonObject["result"] as? [[String: Any]] {
         let jsonData = try JSONSerialization.data(withJSONObject: result)
         let items = try JSONDecoder().decode([ItemProperties].self, from: jsonData)
         logger.debug("Successfully fetched \(items.count) items")
         return items
     } else {
-        let errorDescription = jsonObject?["error"] as? String ?? "Unknown error"
+        let errorDescription = jsonObject["error"] as? String ?? "Unknown error"
         logger.error("Error fetching items: \(errorDescription)")
         throw ZabbixError.invalidResponse(errorDescription)
     }

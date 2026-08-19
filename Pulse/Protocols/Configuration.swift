@@ -399,6 +399,8 @@ final class Configuration: @unchecked Sendable {
         if let size = gridSize {
             setPowerSenseGridSize(size)
         }
+
+        NotificationCenter.default.post(name: .powerSenseConfigurationDidChange, object: nil)
     }
 
     /// Clear PowerSense configuration
@@ -500,6 +502,13 @@ final class Configuration: @unchecked Sendable {
             Examples.powerSenseGridSize
         )
     }
+}
+
+extension Notification.Name {
+    /// Posted after PowerSense settings are written. PulseApp starts or
+    /// tears down the monitor from this, so a disabled toggle does not
+    /// keep clustering or polling alive.
+    static let powerSenseConfigurationDidChange = Notification.Name("pulse.powerSenseConfigurationDidChange")
 }
 
 // MARK: - UserDefaults Extensions

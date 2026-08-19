@@ -37,69 +37,36 @@ enum SiteDataError: Error {
 
 actor SiteDataService {
     let modelContainer: ModelContainer
-    private let fetcher: any NetBoxFetching
-    private let filter: NetBoxFilterConfiguration
-    private let logger = Logger(subsystem: "netbox", category: "site")
 
-    init(
-        modelContainer: ModelContainer,
-        fetcher: any NetBoxFetching = NetBoxLiveFetcher(),
-        filter: NetBoxFilterConfiguration = .default
-    ) {
+    init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
-        self.fetcher = fetcher
-        self.filter = filter
     }
 
-    //MARK: - Loading Static Devices and Loading Bays
-    func getStaticDevices(for siteId: Int64) async throws {
-        var query = [URLQueryItem(name: "site_id", value: String(siteId))]
-        query.append(contentsOf: filter.staticDeviceRoleQueryItems)
-        do {
-            let (rows, skipped) = try await NetBoxPageIterator.fetchDecoded(
-                path: "/api/dcim/devices/",
-                extraQuery: query,
-                as: NetBoxRecord.StaticDevice.self,
-                using: fetcher
-            )
-            if skipped > 0 {
-                logger.error("Skipped \(skipped) static devices for site \(siteId)")
-            }
-            let devices = rows.map { $0.asCacheValue() }
-            await StaticDeviceCache.shared.setStaticDevices(devices, forSiteId: siteId)
-            for device in devices where device.deviceRole == "Shelf" {
-                try await getDeviceBays(for: device.id)
-            }
-        } catch {
-            logger.error("Static devices for site \(siteId) failed: \(error.localizedDescription, privacy: .public)")
-            throw SiteDataError.networkError(error)
+    @MainActor
+    private static func dismissZabbixWarningIfNeeded() {
+        switch RequestStatusManager.shared.currentStatus[.zabbix] {
+        case .connectionError, .authenticationFailure, .dataError, .unknownError:
+            RequestStatusManager.shared.clear(.zabbix)
+        default:
+            break
         }
     }
 
-    func getDeviceBays(for deviceId: Int64) async throws {
-        do {
-            let (rows, skipped) = try await NetBoxPageIterator.fetchDecoded(
-                path: "/api/dcim/device-bays/",
-                extraQuery: [URLQueryItem(name: "device_id", value: String(deviceId))],
-                as: NetBoxRecord.DeviceBay.self,
-                using: fetcher
-            )
-            if skipped > 0 {
-                logger.error("Skipped \(skipped) device bays for device \(deviceId)")
-            }
-            await DeviceBayCache.shared.setDeviceBays(rows.map { $0.asCacheValue() }, forDeviceId: deviceId)
-        } catch {
-            logger.error("Device bays for device \(deviceId) failed: \(error.localizedDescription, privacy: .public)")
-            throw SiteDataError.networkError(error)
-        }
-    }
-    
-    /// Rack fillers (static devices / bays) and Zabbix items for this site.
-    /// Does **not** fetch interfaces — those live in SwiftData from the
-    /// boot / Settings full sync (`NetBoxSyncEngine.syncInterfaces`).
+    /// Zabbix items for this site. Racks, fillers, bays, interfaces, and
+    /// cables live in SwiftData from the boot / Settings full sync.
     func loadAllSiteData(for siteId: Int64) async throws {
-        try await getStaticDevices(for: siteId)
-        try await getItems(for: siteId)
+        do {
+            try await getItems(for: siteId)
+            await MainActor.run { Self.dismissZabbixWarningIfNeeded() }
+        } catch {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .zabbix,
+                    ZabbixError.status(from: error)
+                )
+            }
+            throw error
+        }
     }
     
     //MARK: - WIP: loadItems function with TaskGroup
@@ -111,7 +78,7 @@ actor SiteDataService {
     //        // Create and execute fetch descriptor
     //        let descriptor = FetchDescriptor<Device>(
     //            predicate: #Predicate<Device> { device in
-    //                device.site?.id == siteId && device.zabbixId != 0
+    //                device.siteId == siteId && device.zabbixId != 0
     //            }
     //        )
     //
@@ -169,12 +136,15 @@ actor SiteDataService {
         // Create and execute fetch descriptor
         let descriptor = FetchDescriptor<Device>(
             predicate: #Predicate<Device> { device in
-                device.site?.id == siteId && device.zabbixId != 0
+                device.siteId == siteId && device.zabbixId != 0
             }
         )
         
-        let devices = try localContext.fetch(descriptor)
-        
+        let presentation = RolePresentationStorage.load(from: .standard)
+        let devices = try localContext.fetch(descriptor).filter {
+            !presentation.policy(for: $0.deviceRole?.id).skipMonitoring
+        }
+
         // Extract device IDs
         let deviceZabbixIds = devices.map { $0.zabbixId }
         
@@ -260,7 +230,7 @@ actor SiteDataService {
                                                  userInfo: [NSLocalizedDescriptionKey: "All retries failed"])
                         }
                     }
-                    
+
                     // Collect all event IDs from successful batches
                     for try await batchEventIds in group {
                         currentEventIds.formUnion(batchEventIds)
@@ -291,9 +261,14 @@ actor SiteDataService {
             // Performance Testing
             let timeElapsed = Date().timeIntervalSince(startTime)
             print("Total time elapsed: \(timeElapsed) seconds")
-            
+            await MainActor.run { Self.dismissZabbixWarningIfNeeded() }
+
         } catch {
             logger.error("Failed to get problems: \(error.localizedDescription)")
+            let status = ZabbixError.status(from: error)
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(.zabbix, status)
+            }
         }
     }
     

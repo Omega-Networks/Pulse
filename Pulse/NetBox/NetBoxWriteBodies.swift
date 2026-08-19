@@ -84,6 +84,10 @@ enum NetBoxWriteBody {
         static func interface(_ id: Int64) -> Termination {
             Termination(objectType: "dcim.interface", objectID: id)
         }
+
+        static func frontPort(_ id: Int64) -> Termination {
+            Termination(objectType: "dcim.frontport", objectID: id)
+        }
     }
 
     struct CableCreate: Encodable, Equatable, Sendable {
@@ -104,16 +108,52 @@ enum NetBoxWriteBody {
                 status: nil
             )
         }
+
+        static func connectingFrontPort(_ a: Int64, toInterface b: Int64) -> CableCreate {
+            CableCreate(
+                aTerminations: [.frontPort(a)],
+                bTerminations: [.interface(b)],
+                status: nil
+            )
+        }
+
+        static func connectingFrontPorts(_ a: Int64, to b: Int64) -> CableCreate {
+            CableCreate(
+                aTerminations: [.frontPort(a)],
+                bTerminations: [.frontPort(b)],
+                status: nil
+            )
+        }
     }
 
     struct DevicePatch: Encodable, Equatable, Sendable {
         var name: String?
         var status: String?
+        var rack: Int64?
+        var position: Float?
+        var face: String?
         var customFields: [String: JSONValue]?
+        /// Send `rack` and `position` as JSON null (unrack).
+        var clearRack: Bool = false
 
         enum CodingKeys: String, CodingKey {
-            case name, status
+            case name, status, rack, position, face
             case customFields = "custom_fields"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(name, forKey: .name)
+            try container.encodeIfPresent(status, forKey: .status)
+            try container.encodeIfPresent(face, forKey: .face)
+            if clearRack {
+                try container.encodeNil(forKey: .rack)
+                try container.encodeNil(forKey: .position)
+            } else {
+                try container.encodeIfPresent(rack, forKey: .rack)
+                try container.encodeIfPresent(position, forKey: .position)
+            }
+            try container.encodeIfPresent(customFields, forKey: .customFields)
         }
     }
 
@@ -123,12 +163,58 @@ enum NetBoxWriteBody {
         var role: Int64
         var site: Int64
         var status: String? = nil
+        var rack: Int64? = nil
+        var position: Float? = nil
+        var face: String? = nil
+        var tenant: Int64? = nil
         var customFields: [String: JSONValue]? = nil
 
         enum CodingKeys: String, CodingKey {
-            case name, role, site, status
+            case name, role, site, status, rack, position, face, tenant
             case deviceType = "device_type"
             case customFields = "custom_fields"
+        }
+    }
+
+    struct RackCreate: Encodable, Equatable, Sendable {
+        var name: String
+        var site: Int64
+        var status: String? = "active"
+        var uHeight: Int64
+        var startingUnit: Int64? = nil
+        var formFactor: String? = nil
+        var width: Int? = nil
+        var mountingDepth: Int? = nil
+        var outerWidth: Int? = nil
+        var outerHeight: Int? = nil
+        var outerDepth: Int? = nil
+        var outerUnit: String? = nil
+        var airflow: String? = nil
+        var facilityId: String? = nil
+        var serial: String? = nil
+        var description: String? = nil
+        var descUnits: Bool? = nil
+        var tenant: Int64? = nil
+        var location: Int64? = nil
+        var role: Int64? = nil
+        var weight: Double? = nil
+        var maxWeight: Int? = nil
+        var weightUnit: String? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case name, site, status, width, airflow, serial, description, tenant, location, role, weight
+            case uHeight = "u_height"
+            case startingUnit = "starting_unit"
+            case formFactor = "form_factor"
+            case mountingDepth = "mounting_depth"
+            case outerWidth = "outer_width"
+            case outerHeight = "outer_height"
+            case outerDepth = "outer_depth"
+            case outerUnit = "outer_unit"
+            case facilityId = "facility_id"
+            case descUnits = "desc_units"
+            case maxWeight = "max_weight"
+            case weightUnit = "weight_unit"
         }
     }
 

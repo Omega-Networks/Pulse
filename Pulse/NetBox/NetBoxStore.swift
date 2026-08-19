@@ -345,6 +345,68 @@ enum NetBoxStore {
         )
     }
 
+    // MARK: - Locations
+
+    static func applyLocations(
+        _ records: [NetBoxRecord.Location],
+        fetchComplete: Bool,
+        skipped: Int,
+        in context: ModelContext
+    ) throws -> ApplyResult {
+        try upsert(records, in: context) { record, model in
+            model.name = record.name
+            model.created = record.created
+            model.lastUpdated = record.lastUpdated
+            model.status = record.status
+            model.siteId = record.siteID ?? 0
+            model.parentId = record.parentID ?? 0
+        } create: {
+            SiteLocation(id: $0.id)
+        }
+        let deleted = try deleteStale(
+            SiteLocation.self,
+            keeping: Set(records.map(\.id)),
+            allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            in: context
+        )
+        try context.save()
+        return ApplyResult(
+            upserted: records.count,
+            deleted: max(0, deleted),
+            didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped)
+        )
+    }
+
+    // MARK: - Rack roles
+
+    static func applyRackRoles(
+        _ records: [NetBoxRecord.RackRole],
+        fetchComplete: Bool,
+        skipped: Int,
+        in context: ModelContext
+    ) throws -> ApplyResult {
+        try upsert(records, in: context) { record, model in
+            model.name = record.name
+            model.created = record.created
+            model.lastUpdated = record.lastUpdated
+            model.colour = record.colour
+        } create: {
+            RackRole(id: $0.id)
+        }
+        let deleted = try deleteStale(
+            RackRole.self,
+            keeping: Set(records.map(\.id)),
+            allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            in: context
+        )
+        try context.save()
+        return ApplyResult(
+            upserted: records.count,
+            deleted: max(0, deleted),
+            didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped)
+        )
+    }
+
     // MARK: - Racks
 
     static func applyRacks(
@@ -365,7 +427,10 @@ enum NetBoxStore {
             model.deviceCount = record.deviceCount
             model.status = record.status
             model.formFactor = record.formFactor
+            model.locationId = record.locationID ?? 0
+            model.rackRoleId = record.roleID ?? 0
             if let siteID = record.siteID {
+                model.siteId = siteID
                 if let site = sites[siteID] {
                     model.site = site
                 } else {
@@ -373,6 +438,7 @@ enum NetBoxStore {
                     model.site = nil
                 }
             } else {
+                model.siteId = 0
                 model.site = nil
             }
         } create: {
@@ -414,10 +480,15 @@ enum NetBoxStore {
             model.primaryIP = record.primaryIP
             model.status = record.status
             model.rackPosition = record.rackPosition
+            model.face = record.face
+            model.frontPortCount = record.frontPortCount
+            model.rearPortCount = record.rearPortCount
+            model.deviceBayCount = record.deviceBayCount
             model.x = record.x
             model.y = record.y
             model.zabbixId = record.zabbixID
             model.zabbixInstance = record.zabbixInstance
+            model.siteId = record.siteID
             if let site = sites[record.siteID] {
                 model.site = site
             } else {
@@ -550,7 +621,7 @@ enum NetBoxStore {
             }
             accepted.append(record)
             acceptedIDs.insert(record.id)
-            siteByDevice[deviceID] = device.site?.id ?? 0
+            siteByDevice[deviceID] = device.resolvedSiteId
         }
         if !missingDeviceIDs.isEmpty {
             let sample = missingDeviceIDs.sorted().prefix(5).map(String.init).joined(separator: ", ")
@@ -606,6 +677,202 @@ enum NetBoxStore {
             deleted: max(0, deleted),
             didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
             acceptedIDs: acceptedIDs
+        )
+    }
+
+    // MARK: - Cables
+
+    struct StreamApplyResult: Equatable, Sendable {
+        var upserted: Int
+        var outOfScope: Int
+        var deleted: Int
+        var didDelete: Bool
+        var acceptedIDs: Set<Int64>
+        var missingParentIDs: Set<Int64> = []
+    }
+
+    /// Upsert a page of cables. Ends that are not yet in the store leave
+    /// `siteId` at 0; the row is still kept so a later interface apply
+    /// is not required for the cable itself.
+    static func applyCables(
+        _ records: [NetBoxRecord.Cable],
+        fetchComplete: Bool,
+        skipped: Int,
+        keeping: Set<Int64>,
+        in context: ModelContext
+    ) throws -> StreamApplyResult {
+        let interfaceIDs = records.flatMap(\.interfaceIDs)
+        let interfaces = try fetchByIDs(Interface.self, ids: interfaceIDs, in: context)
+        try upsert(records, in: context) { record, model in
+            model.display = record.display
+            model.url = record.url
+            model.created = record.created
+            model.lastUpdated = record.lastUpdated
+            model.status = record.status
+            model.type = record.type
+            model.label = record.label
+            model.cableDescription = record.cableDescription
+            model.colour = record.colour
+            model.length = record.length
+            model.lengthUnit = record.lengthUnit
+            model.aInterfaceId = record.aInterfaceID
+            model.bInterfaceId = record.bInterfaceID
+            model.tenantId = record.tenantID
+            model.tenantName = record.tenantName
+            model.bundleId = record.bundleID
+            if let a = record.aInterfaceID, let site = interfaces[a]?.siteId, site != 0 {
+                model.siteId = site
+            } else if let b = record.bInterfaceID, let site = interfaces[b]?.siteId, site != 0 {
+                model.siteId = site
+            } else {
+                model.siteId = 0
+            }
+        } create: {
+            Cable(id: $0.id)
+        }
+        let deleted = try deleteStale(
+            Cable.self,
+            keeping: keeping,
+            allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            in: context
+        )
+        try context.save()
+        return StreamApplyResult(
+            upserted: records.count,
+            outOfScope: 0,
+            deleted: max(0, deleted),
+            didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            acceptedIDs: Set(records.map(\.id))
+        )
+    }
+
+    // MARK: - Device bays
+
+    /// Upsert a page of device bays. Unresolved shelf is out of scope
+    /// (logged, not stored, not counted as `skipped`).
+    static func applyDeviceBays(
+        _ records: [NetBoxRecord.DeviceBay],
+        fetchComplete: Bool,
+        skipped: Int,
+        keeping: Set<Int64>,
+        in context: ModelContext
+    ) throws -> StreamApplyResult {
+        let shelfIDs = records.compactMap(\.shelfID)
+        let shelves = try fetchByIDs(Device.self, ids: shelfIDs, in: context)
+
+        var accepted: [NetBoxRecord.DeviceBay] = []
+        var acceptedIDs = Set<Int64>()
+        var missingShelfIDs = Set<Int64>()
+        var outOfScope = 0
+        for record in records {
+            guard let shelfID = record.shelfID, shelves[shelfID] != nil else {
+                if let shelfID = record.shelfID {
+                    missingShelfIDs.insert(shelfID)
+                }
+                outOfScope += 1
+                continue
+            }
+            accepted.append(record)
+            acceptedIDs.insert(record.id)
+        }
+        try upsert(accepted, in: context) { record, model in
+            let shelfID = record.shelfID!
+            model.name = record.name
+            model.display = record.display
+            model.label = record.label
+            model.created = record.created
+            model.lastUpdated = record.lastUpdated
+            model.deviceId = shelfID
+            model.deviceName = record.shelfName
+            model.installedDeviceId = record.installedDeviceID
+            model.installedDeviceName = record.installedDeviceName
+            model.device = shelves[shelfID]
+        } create: {
+            DeviceBay(id: $0.id)
+        }
+
+        let deleted = try deleteStale(
+            DeviceBay.self,
+            keeping: keeping,
+            allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            in: context
+        )
+        try context.save()
+        return StreamApplyResult(
+            upserted: accepted.count,
+            outOfScope: outOfScope,
+            deleted: max(0, deleted),
+            didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            acceptedIDs: acceptedIDs,
+            missingParentIDs: missingShelfIDs
+        )
+    }
+
+    // MARK: - Front ports
+
+    /// Upsert a page of front ports. Unresolved device is out of scope.
+    static func applyFrontPorts(
+        _ records: [NetBoxRecord.FrontPort],
+        fetchComplete: Bool,
+        skipped: Int,
+        keeping: Set<Int64>,
+        in context: ModelContext
+    ) throws -> StreamApplyResult {
+        let deviceIDs = records.compactMap(\.deviceID)
+        let devices = try fetchByIDs(Device.self, ids: deviceIDs, in: context)
+
+        var accepted: [NetBoxRecord.FrontPort] = []
+        var acceptedIDs = Set<Int64>()
+        var missingDeviceIDs = Set<Int64>()
+        var outOfScope = 0
+        for record in records {
+            guard let deviceID = record.deviceID, devices[deviceID] != nil else {
+                if let deviceID = record.deviceID {
+                    missingDeviceIDs.insert(deviceID)
+                }
+                outOfScope += 1
+                continue
+            }
+            accepted.append(record)
+            acceptedIDs.insert(record.id)
+        }
+        try upsert(accepted, in: context) { record, model in
+            let deviceID = record.deviceID!
+            let owner = devices[deviceID]
+            model.name = record.name
+            model.display = record.display
+            model.label = record.label
+            model.type = record.type
+            model.colour = record.colour
+            model.created = record.created
+            model.lastUpdated = record.lastUpdated
+            model.occupied = record.occupied
+            model.cableId = record.cableID
+            model.connectedEndpointId = record.connectedEndpointID
+            model.connectedEndpointName = record.connectedEndpointName
+            model.connectedEndpointType = record.connectedEndpointType
+            model.deviceId = deviceID
+            model.deviceName = record.deviceName
+            model.siteId = owner?.resolvedSiteId ?? 0
+            model.device = owner
+        } create: {
+            FrontPort(id: $0.id)
+        }
+
+        let deleted = try deleteStale(
+            FrontPort.self,
+            keeping: keeping,
+            allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            in: context
+        )
+        try context.save()
+        return StreamApplyResult(
+            upserted: accepted.count,
+            outOfScope: outOfScope,
+            deleted: max(0, deleted),
+            didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            acceptedIDs: acceptedIDs,
+            missingParentIDs: missingDeviceIDs
         )
     }
 
@@ -695,10 +962,15 @@ extension NetBoxRecord.DeviceRole: NetBoxRecordID {}
 extension NetBoxRecord.DeviceType: NetBoxRecordID {}
 extension NetBoxRecord.SiteGroup: NetBoxRecordID {}
 extension NetBoxRecord.Site: NetBoxRecordID {}
+extension NetBoxRecord.Location: NetBoxRecordID {}
+extension NetBoxRecord.RackRole: NetBoxRecordID {}
 extension NetBoxRecord.Rack: NetBoxRecordID {}
 extension NetBoxRecord.Device: NetBoxRecordID {}
 extension NetBoxRecord.Service: NetBoxRecordID {}
 extension NetBoxRecord.Interface: NetBoxRecordID {}
+extension NetBoxRecord.Cable: NetBoxRecordID {}
+extension NetBoxRecord.DeviceBay: NetBoxRecordID {}
+extension NetBoxRecord.FrontPort: NetBoxRecordID {}
 
 protocol NetBoxIdentified: AnyObject {
     var id: Int64 { get }
@@ -711,7 +983,12 @@ extension DeviceRole: NetBoxIdentified {}
 extension DeviceType: NetBoxIdentified {}
 extension SiteGroup: NetBoxIdentified {}
 extension Site: NetBoxIdentified {}
+extension SiteLocation: NetBoxIdentified {}
+extension RackRole: NetBoxIdentified {}
 extension Rack: NetBoxIdentified {}
 extension Device: NetBoxIdentified {}
 extension Service: NetBoxIdentified {}
 extension Interface: NetBoxIdentified {}
+extension Cable: NetBoxIdentified {}
+extension DeviceBay: NetBoxIdentified {}
+extension FrontPort: NetBoxIdentified {}

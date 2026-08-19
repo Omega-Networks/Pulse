@@ -50,9 +50,14 @@ struct SyncDashboardView: View {
     @Query private var regions: [Region]
     @Query private var siteGroups: [SiteGroup]
     @Query private var sites: [Site]
+    @Query private var locations: [SiteLocation]
+    @Query private var rackRoles: [RackRole]
     @Query private var racks: [Rack]
     @Query private var devices: [Device]
     @Query private var interfaces: [Interface]
+    @Query private var cables: [Cable]
+    @Query private var deviceBays: [DeviceBay]
+    @Query private var frontPorts: [FrontPort]
     
     // MARK: - UI State
     
@@ -83,15 +88,16 @@ struct SyncDashboardView: View {
         VStack {
             //MARK: - Main view body, containing model object counts
             HStack{
+                #if os(macOS)
                 Text("").frame(width: 150)
                 Spacer()
+                #endif
                 VStack {
                     Text("Object Counts")
                         .font(.title3)
                         .fontWeight(.bold)
                 }
                 Spacer()
-                //MARK: Primary action buttons
                 VStack {
                     HStack {
                         Text("Sync Provider")
@@ -108,7 +114,9 @@ struct SyncDashboardView: View {
                         }
                     }
                 }
+                #if os(macOS)
                 .frame(width: 150)
+                #endif
             }
             .padding(4)
             
@@ -120,9 +128,14 @@ struct SyncDashboardView: View {
                 LabeledContent("Regions:", value: String(regions.count))
                 LabeledContent("Site Groups:", value: String(siteGroups.count))
                 LabeledContent("Sites:", value: String(sites.count))
+                LabeledContent("Locations:", value: String(locations.count))
+                LabeledContent("Rack Roles:", value: String(rackRoles.count))
                 LabeledContent("Racks:", value: String(racks.count))
                 LabeledContent("Devices:", value: String(devices.count))
                 LabeledContent("Interfaces:", value: String(interfaces.count))
+                LabeledContent("Cables:", value: String(cables.count))
+                LabeledContent("Device Bays:", value: String(deviceBays.count))
+                LabeledContent("Front Ports:", value: String(frontPorts.count))
                 if let provider = syncProvider.first {
                     LabeledContent("Changelog watermark:", value: watermarkLabel(provider))
                     LabeledContent("Last delta:", value: provider.lastDeltaSummary ?? "—")
@@ -159,8 +172,15 @@ struct SyncDashboardView: View {
                 
                 Spacer()
                 
-                /// Button for fetching data from NetBox
-                ///
+                Button("Apply changes") {
+                    Task.detached(priority: .background) {
+                        await syncDelta()
+                    }
+                }
+                .disabled(isMonitoringEnabled)
+                .help("Pull NetBox changelog since the last watermark. Same path as boot.")
+                .padding(4)
+
                 Button(isMonitoringEnabled ? "Syncing" : "Full Resync") {
                     Task.detached(priority: .background) {
                         await syncData()
@@ -293,9 +313,14 @@ struct SyncDashboardView: View {
         let modelsToDelete: [any PersistentModel.Type] = [
             Event.self,
             Service.self,
+            Cable.self,
             Interface.self,
+            DeviceBay.self,
+            FrontPort.self,
             Device.self,
             Rack.self,
+            SiteLocation.self,
+            RackRole.self,
             Site.self,
             SiteGroup.self,
             Region.self,
@@ -431,6 +456,50 @@ extension SyncDashboardView {
      - Note: This function runs on a background thread to avoid blocking the UI.
      - Note: Status updates are presented through alerts using `RequestStatusManager`.
      */
+    /// Changelog since the watermark. Boot uses the same path.
+    func syncDelta() async {
+        guard !isMonitoringEnabled else {
+            print("Sync already in progress, skipping...")
+            return
+        }
+        await MainActor.run {
+            RequestStatusManager.shared.resetStatus()
+            self.isMonitoringEnabled = true
+        }
+        defer {
+            Task { @MainActor in
+                self.isMonitoringEnabled = false
+            }
+        }
+        guard let engine = netBoxSyncEngine else {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .unknownError("NetBox sync engine is not available")
+                )
+            }
+            return
+        }
+        do {
+            try await engine.sync()
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .success(code: 200, message: "Changes applied")
+                )
+            }
+        } catch let error as NetBoxSyncError {
+            error.publish()
+        } catch {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .unknownError(error.localizedDescription)
+                )
+            }
+        }
+    }
+
     func syncData() async {
         guard !isMonitoringEnabled else {
             print("Sync already in progress, skipping...")
@@ -473,7 +542,7 @@ extension SyncDashboardView {
                 )
             }
         } catch let error as NetBoxSyncError {
-            await error.publish()
+            error.publish()
         } catch {
             await MainActor.run {
                 RequestStatusManager.shared.updateStatus(

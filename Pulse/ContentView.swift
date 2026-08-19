@@ -58,6 +58,7 @@ struct ContentView: View {
 
     //Property for PowerSense overlay toggle
     @State var showPowerSenseOverlay = false
+    @State var powerSenseReady = false
 
     //Properties for the iOS version
     @State private var eventMonitoringTimer: Timer?
@@ -115,7 +116,7 @@ struct ContentView: View {
             .sheet(isPresented: $mainSheetOpen) { //Main sheet containing list of sites and search bar
                 MainSheet(searchText: $searchText, selectedSiteGroups: selectedSiteGroups, cameraPosition: $cameraPosition, selectedSite: $selectedSite)
                     .sheet(item: $selectedSite) { site in
-                        DetailSheet(selectedSite: $selectedSite)
+                        DetailSheet(site: site)
                     }
                     .sheet(isPresented: $isMapSheetPresented) {
                         MapStyleSheet(mapStyle: $mapStyle)
@@ -139,7 +140,11 @@ struct ContentView: View {
 #if os(macOS)
         .toolbar(content: toolbarContent)
 #endif
+        .onReceive(NotificationCenter.default.publisher(for: .powerSenseConfigurationDidChange)) { _ in
+            Task { await refreshPowerSenseReady() }
+        }
         .task {
+            await refreshPowerSenseReady()
             /// Delay Zabbix monitoring start by 30s so initial container/sync
             /// work finishes before we begin background polling.
             DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
@@ -241,6 +246,17 @@ struct ContentView: View {
                     let service = SiteDataService(modelContainer: container)
                     await service.getProblems()
                 }
+            }
+        }
+    }
+
+    private func refreshPowerSenseReady() async {
+        let config = await Configuration.shared
+        let ready = await config.isPowerSenseConfigured()
+        await MainActor.run {
+            powerSenseReady = ready
+            if !ready {
+                showPowerSenseOverlay = false
             }
         }
     }

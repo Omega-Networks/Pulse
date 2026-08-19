@@ -45,6 +45,18 @@
 	  NetBox / Zabbix over a routed hostname do not trip this gate; a WKWebView
 	  reaching a local appliance does.
 	-->
+	<!--
+	  Optional public host for Privacy / Terms. Empty means derive from
+	  PRODUCT_BUNDLE_IDENTIFIER (see PulseDistribution.marketingHost).
+	-->
+	<key>PulseMarketingHost</key>
+	<string>$(MARKETING_HOST)</string>
+	<!--
+	  Export compliance. Pulse uses non-exempt encryption (SSH, Secure
+	  Enclave wrapping, session-log AES). Set per-build, not a runtime flag.
+	-->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pulse connects to devices on your local network to open their web and terminal management interfaces.</string>
 	<key>UIBackgroundModes</key>

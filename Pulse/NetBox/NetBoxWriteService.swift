@@ -103,6 +103,17 @@ struct NetBoxWriteService: Sendable {
         )
     }
 
+    func createRack(_ body: NetBoxWriteBody.RackCreate) async throws -> NetBoxHTTPResponse {
+        try requireDeviceAndSiteWrites()
+        return try await fetcher.send(
+            NetBoxHTTPRequest(
+                method: "POST",
+                path: "/api/dcim/racks/",
+                body: try NetBoxWriteJSON.encode(body)
+            )
+        )
+    }
+
     private func requireDeviceAndSiteWrites() throws {
         guard policy.deviceAndSiteWritesEnabled else {
             throw NetBoxSyncError.writesDisabled(

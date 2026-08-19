@@ -34,6 +34,7 @@ import SwiftData
 struct InterfacesTable: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Environment(LicenseSeatStore.self) private var seats
     @State var device: Device
     
     @State var selection = Set<Int64>()
@@ -41,11 +42,22 @@ struct InterfacesTable: View {
     @State private var isWriting = false
     @State private var operatorAlert: OperatorAlert?
     @State private var connectFrom: InterfaceVO?
-    @State private var siteCandidates: [InterfaceVO] = []
     
     @State var sortOrder: [KeyPathComparator<InterfaceVO>] = [
         .init(\.id, order: SortOrder.forward)
     ]
+
+    private var owningDeviceSeated: Bool {
+        seats.allowsActions(deviceID: device.id)
+    }
+
+    private func linkAllowed(for interface: InterfaceVO) -> Bool {
+        guard owningDeviceSeated else { return false }
+        if let peer = interface.connectedEndpointDeviceId {
+            return seats.allowsLink(a: device.id, b: peer)
+        }
+        return owningDeviceSeated
+    }
     
     //Computed property for displaying Interfaces that do not belong in a lag, bridge or parent
     var filteredInterfaces: [InterfaceVO] {
@@ -78,7 +90,7 @@ struct InterfacesTable: View {
         .sheet(item: $connectFrom) { source in
             ConnectInterfaceSheet(
                 source: source,
-                candidates: siteCandidates.filter { $0.id != source.id },
+                device: device,
                 onCancel: { connectFrom = nil },
                 onConnect: { target in
                     Task { await connect(source, to: target) }
@@ -111,16 +123,55 @@ struct InterfacesTable: View {
     
     private func loadInterfaces() {
         let deviceId = device.id
-        interfaces = (try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)) ?? []
+        let rows = (try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)) ?? []
+        interfaces = enrichCables(rows)
+    }
+
+    /// Cable column prefers the live interface name. If that is empty
+    /// but a `Cable` row exists, resolve the other end from the store.
+    private func enrichCables(_ rows: [InterfaceVO]) -> [InterfaceVO] {
+        guard let siteId = SiteTopologyEdges.resolvedSiteId(
+            interface: rows.first ?? InterfaceVO(id: 0),
+            device: device,
+            in: modelContext
+        ) else { return rows }
+        let siteVOs = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)) ?? []
+        var byID: [Int64: InterfaceVO] = [:]
+        for vo in siteVOs { byID[vo.id] = vo }
+        let cables = (try? SiteTopologyEdges.fetchCables(siteId: siteId, in: modelContext)) ?? []
+        var cableByInterface: [Int64: CableVO] = [:]
+        for cable in cables {
+            if let a = cable.aInterfaceId { cableByInterface[a] = cable }
+            if let b = cable.bInterfaceId { cableByInterface[b] = cable }
+        }
+        return rows.map { row in
+            var next = row
+            if next.cableId == nil, let cable = cableByInterface[row.id] {
+                next.cableId = cable.id
+            }
+            if next.connectedEndpointName == nil || next.connectedEndpointName?.isEmpty == true {
+                let otherID = next.connectedEndpointId
+                    ?? cableByInterface[row.id].flatMap { cable in
+                        cable.aInterfaceId == row.id ? cable.bInterfaceId : cable.aInterfaceId
+                    }
+                if let otherID, let other = byID[otherID] {
+                    next.connectedEndpointId = otherID
+                    next.connectedEndpointDeviceId = other.deviceId
+                    next.connectedEndpointName = cableEndLabel(other)
+                }
+            }
+            return next
+        }
+    }
+
+    private func cableEndLabel(_ vo: InterfaceVO) -> String {
+        if let device = vo.deviceName, !device.isEmpty {
+            return "\(device) \(vo.name)"
+        }
+        return vo.name
     }
 
     private func beginConnect(_ interface: InterfaceVO) {
-        let siteId = interface.siteId ?? device.site?.id
-        if let siteId {
-            siteCandidates = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)) ?? []
-        } else {
-            siteCandidates = []
-        }
         connectFrom = interface
     }
 
@@ -243,7 +294,7 @@ extension InterfacesTable {
                         Task { await saveDescription(interface, value) }
                     }
                 )
-                .disabled(isWriting)
+                .disabled(isWriting || !owningDeviceSeated)
             }
             .width(min: 140)
 
@@ -259,7 +310,7 @@ extension InterfacesTable {
                 )
                 .labelsHidden()
                 .id("\(interface.id)-enabled-\(interface.enabled)")
-                .disabled(isWriting || netBoxSyncEngine == nil)
+                .disabled(isWriting || netBoxSyncEngine == nil || !owningDeviceSeated)
                 .frame(maxWidth: .infinity)
             }
             .width(min: 64, ideal: 72, max: 88)
@@ -267,20 +318,20 @@ extension InterfacesTable {
             TableColumn("Cable") { (interface: InterfaceVO) in
                 if interface.cableId != nil || interface.connectedEndpointId != nil {
                     HStack {
-                        Text(interface.connectedEndpointName ?? "—")
+                        Text(interface.connectedEndpointName ?? "-")
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Button("Disconnect") {
                             requestDisconnect(interface)
                         }
-                        .disabled(isWriting || netBoxSyncEngine == nil)
-                        .help("Delete the cable in NetBox after confirmation")
+                        .disabled(isWriting || netBoxSyncEngine == nil || !linkAllowed(for: interface))
+                        .help(linkAllowed(for: interface) ? "Delete the cable in NetBox after confirmation" : "Subscribe to resume")
                     }
                 } else {
-                    Button("Connect…") {
+                    Button(owningDeviceSeated ? "Connect…" : "Subscribe to resume") {
                         beginConnect(interface)
                     }
-                    .disabled(isWriting || netBoxSyncEngine == nil)
+                    .disabled(isWriting || netBoxSyncEngine == nil || !owningDeviceSeated)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -306,12 +357,12 @@ extension InterfacesTable {
                             Button("Disconnect cable…", role: .destructive) {
                                 requestDisconnect(interface)
                             }
-                            .disabled(isWriting || netBoxSyncEngine == nil)
+                            .disabled(isWriting || netBoxSyncEngine == nil || !linkAllowed(for: interface))
                         } else {
                             Button("Connect…") {
                                 beginConnect(interface)
                             }
-                            .disabled(isWriting || netBoxSyncEngine == nil)
+                            .disabled(isWriting || netBoxSyncEngine == nil || !owningDeviceSeated)
                         }
                     }
             }
@@ -406,11 +457,20 @@ struct EditableText: View {
 
 struct ConnectInterfaceSheet: View {
     let source: InterfaceVO
-    let candidates: [InterfaceVO]
+    var device: Device? = nil
     var onCancel: () -> Void
     var onConnect: (InterfaceVO) -> Void
+    @Environment(\.modelContext) private var modelContext
     @State private var selected: Int64?
     @State private var filter = ""
+
+    private var candidates: [InterfaceVO] {
+        (try? SiteTopologyEdges.connectCandidates(
+            from: source,
+            device: device,
+            in: modelContext
+        )) ?? []
+    }
 
     private var visible: [InterfaceVO] {
         candidates.filter { vo in

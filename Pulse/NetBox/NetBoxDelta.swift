@@ -35,8 +35,12 @@ enum NetBoxChangeKind: String, Sendable, CaseIterable, Comparable {
     case region = "dcim.region"
     case siteGroup = "dcim.sitegroup"
     case site = "dcim.site"
+    case location = "dcim.location"
+    case rackRole = "dcim.rackrole"
     case rack = "dcim.rack"
     case device = "dcim.device"
+    case deviceBay = "dcim.devicebay"
+    case frontPort = "dcim.frontport"
     case interface = "dcim.interface"
     case service = "ipam.service"
     case cable = "dcim.cable"
@@ -50,11 +54,15 @@ enum NetBoxChangeKind: String, Sendable, CaseIterable, Comparable {
         case .region: return 4
         case .siteGroup: return 5
         case .site: return 6
-        case .rack: return 7
-        case .device: return 8
-        case .interface: return 9
-        case .service: return 10
-        case .cable: return 11
+        case .location: return 7
+        case .rackRole: return 8
+        case .rack: return 9
+        case .device: return 10
+        case .deviceBay: return 11
+        case .frontPort: return 12
+        case .interface: return 13
+        case .service: return 14
+        case .cable: return 15
         }
     }
 
@@ -72,6 +80,9 @@ enum NetBoxChangeKind: String, Sendable, CaseIterable, Comparable {
         case "dcim.device_type", "dcim.devicetype": self = .deviceType
         case "tenancy.tenant_group", "tenancy.tenantgroup": self = .tenantGroup
         case "dcim.site_group", "dcim.sitegroup": self = .siteGroup
+        case "dcim.device_bay", "dcim.devicebay": self = .deviceBay
+        case "dcim.front_port", "dcim.frontport": self = .frontPort
+        case "dcim.rack_role", "dcim.rackrole": self = .rackRole
         default: return nil
         }
     }
@@ -85,8 +96,12 @@ enum NetBoxChangeKind: String, Sendable, CaseIterable, Comparable {
         case .region: return "/api/dcim/regions/"
         case .siteGroup: return "/api/dcim/site-groups/"
         case .site: return "/api/dcim/sites/"
+        case .location: return "/api/dcim/locations/"
+        case .rackRole: return "/api/dcim/rack-roles/"
         case .rack: return "/api/dcim/racks/"
         case .device: return "/api/dcim/devices/"
+        case .deviceBay: return "/api/dcim/device-bays/"
+        case .frontPort: return "/api/dcim/front-ports/"
         case .interface: return "/api/dcim/interfaces/"
         case .service: return "/api/ipam/services/"
         case .cable: return "/api/dcim/cables/"

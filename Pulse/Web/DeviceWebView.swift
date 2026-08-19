@@ -65,6 +65,7 @@ struct DeviceWebView: View {
 
     @Query private var devices: [Device]
     @Environment(\.modelContext) private var modelContext
+    @Environment(LicenseSeatStore.self) private var seats
 
     @StateObject private var trustCoordinator = TLSTrustCoordinator()
 
@@ -128,9 +129,19 @@ struct DeviceWebView: View {
 
     // MARK: - Content
 
+    private var deviceAllowsActions: Bool {
+        seats.allowsActions(deviceID: deviceID)
+    }
+
     @ViewBuilder
     private var content: some View {
-        if let page {
+        if !deviceAllowsActions {
+            ContentUnavailableView {
+                Label("Subscribe to resume", systemImage: "lock")
+            } description: {
+                Text("This device is not seated. Subscribe to resume the web UI.")
+            }
+        } else if let page {
             VStack(spacing: 0) {
                 if let loadFailure {
                     ContentUnavailableView {
@@ -246,7 +257,8 @@ struct DeviceWebView: View {
     // MARK: - Actions
 
     private func setUp() async {
-        guard page == nil,
+        guard deviceAllowsActions,
+              page == nil,
               let device = devices.first,
               let resolved = WebServiceResolver.primaryTarget(for: device),
               let origin = WebOrigin(url: resolved.url) else {

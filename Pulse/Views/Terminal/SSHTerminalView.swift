@@ -80,6 +80,7 @@ struct SSHTerminalView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(LicenseSeatStore.self) private var seats
 
     @Query private var devices: [Device]
     @Query(sort: \SSHCredential.label) private var credentials: [SSHCredential]
@@ -171,10 +172,27 @@ struct SSHTerminalView: View {
         }
     }
 
+    private var deviceAllowsActions: Bool {
+        switch connection {
+        case .adHoc:
+            return true
+        case .device(let id):
+            return seats.allowsActions(deviceID: id)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            connectionEndpointStrip
-            terminalArea
+            if deviceAllowsActions {
+                connectionEndpointStrip
+                terminalArea
+            } else {
+                ContentUnavailableView {
+                    Label("Subscribe to resume", systemImage: "lock")
+                } description: {
+                    Text("This device is not seated. Subscribe to resume SSH.")
+                }
+            }
         }
         .frame(minWidth: 720, minHeight: 420)
         .background(fontSizeShortcuts)
@@ -210,7 +228,8 @@ struct SSHTerminalView: View {
             // only when an attempt is actually produced, so a first `.onAppear`
             // that runs before the credential `@Query` has loaded (autoFireAttempt
             // returns nil) still auto-fires once it can.
-            guard !didAttemptAutoFire,
+            guard deviceAllowsActions,
+                  !didAttemptAutoFire,
                   let attempt = SSHTerminalConnectionViewModel.autoFireAttempt(
                       connection: connection,
                       deviceDefaultUsername: device?.defaultUsername,

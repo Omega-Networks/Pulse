@@ -30,12 +30,48 @@ final class NetBoxMappingTests: XCTestCase {
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self, WebHostTrust.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         return try ModelContainer(for: schema, configurations: [config])
+    }
+
+    private func bayRecord(id: Int64, shelfID: Int64?) -> NetBoxRecord.DeviceBay {
+        NetBoxRecord.DeviceBay(
+            id: id,
+            name: "Bay \(id)",
+            display: "Bay \(id)",
+            label: nil,
+            created: nil,
+            lastUpdated: nil,
+            shelfID: shelfID,
+            shelfName: nil,
+            installedDeviceID: nil,
+            installedDeviceName: nil
+        )
+    }
+
+    private func frontPortRecord(id: Int64, deviceID: Int64?) -> NetBoxRecord.FrontPort {
+        NetBoxRecord.FrontPort(
+            id: id,
+            name: "\(id)",
+            display: "\(id)",
+            label: nil,
+            type: "8p8c",
+            colour: nil,
+            created: nil,
+            lastUpdated: nil,
+            occupied: false,
+            cableID: nil,
+            connectedEndpointID: nil,
+            connectedEndpointName: nil,
+            connectedEndpointType: nil,
+            deviceID: deviceID,
+            deviceName: nil
+        )
     }
 
     private func interfaceRecord(id: Int64, deviceID: Int64?) -> NetBoxRecord.Interface {
@@ -184,6 +220,8 @@ final class NetBoxMappingTests: XCTestCase {
             "id": 44, "url": "u", "display_url": "d", "display": "R1",
             "name": "R1",
             "site": { "id": 323, "url": "u", "display": "Lab", "name": "Lab", "slug": "lab" },
+            "location": { "id": 9, "url": "u", "display": "MDF", "name": "MDF", "slug": "mdf" },
+            "role": { "id": 3, "url": "u", "display": "Network", "name": "Network", "slug": "network" },
             "status": { "value": "active", "label": "Active" },
             "form_factor": { "value": "4-post-cabinet", "label": "4-post cabinet" },
             "u_height": 42, "starting_unit": 1, "device_count": 3,
@@ -195,8 +233,36 @@ final class NetBoxMappingTests: XCTestCase {
         let rackPage = try NetBoxListDecoder.decodePage(NetBoxRecord.Rack.self, from: racks)
         XCTAssertEqual(rackPage.skipped, 0)
         XCTAssertEqual(rackPage.results.first?.siteID, 323)
+        XCTAssertEqual(rackPage.results.first?.locationID, 9)
+        XCTAssertEqual(rackPage.results.first?.roleID, 3)
         XCTAssertEqual(rackPage.results.first?.uHeight, 42)
         XCTAssertEqual(rackPage.results.first?.formFactor, "4-post-cabinet")
+
+        let locations = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 9, "name": "MDF",
+            "site": { "id": 323, "name": "Lab" },
+            "parent": { "id": 2, "name": "Floor 1" },
+            "status": { "value": "active", "label": "Active" },
+            "created": "2024-01-02T03:04:05Z",
+            "last_updated": "2024-01-02T03:04:05Z"
+          }
+        ] }
+        """.utf8)
+        let locationPage = try NetBoxListDecoder.decodePage(NetBoxRecord.Location.self, from: locations)
+        XCTAssertEqual(locationPage.results.first?.siteID, 323)
+        XCTAssertEqual(locationPage.results.first?.parentID, 2)
+        XCTAssertEqual(locationPage.results.first?.name, "MDF")
+
+        let roles = Data("""
+        { "count": 1, "next": null, "results": [
+          { "id": 3, "name": "Network", "color": "2196f3" }
+        ] }
+        """.utf8)
+        let rolePage = try NetBoxListDecoder.decodePage(NetBoxRecord.RackRole.self, from: roles)
+        XCTAssertEqual(rolePage.results.first?.name, "Network")
+        XCTAssertEqual(rolePage.results.first?.colour, "2196f3")
 
         let devices = Data("""
         { "count": 1, "next": null, "results": [
@@ -227,6 +293,76 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertEqual(devicePage.results.first?.x, 1.5)
         XCTAssertEqual(devicePage.results.first?.y, 2.5)
         XCTAssertEqual(devicePage.results.first?.zabbixID, 99)
+        XCTAssertEqual(devicePage.results.first?.frontPortCount, 0)
+        XCTAssertEqual(devicePage.results.first?.deviceBayCount, 0)
+    }
+
+    func testApplyLocationsRackRolesAndRackForeignKeys() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        _ = try NetBoxStore.applySites(
+            [NetBoxRecord.Site(
+                id: 323, name: "Lab", display: "Lab", url: "u", created: nil, lastUpdated: nil,
+                latitude: 0, longitude: 0, physicalAddress: nil, shippingAddress: nil,
+                status: "active", deviceCount: 0, regionID: nil, groupID: nil, tenantID: nil
+            )],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        _ = try NetBoxStore.applyLocations(
+            [NetBoxRecord.Location(
+                id: 9, name: "MDF", created: nil, lastUpdated: nil,
+                status: "active", siteID: 323, parentID: 2
+            )],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        _ = try NetBoxStore.applyRackRoles(
+            [NetBoxRecord.RackRole(
+                id: 3, name: "Network", created: nil, lastUpdated: nil, colour: "2196f3"
+            )],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        _ = try NetBoxStore.applyRacks(
+            [NetBoxRecord.Rack(
+                id: 44, name: "R1", display: "R1", url: "u", created: nil, lastUpdated: nil,
+                uHeight: 42, startingUnit: 1, deviceCount: 0, status: "active",
+                formFactor: "4-post-cabinet", siteID: 323, locationID: 9, roleID: 3
+            )],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        let locations = try context.fetch(FetchDescriptor<SiteLocation>())
+        XCTAssertEqual(locations.first?.name, "MDF")
+        XCTAssertEqual(locations.first?.siteId, 323)
+        let roles = try context.fetch(FetchDescriptor<RackRole>())
+        XCTAssertEqual(roles.first?.name, "Network")
+        let racks = try context.fetch(FetchDescriptor<Rack>())
+        XCTAssertEqual(racks.first?.locationId, 9)
+        XCTAssertEqual(racks.first?.rackRoleId, 3)
+    }
+
+    func testDeviceFaceDecodesChoiceObjectAndBareString() throws {
+        let asObject = Data("""
+        { "id": 1, "name": "sw1",
+          "device_type": { "id": 8, "model": "t" },
+          "role": { "id": 2, "name": "r" },
+          "site": { "id": 4, "name": "Lab" },
+          "face": { "value": "rear", "label": "Rear" },
+          "position": 14
+        }
+        """.utf8)
+        let object = try NetBoxListDecoder.makeDecoder().decode(NetBoxRecord.Device.self, from: asObject)
+        XCTAssertEqual(object.face, "rear")
+        XCTAssertEqual(object.rackPosition, 14)
+
+        let asString = Data("""
+        { "id": 2, "name": "sw2",
+          "device_type": { "id": 8, "model": "t" },
+          "role": { "id": 2, "name": "r" },
+          "site": { "id": 4, "name": "Lab" },
+          "face": "front"
+        }
+        """.utf8)
+        let string = try NetBoxListDecoder.makeDecoder().decode(NetBoxRecord.Device.self, from: asString)
+        XCTAssertEqual(string.face, "front")
     }
 
     func testSkipDescriptionNamesTheMissingKey() {
@@ -638,7 +774,7 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertEqual(page.results.first?.occupied, false)
     }
 
-    func testStaticDeviceAndBayPagesDecodeWithoutGeneratedCounts() throws {
+    func testDevicePortCountsAndBayPagesDecode() throws {
         let devices = Data("""
         { "count": 1, "next": null, "results": [
           {
@@ -652,11 +788,11 @@ final class NetBoxMappingTests: XCTestCase {
           }
         ] }
         """.utf8)
-        let devicePage = try NetBoxListDecoder.decodePage(NetBoxRecord.StaticDevice.self, from: devices)
+        let devicePage = try NetBoxListDecoder.decodePage(NetBoxRecord.Device.self, from: devices)
         XCTAssertEqual(devicePage.skipped, 0)
-        XCTAssertEqual(devicePage.results.first?.roleName, "Shelf")
-        XCTAssertEqual(devicePage.results.first?.typeModel, "1U-shelf")
-        XCTAssertEqual(devicePage.results.first?.asCacheValue().deviceRole, "Shelf")
+        XCTAssertEqual(devicePage.results.first?.roleID, 6)
+        XCTAssertEqual(devicePage.results.first?.deviceBayCount, 8)
+        XCTAssertEqual(devicePage.results.first?.frontPortCount, 0)
 
         let bays = Data("""
         { "count": 1, "next": null, "results": [
@@ -669,10 +805,217 @@ final class NetBoxMappingTests: XCTestCase {
         """.utf8)
         let bayPage = try NetBoxListDecoder.decodePage(NetBoxRecord.DeviceBay.self, from: bays)
         XCTAssertEqual(bayPage.skipped, 0)
-        let bay = try XCTUnwrap(bayPage.results.first?.asCacheValue())
-        XCTAssertEqual(bay.staticDeviceId, 50)
-        XCTAssertEqual(bay.deviceId, 51)
-        XCTAssertEqual(bay.deviceName, "router-1")
+        let bay = try XCTUnwrap(bayPage.results.first)
+        XCTAssertEqual(bay.shelfID, 50)
+        XCTAssertEqual(bay.installedDeviceID, 51)
+        XCTAssertEqual(bay.installedDeviceName, "router-1")
+
+        let fronts = Data("""
+        { "count": 1, "next": null, "results": [
+          {
+            "id": 80, "name": "1", "display": "1", "label": "1",
+            "device": { "id": 50, "name": "pp-1" },
+            "type": { "value": "8p8c", "label": "8P8C" },
+            "cable": { "id": 9 },
+            "occupied": true,
+            "connected_endpoints": [
+              { "id": 12, "name": "Gi0/1", "object_type": "dcim.interface",
+                "device": { "id": 10 } }
+            ]
+          }
+        ] }
+        """.utf8)
+        let frontPage = try NetBoxListDecoder.decodePage(NetBoxRecord.FrontPort.self, from: fronts)
+        XCTAssertEqual(frontPage.skipped, 0)
+        let port = try XCTUnwrap(frontPage.results.first)
+        XCTAssertEqual(port.deviceID, 50)
+        XCTAssertEqual(port.cableID, 9)
+        XCTAssertEqual(port.connectedEndpointID, 12)
+        XCTAssertEqual(port.connectedEndpointType, "dcim.interface")
+    }
+
+    func testApplyCablesUsesInterfaceSiteAndDeviceBaysNeedAShelf() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let site = Site(id: 4)
+        context.insert(site)
+        let device = Device(id: 10)
+        device.site = site
+        context.insert(device)
+        let iface = Interface(id: 1)
+        iface.deviceId = 10
+        iface.siteId = 4
+        iface.device = device
+        context.insert(iface)
+        try context.save()
+
+        let applied = try NetBoxStore.applyCables(
+            [NetBoxRecord.Cable(
+                id: 9,
+                display: "c",
+                url: nil,
+                created: nil,
+                lastUpdated: nil,
+                status: "connected",
+                type: "cat6",
+                label: nil,
+                cableDescription: "",
+                colour: "f44336",
+                length: 2,
+                lengthUnit: "m",
+                tenantID: 3,
+                tenantName: "Omega",
+                bundleID: nil,
+                aInterfaceID: 1,
+                bInterfaceID: 2
+            )],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        XCTAssertEqual(applied.upserted, 1)
+        let cable = try XCTUnwrap(try context.fetch(FetchDescriptor<Cable>()).first)
+        XCTAssertEqual(cable.siteId, 4)
+        XCTAssertEqual(cable.tenantId, 3)
+        XCTAssertEqual(cable.colour, "f44336")
+
+        let orphan = try NetBoxStore.applyDeviceBays(
+            [NetBoxRecord.DeviceBay(
+                id: 70,
+                name: "Bay 1",
+                display: "Bay 1",
+                label: nil,
+                created: nil,
+                lastUpdated: nil,
+                shelfID: 99,
+                shelfName: "missing",
+                installedDeviceID: 51,
+                installedDeviceName: "router-1"
+            )],
+            fetchComplete: false,
+            skipped: 0,
+            keeping: [],
+            in: context
+        )
+        XCTAssertEqual(orphan.upserted, 0)
+        XCTAssertEqual(orphan.outOfScope, 1)
+    }
+
+    func testDeviceBayPoisonedSkipGatesDelete() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        context.insert(Device(id: 50))
+        try context.save()
+
+        _ = try NetBoxStore.applyDeviceBays(
+            [bayRecord(id: 1, shelfID: 50), bayRecord(id: 2, shelfID: 50)],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [1, 2],
+            in: context
+        )
+        let gated = try NetBoxStore.applyDeviceBays(
+            [bayRecord(id: 1, shelfID: 50)],
+            fetchComplete: true,
+            skipped: 1,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertFalse(gated.didDelete)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DeviceBay>()).count, 2)
+
+        let cleaned = try NetBoxStore.applyDeviceBays(
+            [],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertTrue(cleaned.didDelete)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DeviceBay>()).map(\.id), [1])
+    }
+
+    func testFrontPortPoisonedSkipGatesDelete() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        context.insert(Device(id: 50))
+        try context.save()
+
+        _ = try NetBoxStore.applyFrontPorts(
+            [frontPortRecord(id: 1, deviceID: 50), frontPortRecord(id: 2, deviceID: 50)],
+            fetchComplete: true,
+            skipped: 0,
+            keeping: [1, 2],
+            in: context
+        )
+        let gated = try NetBoxStore.applyFrontPorts(
+            [frontPortRecord(id: 1, deviceID: 50)],
+            fetchComplete: true,
+            skipped: 1,
+            keeping: [1],
+            in: context
+        )
+        XCTAssertFalse(gated.didDelete)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<FrontPort>()).count, 2)
+    }
+
+    func testDeletingRackNullifiesDevices() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        _ = try NetBoxStore.applySites(
+            [NetBoxRecord.Site(
+                id: 4, name: "s", display: "s", url: "u", created: nil, lastUpdated: nil,
+                latitude: 0, longitude: 0, physicalAddress: nil, shippingAddress: nil,
+                status: "active", deviceCount: 0, regionID: nil, groupID: nil, tenantID: nil
+            )],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        _ = try NetBoxStore.applyDeviceRoles(
+            [NetBoxRecord.DeviceRole(id: 2, name: "r", created: nil, lastUpdated: nil, colour: nil)],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        _ = try NetBoxStore.applyDeviceTypes(
+            [NetBoxRecord.DeviceType(id: 8, model: "t", created: nil, lastUpdated: nil, uHeight: 1, manufacturerID: 1)],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        _ = try NetBoxStore.applyRacks(
+            [
+                NetBoxRecord.Rack(
+                    id: 44, name: "R1", display: "R1", url: "u", created: nil, lastUpdated: nil,
+                    uHeight: 42, startingUnit: 1, deviceCount: 1, status: "active",
+                    formFactor: nil, siteID: 4, locationID: nil, roleID: nil
+                ),
+                NetBoxRecord.Rack(
+                    id: 45, name: "R2", display: "R2", url: "u", created: nil, lastUpdated: nil,
+                    uHeight: 42, startingUnit: 1, deviceCount: 0, status: "active",
+                    formFactor: nil, siteID: 4, locationID: nil, roleID: nil
+                ),
+            ],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        _ = try NetBoxStore.applyDevices(
+            [NetBoxRecord.Device(
+                id: 10, name: "core", display: "core", url: "u", created: nil, lastUpdated: nil,
+                serial: "Unknown", primaryIP: "Unknown", status: "active", rackPosition: 12,
+                x: 0, y: 0, zabbixID: 0, zabbixInstance: 0,
+                siteID: 4, roleID: 2, typeID: 8, rackID: 44
+            )],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Device>()).first?.rack?.id, 44)
+
+        _ = try NetBoxStore.applyRacks(
+            [NetBoxRecord.Rack(
+                id: 45, name: "R2", display: "R2", url: "u", created: nil, lastUpdated: nil,
+                uHeight: 42, startingUnit: 1, deviceCount: 0, status: "active",
+                formFactor: nil, siteID: 4, locationID: nil, roleID: nil
+            )],
+            fetchComplete: true, skipped: 0, in: context
+        )
+        let devices = try context.fetch(FetchDescriptor<Device>())
+        XCTAssertEqual(devices.map(\.id), [10])
+        XCTAssertNil(devices.first?.rack)
     }
 
     // MARK: - Services

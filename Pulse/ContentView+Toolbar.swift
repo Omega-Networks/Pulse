@@ -51,6 +51,7 @@ extension ContentView {
         if #available(macOS 26.0, *) {
             ToolbarItem(placement: .status) {
                 HStack(spacing: 8) {
+                    ZabbixToolbarWarning()
                     NetBoxSyncIndicator()
                     Image(systemName: "swiftdata")
                         .font(.system(size: 22))
@@ -63,6 +64,7 @@ extension ContentView {
         } else {
             ToolbarItem(placement: .status) {
                 HStack(spacing: 8) {
+                    ZabbixToolbarWarning()
                     NetBoxSyncIndicator()
                     Image(systemName: "swiftdata")
                         .font(.system(size: 22))
@@ -99,18 +101,19 @@ extension ContentView {
         }
 
 
-        ToolbarItem() {
-            // PowerSense overlay toggle
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    showPowerSenseOverlay.toggle()
+        if powerSenseReady {
+            ToolbarItem() {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showPowerSenseOverlay.toggle()
+                    }
+                }) {
+                    Image(systemName: showPowerSenseOverlay ? "bolt.fill" : "bolt")
+                        .foregroundStyle(showPowerSenseOverlay ? .blue : .gray)
+                        .scaleEffect(showPowerSenseOverlay ? 1.1 : 1.0)
                 }
-            }) {
-                Image(systemName: showPowerSenseOverlay ? "bolt.fill" : "bolt")
-                    .foregroundStyle(showPowerSenseOverlay ? .blue : .gray)
-                    .scaleEffect(showPowerSenseOverlay ? 1.1 : 1.0)
+                .help(showPowerSenseOverlay ? "Hide PowerSense Heat Map" : "Show PowerSense Heat Map")
             }
-            .help(showPowerSenseOverlay ? "Hide PowerSense Heat Map" : "Show PowerSense Heat Map")
         }
 
     }

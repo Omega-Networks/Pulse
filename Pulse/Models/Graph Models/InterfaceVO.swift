@@ -79,9 +79,9 @@ struct InterfaceVO: Identifiable, Equatable, Sendable {
         self.poeMode = model.poeMode
         self.duplex = model.duplex
         self.occupied = model.occupied
-        self.deviceId = model.deviceId
+        self.deviceId = model.deviceId == 0 ? nil : model.deviceId
         self.deviceName = model.deviceName
-        self.siteId = model.siteId
+        self.siteId = model.siteId == 0 ? nil : model.siteId
         self.connectedEndpointId = model.connectedEndpointId
         self.connectedEndpointName = model.connectedEndpointName
         self.connectedEndpointDeviceId = model.connectedEndpointDeviceId

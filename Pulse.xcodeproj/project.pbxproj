@@ -43,7 +43,7 @@
 		416EF8932D21E979001CD25B /* ChartDataProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 416EF8922D21E979001CD25B /* ChartDataProcessor.swift */; };
 
 		4171CB852B8C38850001D252 /* SyncProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4171CB842B8C38850001D252 /* SyncProvider.swift */; };
-		41763EDB2CB720DE005DEEFF /* StaticDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41763EDA2CB720DE005DEEFF /* StaticDevice.swift */; };
+
 		4177A5EC2CE3FF2E00A7C754 /* SyncButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4177A5EB2CE3FF2E00A7C754 /* SyncButton.swift */; };
 		4181FED72CBF643A00E4D035 /* DeviceInRackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4181FED62CBF643800E4D035 /* DeviceInRackView.swift */; };
 		4181FED92CBF645700E4D035 /* StaticDeviceInRackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4181FED82CBF644F00E4D035 /* StaticDeviceInRackView.swift */; };
@@ -173,6 +173,25 @@
 		B17E051100000000000000B1 /* Interface.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051100000000000000A1 /* Interface.swift */; };
 		B17E051200000000000000B1 /* InterfaceVO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051200000000000000A1 /* InterfaceVO.swift */; };
 		B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051300000000000000A1 /* SiteTopologyEdges.swift */; };
+		B17E051400000000000000B1 /* Cable.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051400000000000000A1 /* Cable.swift */; };
+		B17E051500000000000000B1 /* CableVO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051500000000000000A1 /* CableVO.swift */; };
+		B17E051600000000000000B1 /* RolePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051600000000000000A1 /* RolePresentation.swift */; };
+		B17E051700000000000000B1 /* RolePresentationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051700000000000000A1 /* RolePresentationSettings.swift */; };
+		B17E051800000000000000B1 /* RolePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051800000000000000A1 /* RolePresentationTests.swift */; };
+		B17E052000000000000000B1 /* SubscriptionTier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E052000000000000000A1 /* SubscriptionTier.swift */; };
+		B17E052100000000000000B1 /* EntitlementStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E052100000000000000A1 /* EntitlementStore.swift */; };
+		B17E052200000000000000B1 /* LicenseSeatReconciler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E052200000000000000A1 /* LicenseSeatReconciler.swift */; };
+		B17E052300000000000000B1 /* LicenseSeatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E052300000000000000A1 /* LicenseSeatStore.swift */; };
+		B17E052400000000000000B1 /* PulsePaywallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E052400000000000000A1 /* PulsePaywallView.swift */; };
+		B17E052500000000000000B1 /* LicenseSeatEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E052500000000000000A1 /* LicenseSeatEvaluator.swift */; };
+		B17E052600000000000000B1 /* PulseBillingEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E052600000000000000A1 /* PulseBillingEnvironment.swift */; };
+		B17E052700000000000000B1 /* LicenseSeatReconcilerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E052700000000000000A1 /* LicenseSeatReconcilerTests.swift */; };
+		B17E051900000000000000B1 /* RackDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051900000000000000A1 /* RackDraft.swift */; };
+		B17E051A00000000000000B1 /* RackDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051A00000000000000A1 /* RackDraftTests.swift */; };
+		B17E051B00000000000000B1 /* EIA310.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051B00000000000000A1 /* EIA310.swift */; };
+		B17E051C00000000000000B1 /* FrontPort.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051C00000000000000A1 /* FrontPort.swift */; };
+		B17E051D00000000000000B1 /* SiteLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051D00000000000000A1 /* SiteLocation.swift */; };
+		B17E051E00000000000000B1 /* RackRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051E00000000000000A1 /* RackRole.swift */; };
 		A11CAFE0000000000000NB73 /* SiteTopologyEdgesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */; };
 		A11CAFE0000000000000NB71 /* NetBoxInterfaceSchemaMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */; };
 		B17E050200000000000000B1 /* WebHostTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A1 /* WebHostTrust.swift */; };
@@ -290,7 +309,7 @@
 		416EF8922D21E979001CD25B /* ChartDataProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChartDataProcessor.swift; sourceTree = "<group>"; };
 
 		4171CB842B8C38850001D252 /* SyncProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncProvider.swift; sourceTree = "<group>"; };
-		41763EDA2CB720DE005DEEFF /* StaticDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaticDevice.swift; sourceTree = "<group>"; };
+
 		4177A5EB2CE3FF2E00A7C754 /* SyncButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncButton.swift; sourceTree = "<group>"; };
 		4181FED62CBF643800E4D035 /* DeviceInRackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceInRackView.swift; sourceTree = "<group>"; };
 		4181FED82CBF644F00E4D035 /* StaticDeviceInRackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaticDeviceInRackView.swift; sourceTree = "<group>"; };
@@ -392,6 +411,26 @@
 		B17E051100000000000000A1 /* Interface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interface.swift; sourceTree = "<group>"; };
 		B17E051200000000000000A1 /* InterfaceVO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceVO.swift; sourceTree = "<group>"; };
 		B17E051300000000000000A1 /* SiteTopologyEdges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteTopologyEdges.swift; sourceTree = "<group>"; };
+		B17E051400000000000000A1 /* Cable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cable.swift; sourceTree = "<group>"; };
+		B17E051500000000000000A1 /* CableVO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CableVO.swift; sourceTree = "<group>"; };
+		B17E051600000000000000A1 /* RolePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RolePresentation.swift; sourceTree = "<group>"; };
+		B17E051700000000000000A1 /* RolePresentationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RolePresentationSettings.swift; sourceTree = "<group>"; };
+		B17E051800000000000000A1 /* RolePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RolePresentationTests.swift; sourceTree = "<group>"; };
+		B17E052000000000000000A1 /* SubscriptionTier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionTier.swift; sourceTree = "<group>"; };
+		B17E052100000000000000A1 /* EntitlementStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntitlementStore.swift; sourceTree = "<group>"; };
+		B17E052200000000000000A1 /* LicenseSeatReconciler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LicenseSeatReconciler.swift; sourceTree = "<group>"; };
+		B17E052300000000000000A1 /* LicenseSeatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LicenseSeatStore.swift; sourceTree = "<group>"; };
+		B17E052400000000000000A1 /* PulsePaywallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulsePaywallView.swift; sourceTree = "<group>"; };
+		B17E052500000000000000A1 /* LicenseSeatEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LicenseSeatEvaluator.swift; sourceTree = "<group>"; };
+		B17E052600000000000000A1 /* PulseBillingEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseBillingEnvironment.swift; sourceTree = "<group>"; };
+		B17E052700000000000000A1 /* LicenseSeatReconcilerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LicenseSeatReconcilerTests.swift; sourceTree = "<group>"; };
+		B17E052800000000000000A1 /* Products.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Products.storekit; sourceTree = "<group>"; };
+		B17E051900000000000000A1 /* RackDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RackDraft.swift; sourceTree = "<group>"; };
+		B17E051A00000000000000A1 /* RackDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RackDraftTests.swift; sourceTree = "<group>"; };
+		B17E051B00000000000000A1 /* EIA310.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EIA310.swift; sourceTree = "<group>"; };
+		B17E051C00000000000000A1 /* FrontPort.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrontPort.swift; sourceTree = "<group>"; };
+		B17E051D00000000000000A1 /* SiteLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLocation.swift; sourceTree = "<group>"; };
+		B17E051E00000000000000A1 /* RackRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RackRole.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteTopologyEdgesTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxInterfaceSchemaMigrationTests.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A1 /* WebHostTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrust.swift; sourceTree = "<group>"; };
@@ -626,6 +665,7 @@
 				4181FED82CBF644F00E4D035 /* StaticDeviceInRackView.swift */,
 				4181FED62CBF643800E4D035 /* DeviceInRackView.swift */,
 				41B82EE82CACBC930019FDAD /* RackView.swift */,
+				B17E051B00000000000000A1 /* EIA310.swift */,
 				41EBAF922CC5A650006E06A5 /* ShelfView.swift */,
 			);
 			path = "Rack Content";
@@ -692,6 +732,7 @@
 			isa = PBXGroup;
 			children = (
 				A11CAFE000000000000000F6 /* SSHCredentialsSettings.swift */,
+				B17E051700000000000000A1 /* RolePresentationSettings.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -772,6 +813,8 @@
 				B17E050100000000000000A2 /* ServicePropertiesDecodingTests.swift */,
 				A11CAFE0000000000000NB06 /* NetBoxDateTranscoderTests.swift */,
 				A11CAFE0000000000000NB09 /* NetBoxFilterConfigurationTests.swift */,
+				B17E051800000000000000A1 /* RolePresentationTests.swift */,
+				B17E051A00000000000000A1 /* RackDraftTests.swift */,
 				A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */,
 				A11CAFE0000000000000NB0F /* NetBoxMappingTests.swift */,
 				A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */,
@@ -792,6 +835,7 @@
 				A11CAFE0000000000000NB05 /* NetBoxAuthMiddleware.swift */,
 				A11CAFE0000000000000NB60 /* NetBoxAuthorization.swift */,
 				A11CAFE0000000000000NB07 /* NetBoxFilterConfiguration.swift */,
+				B17E051600000000000000A1 /* RolePresentation.swift */,
 				A11CAFE0000000000000NB08 /* NetBoxPageIterator.swift */,
 				A11CAFE0000000000000NB0B /* NetBoxCustomFields.swift */,
 				A11CAFE0000000000000NB0C /* NetBoxMapping.swift */,
@@ -855,6 +899,8 @@
 				C96191672ACA5530000198DB /* Assets.xcassets */,
 				C9BF5DA12E5B223900FD1AC3 /* PulseAppIcon.icon */,
 				C96191692ACA5530000198DB /* Pulse.entitlements */,
+				B17E052800000000000000A1 /* Products.storekit */,
+				B17E052000000000000000C1 /* Billing */,
 				C961916A2ACA5530000198DB /* Preview Content */,
 			);
 			path = Pulse;
@@ -893,10 +939,11 @@
 				41ACDC672B72D762003027A3 /* NotificationHandler.swift */,
 				419D50F62C2221F400CEA439 /* HistoryFetcher.swift */,
 				41D7B54D2C28EBB600D11F4B /* UpdateParameters.swift */,
-				41763EDA2CB720DE005DEEFF /* StaticDevice.swift */,
 				41A898FC2CC6F7E900856329 /* DeviceBay.swift */,
+				B17E051C00000000000000A1 /* FrontPort.swift */,
 
 				415F99452CD820B300845D15 /* SiteDataService.swift */,
+				B17E051900000000000000A1 /* RackDraft.swift */,
 				416EF8922D21E979001CD25B /* ChartDataProcessor.swift */,
 				41DD37732D349F45009F37A0 /* TipManager.swift */,
 			);
@@ -978,6 +1025,7 @@
 			children = (
 				C961919F2ACA5711000198DB /* Edge.swift */,
 				B17E051200000000000000A1 /* InterfaceVO.swift */,
+				B17E051500000000000000A1 /* CableVO.swift */,
 				B17E051300000000000000A1 /* SiteTopologyEdges.swift */,
 			);
 			path = "Graph Models";
@@ -1019,12 +1067,35 @@
 			path = "Table Views";
 			sourceTree = "<group>";
 		};
+		B17E052000000000000000C1 /* Billing */ = {
+			isa = PBXGroup;
+			children = (
+				B17E052000000000000000A1 /* SubscriptionTier.swift */,
+				B17E052100000000000000A1 /* EntitlementStore.swift */,
+				B17E052200000000000000A1 /* LicenseSeatReconciler.swift */,
+				B17E052300000000000000A1 /* LicenseSeatStore.swift */,
+				B17E052400000000000000A1 /* PulsePaywallView.swift */,
+				B17E052500000000000000A1 /* LicenseSeatEvaluator.swift */,
+				B17E052600000000000000A1 /* PulseBillingEnvironment.swift */,
+			);
+			path = Billing;
+			sourceTree = "<group>";
+		};
+		B17E052000000000000000C2 /* Billing */ = {
+			isa = PBXGroup;
+			children = (
+				B17E052700000000000000A1 /* LicenseSeatReconcilerTests.swift */,
+			);
+			path = Billing;
+			sourceTree = "<group>";
+		};
 		C9951ECF2E8815380025C136 /* PulseTests */ = {
 			isa = PBXGroup;
 			children = (
 				A11CAFE0000000000000DAD3 /* SSH */,
 				A11CAFE0000000000000DAD5 /* Networking */,
 				B17E050200000000000000C2 /* Web */,
+				B17E052000000000000000C2 /* Billing */,
 			);
 			path = PulseTests;
 			sourceTree = "<group>";
@@ -1046,12 +1117,15 @@
 				C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */,
 				C96191A12ACA5721000198DB /* Device.swift */,
 				B17E051100000000000000A1 /* Interface.swift */,
+				B17E051400000000000000A1 /* Cable.swift */,
 				B17E050100000000000000A1 /* Service.swift */,
 				C96191A32ACA572E000198DB /* DeviceRole.swift */,
 				C96191A52ACA573A000198DB /* DeviceType.swift */,
 				C96191B52ACA57C5000198DB /* Tenant.swift */,
 				C96191B72ACA57D2000198DB /* TenantGroup.swift */,
 				410F37292CABA58B008236ED /* Rack.swift */,
+				B17E051D00000000000000A1 /* SiteLocation.swift */,
+				B17E051E00000000000000A1 /* RackRole.swift */,
 				4171CB842B8C38850001D252 /* SyncProvider.swift */,
 				C96191AF2ACA5794000198DB /* Site.swift */,
 				C9FCA5162D153E4700D9E851 /* Event.swift */,
@@ -1275,6 +1349,7 @@
 				067FD0852ECC67B700146D44 /* MockSpatialTypes.swift in Sources */,
 				C96191A02ACA5711000198DB /* Edge.swift in Sources */,
 				B17E051200000000000000B1 /* InterfaceVO.swift in Sources */,
+				B17E051500000000000000B1 /* CableVO.swift in Sources */,
 				B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */,
 				C961919B2ACA56D4000198DB /* SearchBar.swift in Sources */,
 				411226102C167CAF003C6C65 /* DeviceDetails.swift in Sources */,
@@ -1331,6 +1406,9 @@
 				413BEA0E2CA3B48B0051DDD2 /* MapStyleSheet.swift in Sources */,
 				C96191E72ACA5B95000198DB /* SiteGraphView.swift in Sources */,
 				41A898FD2CC6F7E900856329 /* DeviceBay.swift in Sources */,
+				B17E051C00000000000000B1 /* FrontPort.swift in Sources */,
+				B17E051D00000000000000B1 /* SiteLocation.swift in Sources */,
+				B17E051E00000000000000B1 /* RackRole.swift in Sources */,
 				410A16162BFADBBB009DFEE1 /* SelectedChart.swift in Sources */,
 				C96191A42ACA572E000198DB /* DeviceRole.swift in Sources */,
 				06E9CC462EE03377008DE369 /* PowerSenseDataService.swift in Sources */,
@@ -1351,16 +1429,18 @@
 				4107D86C2C2CD7FC00632BE4 /* ContentView+Toolbar.swift in Sources */,
 				41D8E68C2D2B72BD002CA36D /* CredentialsTip.swift in Sources */,
 				41B82EE92CACBC930019FDAD /* RackView.swift in Sources */,
+				B17E051B00000000000000B1 /* EIA310.swift in Sources */,
 				410F372A2CABA58B008236ED /* Rack.swift in Sources */,
 				415F99462CD820B300845D15 /* SiteDataService.swift in Sources */,
+				B17E051900000000000000B1 /* RackDraft.swift in Sources */,
 				41B467B02C3C984C00B23BA8 /* DeviceBuilder.swift in Sources */,
 				41934BAF2BC8C552007DB27A /* MemberCell.swift in Sources */,
 				C9951ECB2E87A05E0025C136 /* SpatialClusteringActor.swift in Sources */,
 				C97136DF2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift in Sources */,
-				41763EDB2CB720DE005DEEFF /* StaticDevice.swift in Sources */,
 				C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */,
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
 				B17E051100000000000000B1 /* Interface.swift in Sources */,
+				B17E051400000000000000B1 /* Cable.swift in Sources */,
 				B17E050100000000000000B1 /* Service.swift in Sources */,
 				B17E050200000000000000B1 /* WebHostTrust.swift in Sources */,
 				B17E050300000000000000B1 /* WebAudit.swift in Sources */,
@@ -1385,6 +1465,15 @@
 				A11CAFE0000000000000NB13 /* NetBoxLenientDateTranscoder.swift in Sources */,
 				A11CAFE0000000000000NB14 /* NetBoxAuthMiddleware.swift in Sources */,
 				A11CAFE0000000000000NB16 /* NetBoxFilterConfiguration.swift in Sources */,
+				B17E051600000000000000B1 /* RolePresentation.swift in Sources */,
+				B17E051700000000000000B1 /* RolePresentationSettings.swift in Sources */,
+				B17E052000000000000000B1 /* SubscriptionTier.swift in Sources */,
+				B17E052100000000000000B1 /* EntitlementStore.swift in Sources */,
+				B17E052200000000000000B1 /* LicenseSeatReconciler.swift in Sources */,
+				B17E052300000000000000B1 /* LicenseSeatStore.swift in Sources */,
+				B17E052400000000000000B1 /* PulsePaywallView.swift in Sources */,
+				B17E052500000000000000B1 /* LicenseSeatEvaluator.swift in Sources */,
+				B17E052600000000000000B1 /* PulseBillingEnvironment.swift in Sources */,
 				A11CAFE0000000000000NB17 /* NetBoxPageIterator.swift in Sources */,
 				A11CAFE0000000000000NB1A /* NetBoxCustomFields.swift in Sources */,
 				A11CAFE0000000000000NB1B /* NetBoxMapping.swift in Sources */,
@@ -1410,6 +1499,9 @@
 				B17E050100000000000000B2 /* ServicePropertiesDecodingTests.swift in Sources */,
 				A11CAFE0000000000000NB15 /* NetBoxDateTranscoderTests.swift in Sources */,
 				A11CAFE0000000000000NB18 /* NetBoxFilterConfigurationTests.swift in Sources */,
+				B17E051800000000000000B1 /* RolePresentationTests.swift in Sources */,
+				B17E052700000000000000B1 /* LicenseSeatReconcilerTests.swift in Sources */,
+				B17E051A00000000000000B1 /* RackDraftTests.swift in Sources */,
 				A11CAFE0000000000000NB19 /* NetBoxPageIteratorTests.swift in Sources */,
 				A11CAFE0000000000000NB1E /* NetBoxMappingTests.swift in Sources */,
 				A11CAFE0000000000000NB71 /* NetBoxInterfaceSchemaMigrationTests.swift in Sources */,

@@ -32,9 +32,8 @@ import OSLog
 /// through the production literal.
 ///
 /// **Production path.** `Bundle.main.bundleIdentifier` resolves to
-/// the app's signed bundle ID (`nz.net.omega.pulse` in shipping
-/// builds, or whatever `BUNDLE_IDENTIFIER` is set to in
-/// `Development.xcconfig`). Returns it verbatim.
+/// whatever `BUNDLE_IDENTIFIER` is set to in `Development.xcconfig`.
+/// Returns it verbatim.
 ///
 /// **Fallback path.** `Bundle.main.bundleIdentifier` is `nil` only
 /// when the running binary is not bundled (test harnesses,
@@ -59,9 +58,73 @@ func pulseBundleID(callSite: StaticString = #function) -> String {
         return id
     }
     let logger = Logger(subsystem: "pulse", category: "bundle.config")
-    logger.fault("Bundle.main.bundleIdentifier was nil at \(String(describing: callSite), privacy: .public); falling back to production literal — this indicates a misconfigured test or CI environment.")
+    logger.fault("Bundle.main.bundleIdentifier was nil at \(String(describing: callSite), privacy: .public); falling back to the xcconfig template identifier. This indicates a misconfigured test or CI environment.")
     #if DEBUG
     assertionFailure("pulseBundleID() invoked outside a bundled context. If this fires in a test, configure Bundle.main or inject the bundle ID explicitly.")
     #endif
-    return "nz.net.omega.pulse"
+    return "com.yourorg.pulse"
+}
+
+/// Distribution values derived from the signed bundle ID, with optional
+/// Info.plist overrides. No vendor host or product prefix is hard-coded.
+enum PulseDistribution {
+    /// Public site for Privacy / Terms. `PulseMarketingHost` in Info.plist
+    /// wins when set; otherwise the bundle ID is reversed and the last
+    /// label is dropped (`com.yourorg.pulse` → `yourorg.com`).
+    static func marketingHost(
+        bundleID: String = pulseBundleID(),
+        info: [String: Any] = Bundle.main.infoDictionary ?? [:]
+    ) -> String {
+        if let override = info["PulseMarketingHost"] as? String {
+            let trimmed = override.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, !trimmed.hasPrefix("$(") { return trimmed }
+        }
+        return hostDerivedFromBundleID(bundleID)
+    }
+
+    /// Last label of the bundle ID (`com.yourorg.pulse` → `pulse`).
+    static func appName(bundleID: String = pulseBundleID()) -> String {
+        bundleID.split(separator: ".").map(String.init).last ?? bundleID
+    }
+
+    /// `https://<reversed-host>/<app-name>/privacy`
+    /// (`com.yourorg.pulse` → `https://yourorg.com/pulse/privacy`).
+    static func privacyURL(
+        bundleID: String = pulseBundleID(),
+        info: [String: Any] = Bundle.main.infoDictionary ?? [:]
+    ) -> URL? {
+        legalURL(page: "privacy", bundleID: bundleID, info: info)
+    }
+
+    /// `https://<reversed-host>/<app-name>/terms`
+    static func termsURL(
+        bundleID: String = pulseBundleID(),
+        info: [String: Any] = Bundle.main.infoDictionary ?? [:]
+    ) -> URL? {
+        legalURL(page: "terms", bundleID: bundleID, info: info)
+    }
+
+    private static func legalURL(
+        page: String,
+        bundleID: String,
+        info: [String: Any]
+    ) -> URL? {
+        let host = marketingHost(bundleID: bundleID, info: info)
+        let app = appName(bundleID: bundleID)
+        return URL(string: "https://\(host)/\(app)/\(page)")
+    }
+
+    static func productID(
+        _ suffix: String,
+        bundleID: String = pulseBundleID()
+    ) -> String {
+        "\(bundleID).\(suffix)"
+    }
+
+    static func hostDerivedFromBundleID(_ bundleID: String) -> String {
+        var labels = bundleID.split(separator: ".").map(String.init)
+        guard labels.count >= 2 else { return bundleID }
+        labels.removeLast()
+        return labels.reversed().joined(separator: ".")
+    }
 }

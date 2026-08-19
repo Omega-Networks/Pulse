@@ -147,7 +147,11 @@ actor LayoutManager {
         let context = ModelContext(modelContainer)
         let vos = (try? SiteTopologyEdges.fetchVOs(siteId: site.id, in: context)) ?? []
         let connections = SiteTopologyEdges.derive(from: vos)
-        return Graph(devices: Array(devices), connections: connections)
+        let presentation = RolePresentationStorage.load(from: .standard)
+        return Graph(
+            devices: devices.filter { !presentation.policy(for: $0.deviceRole?.id).hideFromGraph },
+            connections: connections
+        )
     }
 
     

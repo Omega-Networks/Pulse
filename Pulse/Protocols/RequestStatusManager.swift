@@ -73,4 +73,9 @@ import SwiftData
             currentStatus[source] = nil
         }
     }
+
+    @MainActor
+    func clear(_ source: RequestSource) {
+        currentStatus[source] = nil
+    }
 }

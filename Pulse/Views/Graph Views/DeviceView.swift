@@ -59,7 +59,7 @@ struct DeviceView: View {
     @State private var shouldShowHover: Bool = false {
         didSet {
 #if os(macOS)
-            showPopover = shouldShowHover && !enableGestures
+            showPopover = shouldShowHover && !enableGestures && !rackEdit.isEditing
             shouldShowDetails = shouldShowHover
 #endif
         }
@@ -96,6 +96,9 @@ struct DeviceView: View {
     /// from `SiteGraphView`'s `@Environment(\.openWindow)` into the
     /// closure scope of a child view's `.contextMenu` button.
     @Environment(\.openWindow) private var openWindow
+    @Environment(RackEditSession.self) private var rackEdit
+    @Environment(LicenseSeatStore.self) private var seats
+    @Environment(RolePresentationStore.self) private var rolePresentation
 
     /**
      Initializes a new DeviceView with the specified device and bindings.
@@ -210,8 +213,12 @@ struct DeviceView: View {
                 Button {
                     openWindow(id: "ssh-terminal", value: DeviceWindowTarget(deviceID: device.id))
                 } label: {
-                    Label("Open SSH Terminal", systemImage: "terminal.fill")
+                    Label(
+                        seats.allowsActions(deviceID: device.id) ? "Open SSH Terminal" : "Subscribe to resume",
+                        systemImage: "terminal.fill"
+                    )
                 }
+                .disabled(!seats.allowsActions(deviceID: device.id))
             }
 
             // Surface the Device Web window only when NetBox declares a
@@ -223,8 +230,12 @@ struct DeviceView: View {
                     // restoration anchor. See `SSHTerminalScene`.
                     openWindow(id: "device-web", value: DeviceWindowTarget(deviceID: device.id))
                 } label: {
-                    Label("Open Web UI", systemImage: "globe")
+                    Label(
+                        seats.allowsActions(deviceID: device.id) ? "Open Web UI" : "Subscribe to resume",
+                        systemImage: "globe"
+                    )
                 }
+                .disabled(!seats.allowsActions(deviceID: device.id))
             }
         }
     }
@@ -266,10 +277,28 @@ struct DeviceView: View {
                 deviceDetailsIOS()
 #endif
             }
+            .onChange(of: rackEdit.isEditing) {
+                if rackEdit.isEditing {
+                    showPopover = false
+                }
+            }
+#if os(macOS)
+            .rackDeviceDrag(
+                id: device.id,
+                enabled: rackEdit.isEditing && seats.allowsRackEdit(
+                    deviceID: device.id,
+                    roleID: device.deviceRole?.id,
+                    presentation: rolePresentation.presentation
+                ),
+                symbol: device.symbolName,
+                session: rackEdit
+            )
+#endif
 #if os(iOS)
             .onTapGesture {
-                print("DeviceView tapped! Presenting popover...")
-                showPopover = true
+                if !rackEdit.isEditing {
+                    showPopover = true
+                }
             }
 #endif
     }
@@ -341,6 +370,35 @@ struct DeviceView: View {
         )
     }
 }
+
+#if os(macOS)
+private extension View {
+    func rackDeviceDrag(id: Int64, enabled: Bool, symbol: String, session: RackEditSession) -> some View {
+        modifier(RackDeviceDragModifier(id: id, enabled: enabled, symbol: symbol, session: session))
+    }
+}
+
+/// Same modifier type whether armed or not, so toggling edit does not
+/// replace graph nodes. `.draggable` is only present in edit mode so
+/// the finger tool can still move nodes.
+private struct RackDeviceDragModifier: ViewModifier {
+    let id: Int64
+    let enabled: Bool
+    let symbol: String
+    let session: RackEditSession
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.onDrag {
+                session.beginDrag(id: id)
+                return NSItemProvider(object: NSString(string: String(id)))
+            }
+        } else {
+            content
+        }
+    }
+}
+#endif
 
 extension DeviceView {
     private var eventsCountBySeverity: [String: Int] {

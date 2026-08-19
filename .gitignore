@@ -37,6 +37,10 @@ Build/
 Development.xcconfig
 Production.xcconfig
 
+# Local StoreKit sandbox. Product IDs must match BUNDLE_IDENTIFIER.
+# Copy Pulse/Products.storekit.template and rewrite the prefix.
+Pulse/Products.storekit
+
 # Xcode project user data
 *.pbxuser
 *.mode1v3
@@ -51,6 +55,9 @@ CLAUDE.md
 
 # Session dev logs are output as text for the operator, never committed.
 docs/devlog/
+
+# Working plans. ADRs under docs/architecture/ are the public record.
+docs/plans/
 
 # Grok / other agent session scratch (if ever created under the repo root).
 .grok/

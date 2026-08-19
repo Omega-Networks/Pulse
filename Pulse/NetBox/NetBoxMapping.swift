@@ -97,6 +97,24 @@ enum NetBoxRecord {
         var tenantID: Int64?
     }
 
+    struct Location: Sendable, Equatable {
+        var id: Int64
+        var name: String
+        var created: Date?
+        var lastUpdated: Date?
+        var status: String?
+        var siteID: Int64?
+        var parentID: Int64?
+    }
+
+    struct RackRole: Sendable, Equatable {
+        var id: Int64
+        var name: String
+        var created: Date?
+        var lastUpdated: Date?
+        var colour: String?
+    }
+
     struct Rack: Sendable, Equatable {
         var id: Int64
         var name: String?
@@ -110,6 +128,8 @@ enum NetBoxRecord {
         var status: String?
         var formFactor: String?
         var siteID: Int64?
+        var locationID: Int64?
+        var roleID: Int64?
     }
 
     struct Device: Sendable, Equatable {
@@ -132,6 +152,10 @@ enum NetBoxRecord {
         var typeID: Int64
         var rackID: Int64?
         var manufacturerID: Int64?
+        var frontPortCount: Int64 = 0
+        var rearPortCount: Int64 = 0
+        var deviceBayCount: Int64 = 0
+        var face: String?
     }
 
     struct Service: Sendable, Equatable {
@@ -190,30 +214,57 @@ enum NetBoxRecord {
 
     struct Cable: Sendable, Equatable {
         var id: Int64
-        var interfaceIDs: [Int64]
-    }
-
-    struct StaticDevice: Sendable, Equatable {
-        var id: Int64
-        var name: String?
         var display: String?
+        var url: String?
         var created: Date?
         var lastUpdated: Date?
-        var rackPosition: Float?
-        var frontPortCount: Int64
-        var rearPortCount: Int64
-        var deviceBayCount: Int64
-        var rackID: Int64?
-        var rackName: String?
-        var roleName: String?
-        var typeModel: String?
-        var siteName: String?
+        var status: String?
+        var type: String?
+        var label: String?
+        var cableDescription: String
+        var colour: String?
+        var length: Double?
+        var lengthUnit: String?
+        var tenantID: Int64?
+        var tenantName: String?
+        var bundleID: Int64?
+        var aInterfaceID: Int64?
+        var bInterfaceID: Int64?
+        var aFrontPortID: Int64? = nil
+        var bFrontPortID: Int64? = nil
+
+        var interfaceIDs: [Int64] {
+            [aInterfaceID, bInterfaceID].compactMap { $0 }
+        }
+
+        var frontPortIDs: [Int64] {
+            [aFrontPortID, bFrontPortID].compactMap { $0 }
+        }
+    }
+
+    struct FrontPort: Sendable, Equatable {
+        var id: Int64
+        var name: String
+        var display: String?
+        var label: String?
+        var type: String?
+        var colour: String?
+        var created: Date?
+        var lastUpdated: Date?
+        var occupied: Bool
+        var cableID: Int64?
+        var connectedEndpointID: Int64?
+        var connectedEndpointName: String?
+        var connectedEndpointType: String?
+        var deviceID: Int64?
+        var deviceName: String?
     }
 
     struct DeviceBay: Sendable, Equatable {
         var id: Int64
         var name: String?
         var display: String?
+        var label: String?
         var created: Date?
         var lastUpdated: Date?
         var shelfID: Int64?
@@ -311,6 +362,30 @@ enum NetBoxIngest {
         return try nested.decodeIfPresent(String.self, forKey: .value)
     }
 
+    /// Cable `type` is a bare string on the 4.6.2 list (`"cat6"`).
+    /// Status and length unit are still `{ "value": ... }`. Either
+    /// shape, or a nested `{ "name": ... }`, must not skip the row.
+    static func choiceOrString<K: CodingKey>(
+        _ container: KeyedDecodingContainer<K>,
+        _ key: K
+    ) -> String? {
+        guard container.contains(key), (try? container.decodeNil(forKey: key)) == false else {
+            return nil
+        }
+        if let value = try? container.decode(String.self, forKey: key) {
+            return value.isEmpty ? nil : value
+        }
+        if let nested = try? container.nestedContainer(keyedBy: ValueKey.self, forKey: key),
+           let value = try? nested.decodeIfPresent(String.self, forKey: .value),
+           !value.isEmpty {
+            return value
+        }
+        if let name = try? nestedNamed(container, key).name, !name.isEmpty {
+            return name
+        }
+        return nil
+    }
+
     static func address<K: CodingKey>(
         _ container: KeyedDecodingContainer<K>,
         _ key: K
@@ -406,9 +481,43 @@ extension NetBoxRecord.Site: Decodable {
     }
 }
 
+extension NetBoxRecord.Location: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, name, created, status, site, parent
+        case lastUpdated = "last_updated"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .lastUpdated)
+        status = try NetBoxIngest.choiceValue(container, .status)
+        siteID = try NetBoxIngest.nestedID(container, .site)
+        parentID = try NetBoxIngest.nestedID(container, .parent)
+    }
+}
+
+extension NetBoxRecord.RackRole: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, name, created, color
+        case lastUpdated = "last_updated"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .lastUpdated)
+        colour = try container.decodeIfPresent(String.self, forKey: .color)
+    }
+}
+
 extension NetBoxRecord.Rack: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, display, url, created, status, site
+        case id, name, display, url, created, status, site, location, role
         case lastUpdated = "last_updated"
         case uHeight = "u_height"
         case startingUnit = "starting_unit"
@@ -430,16 +539,21 @@ extension NetBoxRecord.Rack: Decodable {
         status = try NetBoxIngest.choiceValue(container, .status)
         formFactor = try NetBoxIngest.choiceValue(container, .formFactor)
         siteID = try NetBoxIngest.nestedID(container, .site)
+        locationID = try NetBoxIngest.nestedID(container, .location)
+        roleID = try NetBoxIngest.nestedID(container, .role)
     }
 }
 
 extension NetBoxRecord.Device: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, display, url, created, serial, status, position, site, role, rack
+        case id, name, display, url, created, serial, status, position, face, site, role, rack
         case lastUpdated = "last_updated"
         case primaryIP = "primary_ip"
         case deviceType = "device_type"
         case customFields = "custom_fields"
+        case frontPortCount = "front_port_count"
+        case rearPortCount = "rear_port_count"
+        case deviceBayCount = "device_bay_count"
     }
 
     init(from decoder: Decoder) throws {
@@ -454,6 +568,7 @@ extension NetBoxRecord.Device: Decodable {
         primaryIP = try NetBoxIngest.address(container, .primaryIP) ?? "Unknown"
         status = try NetBoxIngest.choiceValue(container, .status) ?? ""
         rackPosition = try container.decodeIfPresent(Double.self, forKey: .position).map(Float.init)
+        face = NetBoxIngest.choiceOrString(container, .face)
         let fields = try NetBoxIngest.pulseFields(container, .customFields)
         x = fields.x
         y = fields.y
@@ -481,6 +596,9 @@ extension NetBoxRecord.Device: Decodable {
         roleID = role
         typeID = type
         rackID = try NetBoxIngest.nestedID(container, .rack)
+        frontPortCount = NetBoxIngest.flexibleInt64(container, .frontPortCount) ?? 0
+        rearPortCount = NetBoxIngest.flexibleInt64(container, .rearPortCount) ?? 0
+        deviceBayCount = NetBoxIngest.flexibleInt64(container, .deviceBayCount) ?? 0
         if container.contains(.deviceType), try container.decodeNil(forKey: .deviceType) == false {
             let typeContainer = try container.nestedContainer(keyedBy: ManufacturerKey.self, forKey: .deviceType)
             manufacturerID = try NetBoxIngest.nestedID(typeContainer, .manufacturer)
@@ -589,65 +707,64 @@ extension NetBoxRecord.Interface: Decodable {
     }
 }
 
-extension NetBoxRecord.StaticDevice: Decodable {
+extension NetBoxRecord.FrontPort: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, display, created, site, rack, role
+        case id, name, display, label, created, device, type, color, occupied, cable
         case lastUpdated = "last_updated"
-        case deviceType = "device_type"
-        case rackPosition = "position"
-        case frontPortCount = "front_port_count"
-        case rearPortCount = "rear_port_count"
-        case deviceBayCount = "device_bay_count"
+        case connectedEndpoints = "connected_endpoints"
+        case linkPeers = "link_peers"
+        case occupiedFlag = "_occupied"
     }
-
-    enum ModelKey: String, CodingKey { case model }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int64.self, forKey: .id)
-        name = try container.decodeIfPresent(String.self, forKey: .name)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         display = try container.decodeIfPresent(String.self, forKey: .display)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
         created = try container.decodeIfPresent(Date.self, forKey: .created)
         lastUpdated = try container.decodeIfPresent(Date.self, forKey: .lastUpdated)
-        rackPosition = try container.decodeIfPresent(Double.self, forKey: .rackPosition).map(Float.init)
-        frontPortCount = try container.decodeIfPresent(Int64.self, forKey: .frontPortCount) ?? 0
-        rearPortCount = try container.decodeIfPresent(Int64.self, forKey: .rearPortCount) ?? 0
-        deviceBayCount = try container.decodeIfPresent(Int64.self, forKey: .deviceBayCount) ?? 0
-        let rack = try NetBoxIngest.nestedNamed(container, .rack)
-        rackID = rack.id
-        rackName = rack.name
-        roleName = try NetBoxIngest.nestedNamed(container, .role).name
-        siteName = try NetBoxIngest.nestedNamed(container, .site).name
-        if container.contains(.deviceType), try container.decodeNil(forKey: .deviceType) == false {
-            let type = try container.nestedContainer(keyedBy: ModelKey.self, forKey: .deviceType)
-            typeModel = try type.decodeIfPresent(String.self, forKey: .model)
+        type = try NetBoxIngest.choiceValue(container, .type)
+        colour = try container.decodeIfPresent(String.self, forKey: .color)
+        if let flagged = try container.decodeIfPresent(Bool.self, forKey: .occupied) {
+            occupied = flagged
         } else {
-            typeModel = nil
+            occupied = try container.decodeIfPresent(Bool.self, forKey: .occupiedFlag) ?? false
         }
+        cableID = try NetBoxIngest.nestedID(container, .cable)
+        let device = try NetBoxIngest.nestedNamed(container, .device)
+        deviceID = device.id
+        deviceName = device.name
+        var endpoint = try NetBoxIngest.firstEndpoint(container, .connectedEndpoints)
+        var objectType = Self.firstObjectType(container, .connectedEndpoints)
+        if endpoint.id == nil {
+            endpoint = try NetBoxIngest.firstEndpoint(container, .linkPeers)
+            objectType = Self.firstObjectType(container, .linkPeers)
+        }
+        connectedEndpointID = endpoint.id
+        connectedEndpointName = endpoint.name
+        connectedEndpointType = objectType
     }
 
-    func asCacheValue() -> StaticDevice {
-        var value = StaticDevice(id: id)
-        value.name = name
-        value.display = display
-        value.created = created
-        value.lastUpdated = lastUpdated
-        value.rackPosition = rackPosition
-        value.frontPortCount = frontPortCount
-        value.rearPortCount = rearPortCount
-        value.deviceBayCount = deviceBayCount
-        value.rackId = rackID
-        value.rackName = rackName
-        value.deviceRole = roleName
-        value.deviceType = typeModel
-        value.site = siteName
-        return value
+    private static func firstObjectType(
+        _ container: KeyedDecodingContainer<CodingKeys>,
+        _ key: CodingKeys
+    ) -> String? {
+        enum TypeKey: String, CodingKey { case object_type }
+        guard container.contains(key),
+              (try? container.decodeNil(forKey: key)) == false,
+              var array = try? container.nestedUnkeyedContainer(forKey: key),
+              !array.isAtEnd,
+              let nested = try? array.nestedContainer(keyedBy: TypeKey.self) else {
+            return nil
+        }
+        return try? nested.decodeIfPresent(String.self, forKey: .object_type)
     }
 }
 
 extension NetBoxRecord.DeviceBay: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, display, created, device
+        case id, name, display, label, created, device
         case lastUpdated = "last_updated"
         case installedDevice = "installed_device"
     }
@@ -657,6 +774,7 @@ extension NetBoxRecord.DeviceBay: Decodable {
         id = try container.decode(Int64.self, forKey: .id)
         name = try container.decodeIfPresent(String.self, forKey: .name)
         display = try container.decodeIfPresent(String.self, forKey: .display)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
         created = try container.decodeIfPresent(Date.self, forKey: .created)
         lastUpdated = try container.decodeIfPresent(Date.self, forKey: .lastUpdated)
         let shelf = try NetBoxIngest.nestedNamed(container, .device)
@@ -665,19 +783,6 @@ extension NetBoxRecord.DeviceBay: Decodable {
         let installed = try NetBoxIngest.nestedNamed(container, .installedDevice)
         installedDeviceID = installed.id
         installedDeviceName = installed.name
-    }
-
-    func asCacheValue() -> DeviceBay {
-        var value = DeviceBay(id: id)
-        value.name = name
-        value.display = display
-        value.created = created
-        value.lastUpdated = lastUpdated
-        value.staticDeviceId = shelfID
-        value.staticDeviceName = shelfName
-        value.deviceId = installedDeviceID
-        value.deviceName = installedDeviceName
-        return value
     }
 }
 
@@ -702,36 +807,50 @@ extension NetBoxRecord.ObjectChange: Decodable {
 
 extension NetBoxRecord.Cable: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id
+        case id, display, url, created, tenant, label, color, length, description, bundle, type, status
+        case lastUpdated = "last_updated"
+        case lengthUnit = "length_unit"
         case aTerminations = "a_terminations"
         case bTerminations = "b_terminations"
-    }
-
-    enum TerminationKey: String, CodingKey {
-        case objectType = "object_type"
-        case objectID = "object_id"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int64.self, forKey: .id)
-        var ids: [Int64] = []
-        ids.append(contentsOf: Self.interfaceIDs(container, .aTerminations))
-        ids.append(contentsOf: Self.interfaceIDs(container, .bTerminations))
-        interfaceIDs = ids
+        display = try container.decodeIfPresent(String.self, forKey: .display)
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .lastUpdated)
+        status = NetBoxIngest.choiceOrString(container, .status)
+        type = NetBoxIngest.choiceOrString(container, .type)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        cableDescription = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+        colour = try container.decodeIfPresent(String.self, forKey: .color)
+        length = NetBoxIngest.flexibleDouble(container, .length)
+        lengthUnit = NetBoxIngest.choiceOrString(container, .lengthUnit)
+        let tenant = try NetBoxIngest.nestedNamed(container, .tenant)
+        tenantID = tenant.id
+        tenantName = tenant.name
+        bundleID = try NetBoxIngest.nestedID(container, .bundle)
+        aInterfaceID = Self.firstTerminationID(container, .aTerminations, type: "dcim.interface")
+        bInterfaceID = Self.firstTerminationID(container, .bTerminations, type: "dcim.interface")
+        aFrontPortID = Self.firstTerminationID(container, .aTerminations, type: "dcim.frontport")
+        bFrontPortID = Self.firstTerminationID(container, .bTerminations, type: "dcim.frontport")
     }
 
-    private static func interfaceIDs(
+    private static func firstTerminationID(
         _ container: KeyedDecodingContainer<CodingKeys>,
-        _ key: CodingKeys
-    ) -> [Int64] {
+        _ key: CodingKeys,
+        type: String
+    ) -> Int64? {
         guard let rows = try? container.decode([Failable<Termination>].self, forKey: key) else {
-            return []
+            return nil
         }
-        return rows.compactMap { row in
-            guard let value = row.value, value.objectType == "dcim.interface" else { return nil }
+        for row in rows {
+            guard let value = row.value, value.objectType == type else { continue }
             return value.objectID
         }
+        return nil
     }
 
     private struct Termination: Decodable {
@@ -907,7 +1026,9 @@ enum NetBoxMapping {
             deviceCount: value.device_count,
             status: value.status?.value?.rawValue,
             formFactor: value.form_factor?.value?.rawValue,
-            siteID: Int64(value.site.id)
+            siteID: Int64(value.site.id),
+            locationID: value.location.map { Int64($0.value1.id) },
+            roleID: value.role.map { Int64($0.value1.id) }
         )
     }
 
@@ -934,7 +1055,11 @@ enum NetBoxMapping {
             roleID: Int64(value.role.id),
             typeID: Int64(value.device_type.id),
             rackID: value.rack.map { Int64($0.value1.id) },
-            manufacturerID: Int64(value.device_type.manufacturer.id)
+            manufacturerID: Int64(value.device_type.manufacturer.id),
+            frontPortCount: Int64(value.front_port_count),
+            rearPortCount: Int64(value.rear_port_count),
+            deviceBayCount: Int64(value.device_bay_count),
+            face: value.face?.value?.rawValue
         )
     }
 

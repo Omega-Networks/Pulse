@@ -25,76 +25,17 @@
 
 import Foundation
 
-/// Fetch-scope, delete-scope, and (later) delta-filter for NetBox sync.
+/// Sync scope is the whole NetBox instance.
 ///
-/// One value object so the three consumers cannot drift. Defaults match the
-/// IDs previously baked into `NetboxResource` paths so Gate 1 is a parity run,
-/// not a scope change. Camera role IDs 11/35 on `Device` are display filters
-/// and do not belong here.
+/// Pulse used to omit manufacturer 5 (Generic) and roles 29/30 from the
+/// device / role / interface pull, then re-fetch filler roles 6/7/18/27
+/// so the rack elevation had blanks and panels. That split is gone.
+/// Every device, device type, and device role is stored. Fetch and
+/// delete stay aligned (P1).
+///
+/// What the operator sees, and which devices will count toward a
+/// future per-device license, is `RolePresentation` (Settings → Roles).
+/// Do not add `manufacturer_id__n` or `role_id__n` query items here.
 struct NetBoxFilterConfiguration: Sendable, Equatable, Hashable {
-    /// Manufacturers omitted from device and device-type pulls (`manufacturer_id__n`).
-    var excludedManufacturerIDs: Set<Int>
-
-    /// Roles omitted from device and device-role pulls (`role_id__n` / `id__n`).
-    var excludedRoleIDs: Set<Int>
-
-    /// Roles that identify static rack fillers (blank plate, cable management,
-    /// patch panel). On-demand only in P1; not part of the boot device pull.
-    var staticDeviceRoleIDs: Set<Int>
-
-    /// Today's Omega instance IDs so Gate 1 matches the previous baked-in
-    /// scope. A Settings control belongs later; do not scatter new literals.
-    static let `default` = NetBoxFilterConfiguration(
-        excludedManufacturerIDs: [5],
-        excludedRoleIDs: [29, 30],
-        staticDeviceRoleIDs: [6, 7, 18, 27]
-    )
-
-    /// Stable, sorted arrays for generated query parameters.
-    var excludedManufacturerQuery: [Int] {
-        excludedManufacturerIDs.sorted()
-    }
-
-    /// Device list `role_id__n` is typed `[String]` in the 4.6.2 schema.
-    var excludedRoleQueryAsStrings: [String] {
-        excludedRoleIDs.sorted().map(String.init)
-    }
-
-    var excludedRoleQueryAsInts: [Int] {
-        excludedRoleIDs.sorted()
-    }
-
-    var staticDeviceRoleQuery: [Int] {
-        staticDeviceRoleIDs.sorted()
-    }
-
-    var staticDeviceRoleQueryItems: [URLQueryItem] {
-        staticDeviceRoleQuery.map { URLQueryItem(name: "role_id", value: String($0)) }
-    }
-
-    /// True if a device with these foreign keys belongs in the local store.
-    func includesDevice(manufacturerID: Int?, roleID: Int?) -> Bool {
-        if let manufacturerID, excludedManufacturerIDs.contains(manufacturerID) {
-            return false
-        }
-        if let roleID, excludedRoleIDs.contains(roleID) {
-            return false
-        }
-        return true
-    }
-
-    /// True if a device-type with this manufacturer belongs in the local store.
-    func includesDeviceType(manufacturerID: Int?) -> Bool {
-        guard let manufacturerID else { return true }
-        return !excludedManufacturerIDs.contains(manufacturerID)
-    }
-
-    /// True if a device-role belongs in the local store.
-    func includesDeviceRole(id: Int) -> Bool {
-        !excludedRoleIDs.contains(id)
-    }
-
-    func isStaticDeviceRole(id: Int) -> Bool {
-        staticDeviceRoleIDs.contains(id)
-    }
+    static let `default` = NetBoxFilterConfiguration()
 }

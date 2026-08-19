@@ -43,12 +43,52 @@ final class NetBoxDeltaTests: XCTestCase {
     func testCableJSONCollectsBothInterfaceTerminations() throws {
         let json = Data("""
         {
-          "id": 9,
+          "id": 1424,
+          "display": "sw1:eth1 ↔ sw2:eth2",
+          "type": {"value": "cat6", "label": "CAT6"},
+          "status": {"value": "connected", "label": "Connected"},
+          "tenant": {"id": 3, "name": "Omega"},
+          "label": "uplink",
+          "color": "f44336",
+          "length": 15,
+          "length_unit": {"value": "m", "label": "Meters"},
+          "description": "core uplink",
+          "bundle": null,
           "a_terminations": [{"object_type": "dcim.interface", "object_id": 1}],
           "b_terminations": [{"object_type": "dcim.interface", "object_id": 2}]
         }
         """.utf8)
         let cable = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: json)
+        XCTAssertEqual(cable.id, 1424)
+        XCTAssertEqual(cable.interfaceIDs, [1, 2])
+        XCTAssertEqual(cable.aInterfaceID, 1)
+        XCTAssertEqual(cable.bInterfaceID, 2)
+        XCTAssertEqual(cable.tenantID, 3)
+        XCTAssertEqual(cable.tenantName, "Omega")
+        XCTAssertEqual(cable.length, 15)
+        XCTAssertEqual(cable.lengthUnit, "m")
+        XCTAssertEqual(cable.colour, "f44336")
+        XCTAssertEqual(cable.cableDescription, "core uplink")
+        XCTAssertEqual(cable.type, "cat6")
+        XCTAssertEqual(cable.status, "connected")
+        XCTAssertNil(cable.bundleID)
+    }
+
+    func testCableTypeAsBareStringDoesNotSkip() throws {
+        let json = Data("""
+        {
+          "id": 10,
+          "type": "cat6",
+          "status": "connected",
+          "length_unit": "m",
+          "a_terminations": [{"object_type": "dcim.interface", "object_id": 1}],
+          "b_terminations": [{"object_type": "dcim.interface", "object_id": 2}]
+        }
+        """.utf8)
+        let cable = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: json)
+        XCTAssertEqual(cable.type, "cat6")
+        XCTAssertEqual(cable.status, "connected")
+        XCTAssertEqual(cable.lengthUnit, "m")
         XCTAssertEqual(cable.interfaceIDs, [1, 2])
     }
 
@@ -87,6 +127,31 @@ final class NetBoxDeltaTests: XCTestCase {
         XCTAssertEqual(try after.fetch(FetchDescriptor<SyncProvider>()).first?.lastDeltaSummary, "no changes")
     }
 
+    func testWatermarkZeroDeltasFromTheBeginningWithoutProbingIdZero() async throws {
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 1))
+        seed.insert(Device(id: 10))
+        let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
+        provider.lastObjectChangeId = 0
+        provider.lastFullMirrorAt = Date()
+        seed.insert(provider)
+        try seed.save()
+
+        let fetcher = DeltaFetcher()
+        fetcher.fail404.insert("/api/core/object-changes/0/")
+        fetcher.bodies["/api/core/object-changes/"] = Data(#"{"count":0,"next":null,"results":[]}"#.utf8)
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.sync()
+        XCTAssertFalse(fetcher.paths.contains("/api/core/object-changes/0/"))
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/core/object-changes/"))
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastDeltaSummary,
+            "no changes"
+        )
+    }
+
     func testDeleteActionRemovesRowAndMissingWatermarkForcesMirror() async throws {
         let container = try makeContainer()
         let seed = ModelContext(container)
@@ -111,6 +176,23 @@ final class NetBoxDeltaTests: XCTestCase {
         let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
         try await engine.sync()
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/devices/"))
+    }
+
+    func testFullMirrorStampsPreWalkCursorNotALaterHead() async throws {
+        let container = try makeContainer()
+        let fetcher = DeltaFetcher()
+        fetcher.emptySuccess = true
+        fetcher.latestCursorQueue = [
+            Data(#"{"count":1,"next":null,"results":[{"id":7,"action":{"value":"update"},"changed_object_type":"dcim.device","changed_object_id":1}]}"#.utf8),
+            Data(#"{"count":1,"next":null,"results":[{"id":99,"action":{"value":"update"},"changed_object_type":"dcim.device","changed_object_id":1}]}"#.utf8),
+        ]
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.fullSync()
+        let provider = try XCTUnwrap(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first
+        )
+        XCTAssertEqual(provider.lastObjectChangeId, 7)
+        XCTAssertEqual(fetcher.latestCursorCalls, 1)
     }
 
     func testDeltaCreateAppliesRetrievedDevice() async throws {
@@ -182,7 +264,7 @@ final class NetBoxDeltaTests: XCTestCase {
         )
     }
 
-    func testExcludedRoleDeviceBecomesLocalDelete() async throws {
+    func testRoleChangeKeepsTheDevice() async throws {
         let container = try makeContainer()
         let seed = ModelContext(container)
         seed.insert(Site(id: 1))
@@ -206,7 +288,9 @@ final class NetBoxDeltaTests: XCTestCase {
         """.utf8)
         let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
         try await engine.sync()
-        XCTAssertFalse(try ModelContext(container).fetch(FetchDescriptor<Device>()).contains { $0.id == 30 })
+        let devices = try ModelContext(container).fetch(FetchDescriptor<Device>())
+        XCTAssertTrue(devices.contains { $0.id == 30 })
+        XCTAssertEqual(devices.first { $0.id == 30 }?.name, "hidden")
     }
 
     private func change(
@@ -225,7 +309,8 @@ final class NetBoxDeltaTests: XCTestCase {
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
             WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
             PowerSenseEvent.self, SSHCredential.self, KnownHost.self
         ])
@@ -242,6 +327,8 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     var fail404: Set<String> = []
     var transportOn: Set<String> = []
     var emptySuccess = false
+    var latestCursorQueue: [Data] = []
+    var latestCursorCalls = 0
     private let emptyPage = Data(#"{"count":0,"next":null,"results":[]}"#.utf8)
 
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
@@ -251,6 +338,13 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
         }
         if fail404.contains(path) {
             throw NetBoxSyncError.httpStatus(code: 404, body: "missing")
+        }
+        if path == "/api/core/object-changes/",
+           query.contains(where: { $0.name == "ordering" && $0.value == "-id" }) {
+            latestCursorCalls += 1
+            if !latestCursorQueue.isEmpty {
+                return latestCursorQueue.removeFirst()
+            }
         }
         if let body = bodies[path] {
             return body

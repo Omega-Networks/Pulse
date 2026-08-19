@@ -36,7 +36,7 @@ final class Device {
     // Secondary index on `defaultCredentialID` so the credential-delete
     // cleanup fetch resolves via the index rather than a full-table scan at
     // 1M+ devices. See the `defaultCredentialID` declaration below.
-    #Index<Device>([\.defaultCredentialID])
+    #Index<Device>([\.defaultCredentialID], [\.siteId])
 
     @Attribute(.unique) var id: Int64
     var created: Date?
@@ -58,6 +58,14 @@ final class Device {
     
     //Property to determine rack position
     var rackPosition: Float?
+    /// NetBox rack face: "front" or "rear". Nil when not racked.
+    var face: String?
+
+    /// Port / bay counts from the NetBox device list. Fillers (patch
+    /// panel, shelf) render from these instead of a side-channel fetch.
+    var frontPortCount: Int64 = 0
+    var rearPortCount: Int64 = 0
+    var deviceBayCount: Int64 = 0
 
     // MARK: - SSH / Web preferences
     //
@@ -95,6 +103,22 @@ final class Device {
     @Relationship(deleteRule: .cascade, inverse: \Interface.device)
     var interfaces: [Interface]?
 
+    // NetBox device bays on a shelf (inverse of DeviceBay.device).
+    @Relationship(deleteRule: .cascade, inverse: \DeviceBay.device)
+    var deviceBays: [DeviceBay]?
+
+    @Relationship(deleteRule: .cascade, inverse: \FrontPort.device)
+    var frontPorts: [FrontPort]?
+
+    /// Denormalized NetBox site id. 0 when unknown. Interface and
+    /// front-port apply, and Connect, read this instead of hoping
+    /// `site` is still faulted.
+    var siteId: Int64 = 0
+
+    /// When Pulse last granted this row a license seat. Nil on
+    /// hardware and on billable devices that have never received a
+    /// seat. Rank among currently eligible devices; not NetBox time.
+    var seatGrantedAt: Date?
 
     //Many-To-One
     var site: Site?
@@ -109,6 +133,13 @@ final class Device {
          self.localY = y ?? 150
      }
     
+    /// Site for Connect and child-row stamping. Prefers the
+    /// denormalized id so a broken `site` relationship still works.
+    var resolvedSiteId: Int64 {
+        if siteId != 0 { return siteId }
+        return site?.id ?? 0
+    }
+
     var localX: Double = 0
     var localY: Double = 0
     var highestSeverityStored: Int = -2
@@ -148,6 +179,12 @@ final class Device {
          return deviceRole?.id == 11 || deviceRole?.id == 35 // Camera or Edge Node
      }
     
+    /// Rack-hardware drawing (patch panel, blank, shelf). Reads the
+    /// persisted presentation map; missing roles are ordinary devices.
+    func isRackFiller(in presentation: RolePresentation) -> Bool {
+        presentation.policy(for: deviceRole?.id).treatAsFiller
+    }
+
     /// Device symbol based on its role
     var symbolName: String {
         switch deviceRole?.name {

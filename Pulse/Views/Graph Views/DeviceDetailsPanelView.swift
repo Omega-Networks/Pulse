@@ -28,19 +28,28 @@ import SwiftData
 import AVKit
 
 struct DeviceDetailsPanelView: View {
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Environment(RackEditSession.self) private var rackEdit
+    @Environment(LicenseSeatStore.self) private var seats
+    @Environment(EntitlementStore.self) private var entitlements
+    @Environment(RolePresentationStore.self) private var rolePresentation
     @State var site: Site
-    @Binding var selectedDevice: Device? // Changed to @Bindable to allow modifications
-    
-    // State for controlling the configuration sheet
+    @Binding var selectedDevice: Device?
+    @Binding var enableGestures: Bool
+
     @State private var showingCameraConfigSheet = false
-    
+    #if os(macOS)
+    @State private var showingNewRackSheet = false
+    #endif
+    @State private var selectedTab = "Device Details"
+    @State private var editAlert: String?
+
     var body: some View {
-        TabView {
-            // deviceInfoSection Tab
+        TabView(selection: $selectedTab) {
             ScrollView(.vertical, showsIndicators: true) {
                 if let device = selectedDevice {
                     deviceInfoSection(device)
-                    
+
                 } else {
                     Text("Select a device to view details")
                         .padding(.vertical, 10)
@@ -50,16 +59,12 @@ struct DeviceDetailsPanelView: View {
                 Label("Device Details", systemImage: "info.circle")
             }
             .tag("Device Details")
-            
-            // RackView Tab
-            VStack {
-                Text("Racks")
-                    .font(.title)
-                    .fontWeight(.bold)
-                
+
+            VStack(alignment: .leading, spacing: 8) {
+                racksHeader
                 RackView(site: site)
             }
-            .padding(20)
+            .padding(12)
             .tabItem {
                 Label("Rack View", systemImage: "square.stack.3d.up")
             }
@@ -69,6 +74,171 @@ struct DeviceDetailsPanelView: View {
         .tabViewStyle(.grouped)
         #endif
         .frame(minWidth: 600, maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: selectedTab, initial: true) { _, tab in
+            setRackSurfaceOpen(tab == "Rack View")
+        }
+        .onDisappear { setRackSurfaceOpen(false) }
+        .alert("Rack edit", isPresented: Binding(
+            get: { editAlert != nil },
+            set: { if !$0 { editAlert = nil } }
+        )) {
+            Button("OK", role: .cancel) { editAlert = nil }
+        } message: {
+            Text(editAlert ?? "")
+        }
+        #if os(macOS)
+        .sheet(isPresented: $showingNewRackSheet) {
+            NewRackSheet(siteId: site.id, onDismiss: { showingNewRackSheet = false })
+                .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+        }
+        .sheet(isPresented: Binding(
+            get: { rackEdit.addTarget != nil },
+            set: { if !$0 {
+                rackEdit.addTarget = nil
+                rackEdit.addCreatesDevice = false
+            } }
+        )) {
+            if let target = rackEdit.addTarget {
+                if rackEdit.addCreatesDevice {
+                    NewDeviceSheet(
+                        siteId: site.id,
+                        mount: target,
+                        defaultTenantID: site.tenant?.id,
+                        onDismiss: {
+                            rackEdit.addTarget = nil
+                            rackEdit.addCreatesDevice = false
+                        }
+                    )
+                    .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                    .environment(entitlements)
+                    .environment(seats)
+                    .environment(rolePresentation)
+                } else {
+                    AddToRackSheet(
+                        site: site,
+                        target: target,
+                        onDismiss: {
+                            rackEdit.addTarget = nil
+                            rackEdit.addCreatesDevice = false
+                        },
+                        onCreateNew: { rackEdit.addCreatesDevice = true }
+                    )
+                    .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                    .environment(seats)
+                    .environment(rolePresentation)
+                }
+            }
+        }
+        #endif
+    }
+
+    private var racksHeader: some View {
+        HStack(spacing: 8) {
+            Text("Racks")
+                .font(.headline)
+
+            if rackEdit.isEditing {
+                Button("Undo") { rackEdit.undo() }
+                    .disabled(!rackEdit.draft.canUndo || rackEdit.isSaving)
+                Button("Cancel") { rackEdit.cancel() }
+                    .disabled(rackEdit.isSaving)
+                Button("Save") {
+                    Task { await saveRackDraft() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!rackEdit.draft.isDirty || rackEdit.isSaving)
+            }
+
+            if let message = rackEdit.status {
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button {
+                if rackEdit.isEditing {
+                    rackEdit.cancel()
+                } else {
+                    if enableGestures {
+                        enableGestures = false
+                    }
+                    rackEdit.begin()
+                }
+            } label: {
+                Image(systemName: rackEdit.isEditing ? "pencil.circle.fill" : "pencil")
+            }
+            .buttonStyle(.plain)
+            .help(rackEdit.isEditing ? "Leave rack edit mode" : "Edit racks: drag devices onto a U, between racks, or out to unrack")
+
+            #if os(macOS)
+            Button {
+                showingNewRackSheet = true
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(.plain)
+            .help("New rack in NetBox")
+            #endif
+        }
+    }
+
+    private func setRackSurfaceOpen(_ open: Bool) {
+        rackEdit.isOpen = open
+        if open, enableGestures {
+            enableGestures = false
+        }
+    }
+
+    @MainActor
+    private func saveRackDraft() async {
+        guard let engine = netBoxSyncEngine else {
+            editAlert = "NetBox sync engine is not available."
+            return
+        }
+        rackEdit.isSaving = true
+        defer { rackEdit.isSaving = false }
+        let placements = rackEdit.draft.placements.values.sorted { $0.deviceID < $1.deviceID }
+        let presentation = rolePresentation.presentation
+        if let blocked = placements.first(where: { placement in
+            let roleID = site.devices?.first(where: { $0.id == placement.deviceID })?.deviceRole?.id
+            return !seats.allowsRackEdit(
+                deviceID: placement.deviceID,
+                roleID: roleID,
+                presentation: presentation
+            )
+        }) {
+            editAlert = BillingError.deviceNotSeated.localizedDescription
+            rackEdit.status = "Subscribe to resume. Device \(blocked.deviceID) is not seated."
+            return
+        }
+        for placement in placements {
+            do {
+                if placement.rackID == RackOccupancy.unrackedID {
+                    try await engine.patchDevice(
+                        id: placement.deviceID,
+                        body: NetBoxWriteBody.DevicePatch(clearRack: true)
+                    )
+                } else {
+                    try await engine.patchDevice(
+                        id: placement.deviceID,
+                        body: NetBoxWriteBody.DevicePatch(
+                            rack: placement.rackID,
+                            position: placement.position,
+                            face: placement.face
+                        )
+                    )
+                }
+            } catch {
+                editAlert = error.localizedDescription
+                rackEdit.status = "Save stopped. Remaining moves were not sent."
+                return
+            }
+        }
+        rackEdit.draft.reset()
+        rackEdit.status = "Saved \(placements.count) placement(s)."
     }
     
     // MARK: - Helper Views

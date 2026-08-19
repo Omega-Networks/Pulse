@@ -1,5 +1,5 @@
 //
-//  SwiftUIView.swift
+//  ShelfView.swift
 //  Pulse
 //
 //  Copyright © 2025–present Omega Networks Limited.
@@ -27,11 +27,12 @@ import SwiftUI
 import SwiftData
 
 struct ShelfView: View {
-    let staticDevice: StaticDevice
+    let device: Device
     let unitHeight: CGFloat
     let rackWidth: CGFloat
+    @Environment(\.modelContext) private var modelContext
     @State private var deviceBays: [DeviceBay] = []
-    
+
     var body: some View {
         VStack(spacing: 0) {
             RoundedRectangle(cornerRadius: rackUnitCornerRadius)
@@ -40,14 +41,16 @@ struct ShelfView: View {
                     RoundedRectangle(cornerRadius: rackUnitCornerRadius)
                         .stroke(Color.gray.opacity(0.5), lineWidth: 0.5)
                 )
-            
-            // Device bays container
+
             HStack(spacing: 2) {
-                ForEach(deviceBays) { bay in
-                    DeviceBaySlotView(bay: bay, unitHeight: unitHeight, rackWidth: (rackWidth - 4) / CGFloat(max(1, deviceBays.count)))
+                ForEach(orderedBays) { bay in
+                    DeviceBaySlotView(
+                        bay: bay,
+                        unitHeight: unitHeight,
+                        rackWidth: (rackWidth - 4) / CGFloat(max(1, orderedBays.count))
+                    )
                 }
-                // If no bays loaded, show empty shelf
-                if deviceBays.isEmpty {
+                if orderedBays.isEmpty {
                    EmptyView()
                 }
             }
@@ -60,12 +63,21 @@ struct ShelfView: View {
                 .stroke(Color.black, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: rackUnitCornerRadius))
-        .task {
-            deviceBays = await DeviceBayCache.shared.getDeviceBays(forDeviceId: staticDevice.id)
+        .task(id: device.id) {
+            let shelfId = device.id
+            let descriptor = FetchDescriptor<DeviceBay>(
+                predicate: #Predicate<DeviceBay> { $0.deviceId == shelfId }
+            )
+            deviceBays = (try? modelContext.fetch(descriptor)) ?? []
+        }
+    }
+
+    /// Bay 1, Bay 2, … Bay 10 — numeric, not lexicographic.
+    private var orderedBays: [DeviceBay] {
+        deviceBays.sorted { lhs, rhs in
+            let left = lhs.label ?? lhs.name ?? ""
+            let right = rhs.label ?? rhs.name ?? ""
+            return left.localizedStandardCompare(right) == .orderedAscending
         }
     }
 }
-
-//#Preview {
-//    SwiftUIView()
-//}

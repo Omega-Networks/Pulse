@@ -54,7 +54,8 @@ final class SiteTopologyEdgesTests: XCTestCase {
     func testFetchVOsIsScopedBySiteAndDevice() throws {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Service.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
             WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
             PowerSenseEvent.self, SSHCredential.self, KnownHost.self
         ])
@@ -93,5 +94,139 @@ final class SiteTopologyEdgesTests: XCTestCase {
         XCTAssertEqual(Set(siteVOs.map(\.id)), [1, 2])
         let deviceVOs = try SiteTopologyEdges.fetchVOs(deviceId: 10, in: context)
         XCTAssertEqual(Set(deviceVOs.map(\.id)), [1, 2])
+        XCTAssertTrue(try SiteTopologyEdges.fetchVOs(siteId: 0, in: context).isEmpty)
+    }
+
+    func testFetchVOsFallsBackToSiteDevicesWhenSiteIdIsUnset() throws {
+        let schema = Schema([
+            TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
+            WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
+            PowerSenseEvent.self, SSHCredential.self, KnownHost.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let site = Site(id: 4)
+        context.insert(site)
+        let device = Device(id: 10)
+        device.site = site
+        context.insert(device)
+        let iface = Interface(id: 1)
+        iface.deviceId = 10
+        iface.siteId = 0
+        iface.device = device
+        context.insert(iface)
+        try context.save()
+
+        let vos = try SiteTopologyEdges.fetchVOs(siteId: 4, in: context)
+        XCTAssertEqual(vos.map(\.id), [1])
+    }
+
+    func testFetchVOsUnionsUnstampedInterfacesWhenSomeRowsHaveSiteId() throws {
+        let schema = Schema([
+            TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
+            WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
+            PowerSenseEvent.self, SSHCredential.self, KnownHost.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let site = Site(id: 4)
+        context.insert(site)
+        let stampedDevice = Device(id: 10)
+        stampedDevice.site = site
+        stampedDevice.siteId = 4
+        context.insert(stampedDevice)
+        let unstampedDevice = Device(id: 11)
+        unstampedDevice.site = site
+        unstampedDevice.siteId = 0
+        context.insert(unstampedDevice)
+
+        let stamped = Interface(id: 1)
+        stamped.deviceId = 10
+        stamped.siteId = 4
+        stamped.device = stampedDevice
+        context.insert(stamped)
+        let unstamped = Interface(id: 2)
+        unstamped.deviceId = 11
+        unstamped.siteId = 0
+        unstamped.device = unstampedDevice
+        context.insert(unstamped)
+        try context.save()
+
+        let vos = try SiteTopologyEdges.fetchVOs(siteId: 4, in: context)
+        XCTAssertEqual(Set(vos.map(\.id)), [1, 2])
+
+        var source = InterfaceVO(id: 1)
+        source.deviceId = 10
+        source.siteId = nil
+        XCTAssertEqual(
+            SiteTopologyEdges.resolvedSiteId(interface: source, device: stampedDevice, in: context),
+            4
+        )
+    }
+
+    func testConnectCandidatesUsesSiteDevicesWhenInterfaceSiteIdIsZero() throws {
+        let schema = Schema([
+            TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
+            WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
+            PowerSenseEvent.self, SSHCredential.self, KnownHost.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let site = Site(id: 4)
+        context.insert(site)
+        let here = Device(id: 10)
+        here.site = site
+        here.name = "sw1"
+        context.insert(here)
+        let there = Device(id: 11)
+        there.site = site
+        there.name = "sw2"
+        context.insert(there)
+
+        let sourceRow = Interface(id: 1)
+        sourceRow.name = "eth0"
+        sourceRow.deviceId = 10
+        sourceRow.siteId = 0
+        sourceRow.device = here
+        context.insert(sourceRow)
+        let peer = Interface(id: 2)
+        peer.name = "eth1"
+        peer.deviceId = 11
+        peer.siteId = 0
+        peer.device = there
+        context.insert(peer)
+        let sameDevice = Interface(id: 3)
+        sameDevice.name = "eth2"
+        sameDevice.deviceId = 10
+        sameDevice.siteId = 0
+        sameDevice.device = here
+        context.insert(sameDevice)
+        try context.save()
+
+        var source = InterfaceVO(id: 1)
+        source.name = "eth0"
+        source.deviceId = 10
+        source.siteId = nil
+        let candidates = try SiteTopologyEdges.connectCandidates(
+            from: source,
+            device: here,
+            in: context
+        )
+        XCTAssertEqual(Set(candidates.map(\.id)), [2, 3])
     }
 }

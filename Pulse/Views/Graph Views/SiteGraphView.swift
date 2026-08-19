@@ -55,6 +55,7 @@ struct Graph {
 struct SiteGraphView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openWindow) var openWindow
+    @Environment(RolePresentationStore.self) private var rolePresentation
     @State private var isHovering: Bool = false
     var siteId: Int64
     var isInPopover: Bool
@@ -172,7 +173,7 @@ struct SiteGraphView: View {
         self._isHorizontalLayout = isHorizontalLayout
         
         self._devices = Query(filter: #Predicate<Device> { device in
-            device.site?.id == siteId
+            device.siteId == siteId
         }, animation: .bouncy.speed(0.1))
     }
 #endif
@@ -197,14 +198,24 @@ struct SiteGraphView: View {
         self._isHorizontalLayout = isHorizontalLayout
         
         self._devices = Query(filter: #Predicate<Device> { device in
-            device.site?.id == siteId
+            device.siteId == siteId
         }, animation: .bouncy.speed(0.1))
     }
 #endif
     
     private func computeEdges() async {
-        let newEdges = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext))
-            .map(SiteTopologyEdges.derive) ?? []
+        let vos = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)) ?? []
+        let visible = Set(
+            devices
+                .filter { !rolePresentation.policy(for: $0.deviceRole?.id).hideFromGraph }
+                .map(\.id)
+        )
+        let newEdges = SiteTopologyEdges.derive(from: vos).filter { edge in
+            guard let start = edge.start.deviceId, let end = edge.end.deviceId else {
+                return false
+            }
+            return visible.contains(start) && visible.contains(end)
+        }
         await MainActor.run {
             self.computedEdges = newEdges
             self.needsEdgeUpdate = false
@@ -225,22 +236,17 @@ struct SiteGraphView: View {
                         
                         EdgesLayer()
                         
-                        ForEach(devices) { device in
-                            let deviceId = device.id  // Capture just the ID
+                        ForEach(devices.filter { !rolePresentation.policy(for: $0.deviceRole?.id).hideFromGraph }) { device in
+                            let deviceId = device.id
                             
                             DeviceView(device: device,
                                        selectedDevice: $selectedDevice,
                                        position: positionBinding(for: deviceId),
                                        labelsEnabled: $labelsEnabled,
                                        enableGestures: $enableGestures,
-                                       action: {
-                                
-                                // reserved for future use
-                                // let viewPosition = positionBinding(for: deviceId).wrappedValue
-                                // let centreAdjustment = CGPoint(x: 16, y: -34)
-                            })
+                                       action: {})
                             .position(positionBinding(for: deviceId).wrappedValue)
-                            .zIndex(5)
+                            .zIndex(selectedDevice?.id == deviceId ? 20 : 5)
                             .onPreferenceChange(ImageCentrePreferenceKey.self) { center in
                                 Task { @MainActor in
                                     if let center = center {
@@ -248,16 +254,16 @@ struct SiteGraphView: View {
                                     }
                                 }
                             }
-                            .contentTransition(.symbolEffect(.replace))
-                            .transition(.symbolEffect(.automatic))
+                            .id(deviceId)
                             #if os (macOS)
-                            .gesture(enableGestures ?
-                                     DragGesture(minimumDistance: 1)
-                                .onChanged { value in
-                                    let newPosition = CGPoint(x: value.location.x, y: value.location.y)
-                                    userDefinedPositions[deviceId] = newPosition
-                                }
-                                     : nil
+                            .highPriorityGesture(
+                                DragGesture(minimumDistance: 1)
+                                    .onChanged { value in
+                                        guard enableGestures else { return }
+                                        let newPosition = CGPoint(x: value.location.x, y: value.location.y)
+                                        userDefinedPositions[deviceId] = newPosition
+                                    },
+                                including: enableGestures ? .all : .none
                             )
                             #endif
                         }
@@ -333,6 +339,9 @@ struct SiteGraphView: View {
             await computeEdges()
         }
         .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
+            Task { await computeEdges() }
+        }
+        .onChange(of: rolePresentation.presentation) {
             Task { await computeEdges() }
         }
     }
@@ -415,11 +424,13 @@ extension SiteGraphView {
             isCalculatingLayout = false
         }
     }
-    
+
     private func positionBinding(for deviceId: Int64) -> Binding<CGPoint> {
         Binding(
             get: {
-                userDefinedPositions[deviceId] ?? currentLayout?.positions[deviceId] ?? CGPoint(x: 150, y: 150)
+                userDefinedPositions[deviceId]
+                    ?? currentLayout?.positions[deviceId]
+                    ?? CGPoint(x: 150, y: 150)
             },
             set: { newValue in
                 userDefinedPositions[deviceId] = newValue
@@ -517,20 +528,6 @@ extension SiteGraphView {
         .animation(.easeInOut, value: computedEdges)
     }
     
-    //TODO: Determine how to present provisional Devices
-    //    @ViewBuilder
-    //    private func ProvisionalDevicesLayer() -> some View {
-    //        ForEach(provisionalDeviceManager.provisionalDevices, id: \.name) { provisionalDevice in
-    //            DeviceView(device: Device(id: provisionalDevice),
-    //                       selectedDevice: $selectedDevice,
-    //                       position: .constant(CGPoint(x: provisionalDevice.x ?? 150, y: provisionalDevice.y ?? 150)),
-    //                       labelsEnabled: $labelsEnabled,
-    //                       enableGestures: $enableGestures,
-    //                       action: {},
-    //                       isProvisional: true)
-    //        }
-    //    }
-    
     /**
      Renders the persistent devices in the site graph.
      This function creates DeviceViews for each persistent device and handles their positioning and gestures.
@@ -540,23 +537,17 @@ extension SiteGraphView {
     @ViewBuilder
     private func DevicesLayer() -> some View {
         
-        ForEach(devices) { device in
-            let deviceId = device.id  // Capture just the ID
+        ForEach(devices.filter { !rolePresentation.policy(for: $0.deviceRole?.id).hideFromGraph }) { device in
+            let deviceId = device.id
             
             DeviceView(device: device,
                        selectedDevice: $selectedDevice,
                        position: positionBinding(for: deviceId),
                        labelsEnabled: $labelsEnabled,
                        enableGestures: $enableGestures,
-                       action: {
-                
-                /// Used for creating edges - removed from code for now .
-                // let viewPosition = positionBinding(for: deviceId).wrappedValue
-                // let centreAdjustment = CGPoint(x: 16, y: -34)
-                
-            })
+                       action: {})
             .position(positionBinding(for: deviceId).wrappedValue)
-            .zIndex(5)
+            .zIndex(selectedDevice?.id == deviceId ? 20 : 5)
             .onPreferenceChange(ImageCentrePreferenceKey.self) { center in
                 Task { @MainActor in
                     if let center = center {
@@ -564,14 +555,16 @@ extension SiteGraphView {
                     }
                 }
             }
-            .contentTransition(.symbolEffect(.replace))
-            .transition(.symbolEffect(.automatic))
+            .id(deviceId)
             #if os (macOS)
-            .gesture(enableGestures ? DragGesture(minimumDistance: 1)
-            .onChanged { value in
-                let newPosition = CGPoint(x: value.location.x, y: value.location.y)
-                userDefinedPositions[deviceId] = newPosition
-            } : nil
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        guard enableGestures else { return }
+                        let newPosition = CGPoint(x: value.location.x, y: value.location.y)
+                        userDefinedPositions[deviceId] = newPosition
+                    },
+                including: enableGestures ? .all : .none
             )
             #endif
         }

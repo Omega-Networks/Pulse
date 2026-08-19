@@ -20,7 +20,7 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 1. **AOT generation.** `docs/netbox/openapi-filtered.yaml` is vendored. `NetBoxAPI` is never hand-edited. Regeneration is `Scripts/regenerate-netbox-client.sh` with `NETBOX_URL` / `NETBOX_TOKEN` from the environment. The script fails if the instance host survives into outputs. `servers` in the vendored document is `url: ''`.
 2. **Single owner.** `NetBoxSyncEngine` is the only full-sync entry. Boot and Sync Dashboard call `fullSync()`. Overlapping callers join the in-flight pass. `lastNetBoxUpdate` is stamped only after every type applies.
 3. **Ingest DTOs, not generated list types.** Generated `Tenant` / `Site` / `Rack` / `Device` / `Service` / `Interface` types require unused counts and nested `display_url` that lab JSON omits. `NetBoxRecord.*` decodes the stored fields only. A skipped element is logged with the missing key; `skipped > 0` blocks that type's delete pass.
-4. **Filter configuration.** `NetBoxFilterConfiguration.default` holds today's exclude / static-role IDs. Fetch and delete share that object. A Settings control is later work; do not scatter new literals.
+4. **Full instance, role presentation.** Sync stores every device, type, and role. Fetch and delete share that scope (the whole instance). Visibility, monitoring, and rack drawing are `RolePresentation` (Settings → Roles). The future billable-device count is derived from those surfaces (graph, list, or named-in-rack); it is not a user toggle. Do not put manufacturer or role excludes back on the pull.
 5. **No writes in P1.** Add Site is disabled with an honest message. Site create is P4.
 6. **Delete All must not invalidate live `@Query` graphs.** See *Delete All and SwiftData* below.
 
@@ -49,13 +49,13 @@ P1 list traffic uses `NetBoxLiveFetcher` (URLSession + typed `URLQueryItem` + of
 
 Ingest streams `/api/dcim/interfaces/` page-by-page (`streamDecoded`, `maxPages` = 60_000). Each page upserts in a fresh `ModelContext` and is released. `fetchComplete` is true only after the last page returns cleanly. The delete pass uses the **union of accepted ids from every page**, not the last page. A mid-walk throw leaves already-upserted rows (idempotent) and does not delete or stamp.
 
-Unresolved device or a device with no site is **out of scope**: logged, not stored, not counted as `skipped`. Only poisoned JSON increments `skipped` and gates delete. The interface list query sends `device_role_id__n` from `NetBoxFilterConfiguration`; there is no `manufacturer_id__n` on this endpoint, so manufacturer-excluded leftovers drop as out of scope.
+Unresolved device or a device with no site is **out of scope**: logged, not stored, not counted as `skipped`. Only poisoned JSON increments `skipped` and gates delete. The interface list is unfiltered by role or manufacturer; leftovers with no stored parent still drop as out of scope.
 
 The interface walk is a full-sync stage after services, on the launch progress bar and on Settings → Sync Data. P3 will replace the one-time full pull with changelog deltas. `lastNetBoxUpdate` stamps only after interfaces succeed.
 
 Delete All includes `Interface`. Map pin colour reads stored severity fields on `Site` / `Device` (`refreshSeverityFromEvents` at event ingest and after boot sync) so `body` never walks `Event.rClock` after a wipe.
 
-`InterfaceCache` and `.interfacesDidUpdate` are gone. Site open does not call `/api/dcim/interfaces/` — `SiteDataService.loadAllSiteData` is static devices + Zabbix items only. Consumers load `InterfaceVO` via an indexed `FetchDescriptor`. `SiteGraphView` and `LayoutManager` share `SiteTopologyEdges` (one local per-site fetch + undirected join). Duplicate cable rendering (once per end) is collapsed to a single edge — accepted visual change. Cables themselves are not a SwiftData type; that is a later revision.
+`InterfaceCache` and `.interfacesDidUpdate` are gone. Site open does not call NetBox for interfaces, cables, racks, fillers, or bays — `SiteDataService.loadAllSiteData` is Zabbix items only. Consumers load `InterfaceVO` via an indexed `FetchDescriptor`. `SiteGraphView` and `LayoutManager` share `SiteTopologyEdges` (one local per-site fetch + undirected join on `connectedEndpointId`). Duplicate cable rendering (once per end) is collapsed to a single edge — accepted visual change. `Cable` rows persist tenant, length, colour, and the DELETE id; they do not own the graph join.
 
 `deleteStale` still full-table-scans the type (P1 pattern). Fine at the 12K lab if measured. At tens of millions of rows that scan is P2 debt; do not invent a new delete primitive here.
 
@@ -69,8 +69,8 @@ Delete All includes `Interface`. Map pin colour reads stored severity fields on 
 |---|---|
 | Gate 1 — lab count parity, skip+delete, network kill, Add Site disabled | In progress (lab) |
 | Gate 2 — offline interfaces | Lab 2026-08-13: startup sync, offline site open, edge parity (minus accepted dedupe), Delete All signed off. Owner waived proxy capture, P1-store upgrade, Instruments, headless re-run. Cables deferred. |
-| Gate 3 — changelog converge | Not yet (lab; blocks P3 merge) |
-| Gate 4 — write round-trips | Lab 2026-08-13: interface enable/description (including clear) and cable create/delete signed. Disconnect confirms first. Owner deferred further cable UI. 412, validation-body, custom_fields changelog diff, and read-only token not signed. `If-Match` stays off. |
+| Gate 3 — changelog converge | Deferred by owner (2026-08-17). Does not block further work on this branch. Lab matrix still required before a formal P3 merge to a parent. |
+| Gate 4 — write round-trips | Lab 2026-08-13: interface enable/description (including clear) and cable create/delete signed. Disconnect confirms first. Owner deferred further cable UI. 412, validation-body, custom_fields changelog diff, and read-only token not signed. `If-Match` stays off. Remaining Gate 4 items deferred with Gate 3 (2026-08-17). |
 
 ## Delete All and SwiftData
 
@@ -102,6 +102,9 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 - 2026-08-13 — P3: `lastObjectChangeId`/`Time` are NetBox server values, advanced only after a fully applied delta. Boot uses delta when the watermark is present and retained; full mirror on empty store, missing watermark, 404 watermark, or weekly safety. Settings → Full Resync is always a mirror. Unknown `changed_object_type` is skipped. `dcim.cable` re-fetches both interface ends.
 - 2026-08-13 — P4: hand-written write bodies (generated `PatchedWritable*Request` is not Encodable; client not regenerated). Interface PATCH (enabled/description) and cable POST/DELETE are live. Device/site methods exist and refuse. `If-Match` is off (weak ETag). Post-write re-fetch uses the delta-apply path. Add Site stays disabled and never POSTs.
 - 2026-08-13 — P4 lab: description/enable/clear and cable connect/disconnect signed. Empty description sends `""`. Disconnect asks first. Successful writes post `netBoxStoreDidApply` so the open site graph reloads.
+- 2026-08-14 — Cables and racks in SwiftData. `Cable` and `DeviceBay` `@Model`s; device port/bay counts; filler roles pulled with devices (even when manufacturer 5 is excluded) and hidden from the site graph; site-open filler HTTP and `StaticDeviceCache` / `DeviceBayCache` deleted. Cable tenant/length/colour/description persist; `bundleId` stored unused.
+- 2026-08-14 — Sync no longer excludes manufacturer 5 or roles 29/30. Role presentation is the only filter. The future billable-device count is derived from graph / list / named-in-rack, not a License toggle. Full Resync required once.
+- 2026-08-14 — `SiteLocation` and `RackRole` persist; New rack sends `location` and `role`. Rack drag uses the occupant snapshot under the pointer (not a detached preview from the window origin). Hover highlight is per face and clears when the mouse is released.
 
 ## Writes (P4 amendment)
 
@@ -114,6 +117,12 @@ Views call `NetBoxSyncEngine`. The engine owns `NetBoxWriteService`, which encod
 Site and device create are small forms. Map **+** POSTs `/api/dcim/sites/` (name, derived slug, status, optional region/group/tenant/pin). Site View **+** POSTs `/api/dcim/devices/` (name, role, type, status). After a device POST, Pulse lists `/api/dcim/interfaces/?device_id=` and applies those rows with no delete pass (template ports, e.g. FortiAP). A successful write then tries a watermark delta; that failure is logged, not a failed create. Site pins send `MKAddress.fullAddress` clipped to 200 characters and lat/lon rounded to 5 decimals. Region is suggested by matching stored region names in the address. Failed POSTs leave no local row.
 
 `Interface.cableId` is the NetBox cable id used to DELETE. If it is missing on a connected row (store predates the field), disconnect retrieves the live interface and reads the id from NetBox.
+
+## Cables and racks (P4 amendment)
+
+`Cable` is a SwiftData `@Model` (`#Index` on denormalized `siteId`). The cable's own tenant, length, colour, and description persist; `bundleId` is stored and unused. Streaming ingest of `/api/dcim/cables/` follows the interface walk. A write or changelog `dcim.cable` upserts the cable row and re-fetches both interface ends. Delete All includes `Cable`.
+
+Every device is a `Device` row, including rack hardware. `Device` stores `frontPortCount` / `rearPortCount` / `deviceBayCount`. `DeviceBay` is a `@Model` (`#Index` on shelf `deviceId`). `FrontPort` is a `@Model` (`#Index` on `deviceId` and `siteId`). Full sync walks `/api/dcim/front-ports/` after device bays. The rack elevation reads `rack.devices`; shelves read stored bays; patch panels read stored front ports and Connect/Disconnect through `dcim.frontport` cable terminations. Which roles appear on the graph, DeviceRow, and elevation, and which will count toward a future license, is `RolePresentation` (Settings → Roles).
 
 HTTP error bodies are the server JSON, not `HTTPURLResponse.localizedString`.
 

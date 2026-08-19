@@ -8,8 +8,8 @@ Pulse is local-first: all data lives on your device, sourced live from your own 
 
 Pulse reads infrastructure inventory from NetBox and monitoring status from Zabbix. Configure both in Settings.
 
-- **macOS:** open **Pulse menu > Settings** (Cmd-,). The window has tabs: **Settings** (NetBox + Zabbix), **PowerSense**, **SSH**, and **Database**.
-- **iOS / iPadOS:** open Settings from the main sheet.
+- **macOS:** open **Pulse menu > Settings** (Cmd-,). The window has tabs: **Settings** (subscription meter, NetBox + Zabbix), **Roles**, **PowerSense**, **SSH**, **Web Trust**, and **Database**.
+- **iOS / iPadOS:** open Settings from the main sheet. **Subscription**, **Device Roles**, and **Database** are under NetBox.
 
 In the **Settings** tab:
 
@@ -18,6 +18,28 @@ In the **Settings** tab:
 3. Click **Apply Settings**. Pulse validates the connection and begins syncing.
 
 The first sync pulls sites, devices, roles, and types from NetBox. Later launches refresh in the background.
+
+### Device Roles
+
+Pulse stores every device NetBox has. What you see is controlled in **Settings → Roles** (macOS) or **Settings → Device Roles** (iOS). These toggles never change the NetBox pull and never delete local rows.
+
+| Column | Purpose |
+|---|---|
+| **Site graph** | Show this role as a node on the site topology. Patch panels and blanks are usually off. |
+| **Device list** | Show this role in the site device list. |
+| **In rack** | Draw this role in the rack elevation at its U position. Off leaves that space empty. |
+| **As hardware** | Draw it as rack hardware (panel, blank, shelf) instead of a named device with severity colour. |
+| **No monitoring** | Do not pull Zabbix items for this role. Use this when the role has no telemetry. |
+
+There is no License checkbox. What counts toward a seat is explained once: the (i) next to **Seats** in Settings.
+
+### Subscription seats
+
+Pulse is free for 50 devices that count toward a seat, then Growth 250, Pro 1,500, Unlimited none. Sync still stores every device. Unseated devices stay visible; writes, SSH, Web, rack Save, Connect/Disconnect, and Zabbix updates (`event.acknowledge`) stay off. Rack hardware (blanks, panels, shelves) is not billed and can still be moved. The Zabbix feed still lands so lists and charts stay current.
+
+The Settings meter shows `seated of cap`. Subscribe or Restore Purchases from that section. Moving to a larger plan takes effect immediately. Moving to a smaller plan waits until the current period ends (Settings shows the date). Missed payment after the App Store grace period drops you to Free and keeps the oldest 50 seats. A refund or revocation takes effect immediately.
+
+A Full Resync is required after upgrading to this unfiltered pull, so Generic types and previously omitted devices appear.
 
 ## 2. Navigating Pulse
 
@@ -60,15 +82,17 @@ Pulse includes an operator SSH terminal backed by the device's Secure Enclave. F
 
 ## 5. Terminal preferences
 
-A few terminal preferences (audible / visual bell, font size) are stored as app defaults; there is no dedicated settings pane yet. See [terminal preferences](credentials.md#terminal-preferences) for the keys and how to change them (`defaults write nz.net.omega.pulse ...`, or the in-window Cmd +/-/0 shortcuts on macOS and pinch-to-zoom on iOS).
+A few terminal preferences (audible / visual bell, font size) are stored as app defaults; there is no dedicated settings pane yet. See [terminal preferences](credentials.md#terminal-preferences) for the keys and how to change them (`defaults write com.yourorg.pulse ...`, or the in-window Cmd +/-/0 shortcuts on macOS and pinch-to-zoom on iOS).
 
 ## 6. Settings reference
 
 | Tab | What it configures |
 |---|---|
 | Settings | NetBox and Zabbix API endpoints and tokens |
+| Roles | Per-role visibility, rack drawing, and monitoring. License count is derived from those surfaces. See [Device Roles](#device-roles). |
 | PowerSense | Optional grid-power telemetry integration |
 | SSH | SSH credentials (generate Secure Enclave or import portable keys) and per-credential session recording |
+| Web Trust | Pinned and blocked hosts for Device Web |
 | Database | Local data-store counts and maintenance |
 
 ## 7. Troubleshooting

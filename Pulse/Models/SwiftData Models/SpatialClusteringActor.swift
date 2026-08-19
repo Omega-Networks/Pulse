@@ -687,9 +687,6 @@ final class ClusteringService: @unchecked Sendable {
             modelContainer: modelContainer,
             config: SpatialClusteringConfig.default
         )
-        Task.detached(priority: .background) {
-            try? await self.actor.getSpatialDeviceDTOs()
-        }
         logger.info("ClusteringService initialized")
     }
 

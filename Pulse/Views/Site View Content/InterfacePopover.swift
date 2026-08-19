@@ -29,11 +29,11 @@ import SwiftData
 struct InterfacePopover: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Environment(LicenseSeatStore.self) private var seats
     @State var interface: InterfaceVO
     @State private var isWriting = false
     @State private var operatorAlert: OperatorAlert?
     @State private var connectFrom: InterfaceVO?
-    @State private var siteCandidates: [InterfaceVO] = []
     private var squareSize: CGFloat = 15
     private var verticalPadding: CGFloat = 5
     
@@ -87,9 +87,12 @@ struct InterfacePopover: View {
                         )
                     )
                     .labelsHidden()
-                    .disabled(isWriting || netBoxSyncEngine == nil)
+                    .disabled(isWriting || netBoxSyncEngine == nil || !owningDeviceSeated)
                 }
                 .padding(.vertical, verticalPadding)
+                if !owningDeviceSeated {
+                    SubscribeToResumeLabel()
+                }
                 
                 HStack {
                     Text("Connected Endpoint")
@@ -107,12 +110,12 @@ struct InterfacePopover: View {
                         Button("Disconnect") {
                             requestDisconnect()
                         }
-                        .disabled(isWriting || netBoxSyncEngine == nil)
+                        .disabled(isWriting || netBoxSyncEngine == nil || !linkAllowed)
                     } else {
                         Button("Connect…") {
                             beginConnect()
                         }
-                        .disabled(isWriting || netBoxSyncEngine == nil)
+                        .disabled(isWriting || netBoxSyncEngine == nil || !owningDeviceSeated)
                     }
                 }
                 .padding(.vertical, verticalPadding)
@@ -136,7 +139,6 @@ struct InterfacePopover: View {
         .sheet(item: $connectFrom) { source in
             ConnectInterfaceSheet(
                 source: source,
-                candidates: siteCandidates.filter { $0.id != source.id },
                 onCancel: { connectFrom = nil },
                 onConnect: { target in
                     Task { await connect(to: target) }
@@ -167,12 +169,20 @@ struct InterfacePopover: View {
         }
     }
 
-    private func beginConnect() {
-        if let siteId = interface.siteId {
-            siteCandidates = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)) ?? []
-        } else {
-            siteCandidates = []
+    private var owningDeviceSeated: Bool {
+        guard let deviceID = interface.deviceId else { return false }
+        return seats.allowsActions(deviceID: deviceID)
+    }
+
+    private var linkAllowed: Bool {
+        guard owningDeviceSeated else { return false }
+        if let peer = interface.connectedEndpointDeviceId {
+            return seats.allowsLink(a: interface.deviceId ?? 0, b: peer)
         }
+        return owningDeviceSeated
+    }
+
+    private func beginConnect() {
         connectFrom = interface
     }
 
@@ -239,7 +249,7 @@ struct InterfacePopover: View {
             interface = fresh
             return
         }
-        if let siteId = interface.siteId,
+        if let siteId = SiteTopologyEdges.resolvedSiteId(interface: interface, in: modelContext),
            let fresh = try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)
             .first(where: { $0.id == id }) {
             interface = fresh
