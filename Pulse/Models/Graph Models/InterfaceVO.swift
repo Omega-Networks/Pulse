@@ -97,4 +97,9 @@ struct InterfaceVO: Identifiable, Equatable, Sendable {
     var speedLabel: String {
         speed.map(String.init) ?? "N/A"
     }
+
+    /// Non-optional keys so `Table` columns can sort.
+    var labelValue: String { label ?? "" }
+    var descriptionValue: String { interfaceDescription ?? "" }
+    var typeValue: String { type ?? "" }
 }

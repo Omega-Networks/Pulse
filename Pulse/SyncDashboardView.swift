@@ -43,21 +43,7 @@ struct SyncDashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     @Query var syncProvider: [SyncProvider]
-    @Query private var tenantGroups: [TenantGroup]
-    @Query private var tenants: [Tenant]
-    @Query private var deviceRoles: [DeviceRole]
-    @Query private var deviceTypes: [DeviceType]
-    @Query private var regions: [Region]
-    @Query private var siteGroups: [SiteGroup]
-    @Query private var sites: [Site]
-    @Query private var locations: [SiteLocation]
-    @Query private var rackRoles: [RackRole]
-    @Query private var racks: [Rack]
-    @Query private var devices: [Device]
-    @Query private var interfaces: [Interface]
-    @Query private var cables: [Cable]
-    @Query private var deviceBays: [DeviceBay]
-    @Query private var frontPorts: [FrontPort]
+    @State private var objectCounts = SyncObjectCounts()
     
     // MARK: - UI State
     
@@ -121,21 +107,21 @@ struct SyncDashboardView: View {
             .padding(4)
             
             Form {
-                LabeledContent("Device Roles:", value: String(deviceRoles.count))
-                LabeledContent("Device Types:", value: String(deviceTypes.count))
-                LabeledContent("Tenant Groups:", value: String(tenantGroups.count))
-                LabeledContent("Tenants:", value: String(tenants.count))
-                LabeledContent("Regions:", value: String(regions.count))
-                LabeledContent("Site Groups:", value: String(siteGroups.count))
-                LabeledContent("Sites:", value: String(sites.count))
-                LabeledContent("Locations:", value: String(locations.count))
-                LabeledContent("Rack Roles:", value: String(rackRoles.count))
-                LabeledContent("Racks:", value: String(racks.count))
-                LabeledContent("Devices:", value: String(devices.count))
-                LabeledContent("Interfaces:", value: String(interfaces.count))
-                LabeledContent("Cables:", value: String(cables.count))
-                LabeledContent("Device Bays:", value: String(deviceBays.count))
-                LabeledContent("Front Ports:", value: String(frontPorts.count))
+                LabeledContent("Device Roles:", value: String(objectCounts.deviceRoles))
+                LabeledContent("Device Types:", value: String(objectCounts.deviceTypes))
+                LabeledContent("Tenant Groups:", value: String(objectCounts.tenantGroups))
+                LabeledContent("Tenants:", value: String(objectCounts.tenants))
+                LabeledContent("Regions:", value: String(objectCounts.regions))
+                LabeledContent("Site Groups:", value: String(objectCounts.siteGroups))
+                LabeledContent("Sites:", value: String(objectCounts.sites))
+                LabeledContent("Locations:", value: String(objectCounts.locations))
+                LabeledContent("Rack Roles:", value: String(objectCounts.rackRoles))
+                LabeledContent("Racks:", value: String(objectCounts.racks))
+                LabeledContent("Devices:", value: String(objectCounts.devices))
+                LabeledContent("Interfaces:", value: String(objectCounts.interfaces))
+                LabeledContent("Cables:", value: String(objectCounts.cables))
+                LabeledContent("Device Bays:", value: String(objectCounts.deviceBays))
+                LabeledContent("Front Ports:", value: String(objectCounts.frontPorts))
                 if let provider = syncProvider.first {
                     LabeledContent("Changelog watermark:", value: watermarkLabel(provider))
                     LabeledContent("Last delta:", value: provider.lastDeltaSummary ?? "—")
@@ -194,7 +180,15 @@ struct SyncDashboardView: View {
         }
         
         .task {
+            refreshObjectCounts()
             await checkConfigurationNeeded()
+        }
+        .onReceive(NotificationCenter.default.managedObjectContextDidSavePublisher) { _ in
+            contextDidSaveDate = .now
+            refreshObjectCounts()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
+            refreshObjectCounts()
         }
         .alert(alertTitle, isPresented: $showAlert) {
             Button("OK") { showAlert = false }
@@ -295,9 +289,14 @@ struct SyncDashboardView: View {
         do {
             try modelContext.delete(model: type)
             print("\(type) data deleted successfully.")
+            refreshObjectCounts()
         } catch {
             print("Failed to delete all \(type).")
         }
+    }
+
+    private func refreshObjectCounts() {
+        objectCounts = (try? SyncObjectCounts.load(from: modelContext)) ?? SyncObjectCounts()
     }
     
     /**
@@ -348,6 +347,7 @@ struct SyncDashboardView: View {
             }
             try context.save()
             print("All data deleted successfully.")
+            refreshObjectCounts()
         } catch {
             print("Failed to delete all data: \(error)")
         }
@@ -551,6 +551,44 @@ extension SyncDashboardView {
                 )
             }
         }
+    }
+}
+
+private struct SyncObjectCounts {
+    var tenantGroups = 0
+    var tenants = 0
+    var deviceRoles = 0
+    var deviceTypes = 0
+    var regions = 0
+    var siteGroups = 0
+    var sites = 0
+    var locations = 0
+    var rackRoles = 0
+    var racks = 0
+    var devices = 0
+    var interfaces = 0
+    var cables = 0
+    var deviceBays = 0
+    var frontPorts = 0
+
+    static func load(from context: ModelContext) throws -> SyncObjectCounts {
+        SyncObjectCounts(
+            tenantGroups: try context.fetchCount(FetchDescriptor<TenantGroup>()),
+            tenants: try context.fetchCount(FetchDescriptor<Tenant>()),
+            deviceRoles: try context.fetchCount(FetchDescriptor<DeviceRole>()),
+            deviceTypes: try context.fetchCount(FetchDescriptor<DeviceType>()),
+            regions: try context.fetchCount(FetchDescriptor<Region>()),
+            siteGroups: try context.fetchCount(FetchDescriptor<SiteGroup>()),
+            sites: try context.fetchCount(FetchDescriptor<Site>()),
+            locations: try context.fetchCount(FetchDescriptor<SiteLocation>()),
+            rackRoles: try context.fetchCount(FetchDescriptor<RackRole>()),
+            racks: try context.fetchCount(FetchDescriptor<Rack>()),
+            devices: try context.fetchCount(FetchDescriptor<Device>()),
+            interfaces: try context.fetchCount(FetchDescriptor<Interface>()),
+            cables: try context.fetchCount(FetchDescriptor<Cable>()),
+            deviceBays: try context.fetchCount(FetchDescriptor<DeviceBay>()),
+            frontPorts: try context.fetchCount(FetchDescriptor<FrontPort>())
+        )
     }
 }
 

@@ -39,27 +39,50 @@ struct PatchPanelView: View {
     private let portsPerGroup: Int64 = 6
     private let groupSpacing: CGFloat = 6
     private let portSpacing: CGFloat = 1
-    private let sidePadding: CGFloat = 5
+
+    /// Fillers are drawn at 19 in panel width, including the 0.625 in
+    /// mounting ears. Jacks live in the 17.75 in chassis between them.
+    private var earInset: CGFloat {
+        rackWidth * EIA310.earInches / EIA310.panelWidthInches
+    }
+
+    private var chassisWidth: CGFloat {
+        max(0, rackWidth - 2 * earInset)
+    }
+
+    private var portCellWidth: CGFloat {
+        let groups = CGFloat(groupsPerRow)
+        let groupGaps = max(0, groups - 1) * groupSpacing
+        let intra = groups * CGFloat(portsPerGroup - 1) * portSpacing
+        let available = chassisWidth - groupGaps - intra
+        return max(6, available / CGFloat(portsPerRow))
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            ForEach(0..<Int(rowCount), id: \.self) { rowIndex in
-                HStack(spacing: 0) {
-                    Spacer().frame(width: sidePadding)
-                    ForEach(0..<Int(groupsPerRow), id: \.self) { groupIndex in
-                        HStack(spacing: portSpacing) {
-                            ForEach(0..<Int(portsInGroup(row: Int64(rowIndex), group: Int64(groupIndex))), id: \.self) { portIndex in
-                                let ordinal = Int64(rowIndex) * portsPerRow + Int64(groupIndex) * portsPerGroup + Int64(portIndex)
-                                portCell(ordinal: ordinal)
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: earInset)
+
+            VStack(alignment: .center, spacing: 1) {
+                ForEach(0..<Int(rowCount), id: \.self) { rowIndex in
+                    HStack(spacing: 0) {
+                        ForEach(0..<Int(groupsPerRow), id: \.self) { groupIndex in
+                            HStack(spacing: portSpacing) {
+                                ForEach(portOrdinals(row: Int64(rowIndex), group: Int64(groupIndex)), id: \.self) { ordinal in
+                                    portCell(ordinal: ordinal)
+                                }
+                            }
+                            if groupIndex < Int(groupsPerRow) - 1 {
+                                Spacer().frame(width: groupSpacing)
                             }
                         }
-                        if groupIndex < Int(groupsPerRow) - 1 {
-                            Spacer().frame(width: groupSpacing)
-                        }
                     }
-                    Spacer().frame(width: sidePadding)
                 }
             }
+            .frame(width: chassisWidth)
+
+            Color.clear
+                .frame(width: earInset)
         }
         .frame(width: rackWidth, height: unitHeight)
         .background(Color.gray.opacity(0.2))
@@ -70,30 +93,41 @@ struct PatchPanelView: View {
         .clipShape(RoundedRectangle(cornerRadius: rackUnitCornerRadius))
         .task(id: device.id) { reloadPorts() }
         .onChange(of: selectedPort?.cableId) { reloadPorts() }
-        #if os(macOS)
-        .popover(item: $selectedPort) { port in
-            FrontPortConnectSheet(port: port, siteId: device.site?.id ?? 0) {
-                selectedPort = nil
-                reloadPorts()
-            }
-        }
-        #endif
+    }
+
+    private func portOrdinals(row: Int64, group: Int64) -> [Int64] {
+        let count = portsInGroup(row: row, group: group)
+        let start = row * portsPerRow + group * portsPerGroup
+        return (0..<count).map { start + $0 }
     }
 
     @ViewBuilder
     private func portCell(ordinal: Int64) -> some View {
         if ordinal < ports.count {
             let port = ports[Int(ordinal)]
-            PortView(label: portLabel(port), occupied: port.isCabled)
+            PortView(label: portLabel(port, ordinal: ordinal), occupied: port.isCabled, cellWidth: portCellWidth)
                 .onTapGesture { selectedPort = port }
+                #if os(macOS)
+                .popover(
+                    isPresented: Binding(
+                        get: { selectedPort?.id == port.id },
+                        set: { if !$0 { selectedPort = nil } }
+                    ),
+                    arrowEdge: .bottom
+                ) {
+                    FrontPortConnectSheet(port: port, siteId: device.resolvedSiteId) {
+                        selectedPort = nil
+                        reloadPorts()
+                    }
+                }
+                #endif
         } else {
-            PortView(label: "\(ordinal + 1)", occupied: false)
+            PortView(label: "\(ordinal + 1)", occupied: false, cellWidth: portCellWidth)
         }
     }
 
-    private func portLabel(_ port: FrontPort) -> String {
-        let raw = port.label ?? port.name
-        return raw.isEmpty ? String(port.id) : raw
+    private func portLabel(_ port: FrontPort, ordinal: Int64) -> String {
+        PortNameOrder.faceplateLabel(port.name, fallback: ordinal + 1)
     }
 
     private var portCount: Int64 {
@@ -120,9 +154,7 @@ struct PatchPanelView: View {
             predicate: #Predicate<FrontPort> { $0.deviceId == deviceId }
         )
         ports = ((try? modelContext.fetch(descriptor)) ?? []).sorted { lhs, rhs in
-            let left = lhs.label ?? lhs.name
-            let right = rhs.label ?? rhs.name
-            return left.localizedStandardCompare(right) == .orderedAscending
+            PortNameOrder.lessThan(lhs.name, id: lhs.id, rhs.name, id: rhs.id)
         }
     }
 }
@@ -130,23 +162,27 @@ struct PatchPanelView: View {
 struct PortView: View {
     let label: String
     var occupied: Bool = false
+    var cellWidth: CGFloat = 10
 
-    private let portSize: CGFloat = 8
+    private var jackSize: CGFloat { min(8, max(5, cellWidth - 2)) }
 
     var body: some View {
         VStack(spacing: 1) {
             Text(label)
-                .font(.system(size: 5))
+                .font(.system(size: min(6, cellWidth * 0.55), weight: .medium, design: .rounded))
+                .monospacedDigit()
                 .lineLimit(1)
-                .frame(width: portSize + 2)
+                .minimumScaleFactor(0.5)
+                .frame(width: cellWidth)
             ZStack {
                 Rectangle()
                     .fill(occupied ? Color.green.opacity(0.7) : Color(red: 99/255, green: 99/255, blue: 99/255))
                 Rectangle()
                     .stroke(Color.black, lineWidth: 0.5)
             }
-            .frame(width: portSize, height: portSize)
+            .frame(width: jackSize, height: jackSize)
         }
+        .frame(width: cellWidth)
     }
 }
 
@@ -246,7 +282,7 @@ struct FrontPortConnectSheet: View {
         let rows = (try? modelContext.fetch(descriptor)) ?? []
         return rows
             .filter { $0.siteId == siteId && $0.id != port.id && !$0.isCabled }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .sorted { PortNameOrder.lessThan($0.name, id: $0.id, $1.name, id: $1.id) }
             .map { ($0.id, "\($0.deviceName ?? "device") \($0.name)") }
     }
 

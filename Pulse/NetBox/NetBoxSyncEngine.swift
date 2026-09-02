@@ -189,8 +189,13 @@ actor NetBoxSyncEngine {
 
     // MARK: - Writes
 
-    func patchInterface(id: Int64, enabled: Bool? = nil, description: String? = nil) async throws {
-        try await performWrite {
+    func patchInterface(
+        id: Int64,
+        enabled: Bool? = nil,
+        description: String? = nil,
+        label: String? = nil
+    ) async throws {
+        try await performWrite(catchUp: false, announce: false, waitForSync: false) {
             let tier = self.subscriptionTier()
             try await self.applyOnStore { context in
                 let deviceID = try LicenseSeatEvaluator.deviceID(forInterface: id, in: context)
@@ -198,18 +203,22 @@ actor NetBoxSyncEngine {
             }
             let body = NetBoxWriteBody.InterfacePatch(
                 enabled: enabled,
-                description: description
+                description: description,
+                label: label
             )
             _ = try await self.writer.patchInterface(id: id, body: body)
-            try await self.applyDeltaItem(
-                NetBoxDeltaItem(
-                    kind: .interface,
-                    objectID: id,
-                    action: "update",
-                    changeID: 0,
-                    time: nil
+            // Apply the fields we sent. A full retrieve is another NetBox
+            // round-trip and is what made enable/description feel seconds
+            // slower than the web UI.
+            try await self.applyOnStore { context in
+                try Self.applyLocalInterfacePatch(
+                    id: id,
+                    enabled: enabled,
+                    description: description,
+                    label: label,
+                    in: context
                 )
-            )
+            }
         }
     }
 
@@ -487,8 +496,13 @@ actor NetBoxSyncEngine {
         }
     }
 
-    private func performWrite(_ work: @escaping @Sendable () async throws -> Void) async throws {
-        if let inFlight {
+    private func performWrite(
+        catchUp: Bool = true,
+        announce: Bool = true,
+        waitForSync: Bool = true,
+        _ work: @escaping @Sendable () async throws -> Void
+    ) async throws {
+        if waitForSync, let inFlight {
             try await inFlight.value
         }
         let previous = writes
@@ -499,9 +513,13 @@ actor NetBoxSyncEngine {
         writes = task
         do {
             try await task.value
-            await catchUpWatermark()
-            await MainActor.run {
-                NotificationCenter.default.post(name: .netBoxStoreDidApply, object: nil)
+            if announce {
+                await MainActor.run {
+                    NotificationCenter.default.post(name: .netBoxStoreDidApply, object: nil)
+                }
+            }
+            if catchUp {
+                await catchUpWatermark()
             }
         } catch {
             if let syncError = error as? NetBoxSyncError {
@@ -509,6 +527,23 @@ actor NetBoxSyncEngine {
             }
             throw error
         }
+    }
+
+    private static func applyLocalInterfacePatch(
+        id: Int64,
+        enabled: Bool?,
+        description: String?,
+        label: String?,
+        in context: ModelContext
+    ) throws {
+        let descriptor = FetchDescriptor<Interface>(
+            predicate: #Predicate<Interface> { $0.id == id }
+        )
+        guard let row = try context.fetch(descriptor).first else { return }
+        if let enabled { row.enabled = enabled }
+        if let description { row.interfaceDescription = description }
+        if let label { row.label = label }
+        try context.save()
     }
 
     // MARK: - Types
@@ -649,16 +684,28 @@ actor NetBoxSyncEngine {
     }
 
     private func syncDevices() async throws {
-        let (rows, skipped) = try await fetchAll(
+        let keeping = AcceptedInterfaceIDs()
+        let walk = try await NetBoxPageIterator.streamDecoded(
             path: "/api/dcim/devices/",
             extraQuery: [],
-            as: NetBoxRecord.Device.self
-        )
+            as: NetBoxRecord.Device.self,
+            using: fetcher,
+            maxPages: NetBoxPageIterator.interfaceMaxPages
+        ) { page, _ in
+            _ = try await self.applyOnStore { context in
+                try NetBoxStore.applyDevices(
+                    page, fetchComplete: false, skipped: 0, in: context
+                )
+            }
+            await keeping.formUnion(Set(page.map(\.id)))
+        }
+        let seen = await keeping.ids
         _ = try await applyOnStore { context in
             try NetBoxStore.applyDevices(
-                rows,
+                [],
                 fetchComplete: true,
-                skipped: skipped,
+                skipped: walk.skipped,
+                keeping: seen,
                 in: context
             )
         }
@@ -805,14 +852,29 @@ actor NetBoxSyncEngine {
     }
 
     private func syncServices() async throws {
-        let (rows, skipped) = try await fetchAll(
+        let keeping = AcceptedInterfaceIDs()
+        let walk = try await NetBoxPageIterator.streamDecoded(
             path: "/api/ipam/services/",
             extraQuery: [],
-            as: NetBoxRecord.Service.self
-        )
+            as: NetBoxRecord.Service.self,
+            using: fetcher,
+            maxPages: NetBoxPageIterator.interfaceMaxPages
+        ) { page, _ in
+            _ = try await self.applyOnStore { context in
+                try NetBoxStore.applyServices(
+                    page, fetchComplete: false, skipped: 0, in: context
+                )
+            }
+            await keeping.formUnion(Set(page.map(\.id)))
+        }
+        let seen = await keeping.ids
         _ = try await applyOnStore { context in
             try NetBoxStore.applyServices(
-                rows, fetchComplete: true, skipped: skipped, in: context
+                [],
+                fetchComplete: true,
+                skipped: walk.skipped,
+                keeping: seen,
+                in: context
             )
         }
     }
@@ -961,11 +1023,21 @@ actor NetBoxSyncEngine {
             URLQueryItem(name: "id__gt", value: String(watermarkID)),
             URLQueryItem(name: "ordering", value: "id"),
         ]
-        let (rows, skipped) = try await fetchAll(
-            path: "/api/core/object-changes/",
-            extraQuery: extra,
-            as: NetBoxRecord.ObjectChange.self
-        )
+        let rows: [NetBoxRecord.ObjectChange]
+        let skipped: Int
+        do {
+            (rows, skipped) = try await fetchAll(
+                path: "/api/core/object-changes/",
+                extraQuery: extra,
+                as: NetBoxRecord.ObjectChange.self
+            )
+        } catch NetBoxSyncError.pageLimitExceeded {
+            logger.error("Changelog exceeded the page cap; falling back to a full mirror")
+            let cursor = try? await latestChangelogCursor()
+            try await performFullSync(progress: nil)
+            try await stampFullSuccess(cursor: cursor)
+            return
+        }
         if skipped > 0 {
             throw NetBoxSyncError.dataError("Changelog page skipped \(skipped) elements")
         }

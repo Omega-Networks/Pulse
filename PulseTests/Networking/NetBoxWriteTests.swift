@@ -41,6 +41,16 @@ final class NetBoxWriteTests: XCTestCase {
             NetBoxWriteBody.InterfacePatch(description: "")
         )
         assertJSON(cleared, ["description": ""])
+
+        let labelled = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.InterfacePatch(label: "uplink")
+        )
+        assertJSON(labelled, ["label": "uplink"])
+
+        let clearedLabel = try NetBoxWriteJSON.encode(
+            NetBoxWriteBody.InterfacePatch(label: "")
+        )
+        assertJSON(clearedLabel, ["label": ""])
     }
 
     func testCustomFieldsSendsOnlyChangedKeys() throws {
@@ -230,7 +240,7 @@ final class NetBoxWriteTests: XCTestCase {
             try ModelContext(container).fetch(FetchDescriptor<Interface>()).first
         )
         XCTAssertEqual(row.enabled, false)
-        XCTAssertEqual(row.interfaceDescription, "uplink")
+        XCTAssertNil(row.interfaceDescription)
     }
 
     func testEmptyDescriptionPatchSendsEmptyStringNotOmit() async throws {
@@ -330,7 +340,7 @@ final class NetBoxWriteTests: XCTestCase {
         } catch let error as NetBoxSyncError {
             XCTAssertEqual(
                 error.localizedDescription,
-                #"NetBox conflict (412): {"detail":"Object modified."}"#
+                "NetBox conflict (412): Object modified."
             )
         }
         XCTAssertEqual(
@@ -607,6 +617,44 @@ final class NetBoxWriteTests: XCTestCase {
         }
     }
 
+    func testRequireLinkAllowsOneHardwareEnd() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let fillerRole = DeviceRole(id: 6)
+        context.insert(fillerRole)
+        let panel = Device(id: 9000)
+        panel.deviceRole = fillerRole
+        context.insert(panel)
+        let switchRole = DeviceRole(id: 1)
+        context.insert(switchRole)
+        let granted = Date(timeIntervalSince1970: 1_600_000_000)
+        for id in 1...50 {
+            let device = Device(id: Int64(id))
+            device.deviceRole = switchRole
+            device.seatGrantedAt = granted
+            context.insert(device)
+        }
+        let unseated = Device(id: 9001)
+        unseated.deviceRole = switchRole
+        context.insert(unseated)
+        try context.save()
+
+        let defaults = UserDefaults(suiteName: "pulse.tests.fillerLink")!
+        defaults.removePersistentDomain(forName: "pulse.tests.fillerLink")
+        RolePresentationStorage.save(.omegaDefault(), to: defaults)
+
+        try LicenseSeatEvaluator.requireLink(
+            a: 9000, b: 1, in: context, defaults: defaults, tier: .free
+        )
+        XCTAssertThrowsError(
+            try LicenseSeatEvaluator.requireLink(
+                a: 9000, b: 9001, in: context, defaults: defaults, tier: .free
+            )
+        ) { error in
+            XCTAssertEqual(error as? BillingError, .deviceNotSeated)
+        }
+    }
+
     func testCreateBillableDeviceAtCapIsRefused() async throws {
         let container = try makeContainer()
         let seed = ModelContext(container)
@@ -794,6 +842,39 @@ final class NetBoxWriteTests: XCTestCase {
         XCTAssertEqual(
             NetBoxLiveFetcher.transportMessage(offline),
             "NetBox is unreachable. The change was not saved."
+        )
+        let html503 = """
+        <!DOCTYPE html>
+        <html><body><iframe src="/fortiadc_error_page/index.html"></iframe></body></html>
+        """
+        XCTAssertEqual(
+            NetBoxSyncError.operatorMessage(code: 503, body: html503),
+            "NetBox is temporarily unavailable."
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.httpStatus(code: 503, body: html503).localizedDescription,
+            "NetBox 503: NetBox is temporarily unavailable."
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.operatorMessage(
+                code: 403,
+                body: "<html><body>Forbidden</body></html>"
+            ),
+            "NetBox refused this request. Check the API token and permissions."
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.operatorMessage(
+                code: 403,
+                body: #"{"detail":"You do not have permission to perform this action."}"#
+            ),
+            "You do not have permission to perform this action."
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.operatorMessage(
+                code: 400,
+                body: #"{"enabled":["This field is required."]}"#
+            ),
+            #"{"enabled":["This field is required."]}"#
         )
     }
 

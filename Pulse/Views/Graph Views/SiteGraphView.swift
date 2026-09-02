@@ -174,7 +174,7 @@ struct SiteGraphView: View {
         
         self._devices = Query(filter: #Predicate<Device> { device in
             device.siteId == siteId
-        }, animation: .bouncy.speed(0.1))
+        }, animation: .easeInOut(duration: 0.15))
     }
 #endif
     
@@ -199,7 +199,7 @@ struct SiteGraphView: View {
         
         self._devices = Query(filter: #Predicate<Device> { device in
             device.siteId == siteId
-        }, animation: .bouncy.speed(0.1))
+        }, animation: .easeInOut(duration: 0.15))
     }
 #endif
     
@@ -525,7 +525,6 @@ extension SiteGraphView {
                 }
             }
         }
-        .animation(.easeInOut, value: computedEdges)
     }
     
     /**

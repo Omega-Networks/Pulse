@@ -53,10 +53,12 @@ enum NetBoxWriteBody {
         var enabled: Bool?
         /// `nil` omits the key. `""` is a clear — it must be sent.
         var description: String?
+        /// Same omit-vs-clear rule as `description`.
+        var label: String?
         var customFields: [String: JSONValue]?
 
         enum CodingKeys: String, CodingKey {
-            case enabled, description
+            case enabled, description, label
             case customFields = "custom_fields"
         }
 
@@ -67,6 +69,9 @@ enum NetBoxWriteBody {
             // clear cannot be "fixed" back into an omit.
             if let description {
                 try container.encode(description, forKey: .description)
+            }
+            if let label {
+                try container.encode(label, forKey: .label)
             }
             try container.encodeIfPresent(customFields, forKey: .customFields)
         }

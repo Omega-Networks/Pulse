@@ -65,3 +65,58 @@ final class FrontPort {
 }
 
 extension FrontPort: Identifiable {}
+
+/// Patch-panel layout is positional: index 0 is port 1. Sort by the last
+/// number in the NetBox name (`"12"`, `"Port 12"`, `"Gi0/12"`) so empty
+/// labels cannot shuffle the row. Tie-break on the stem, then id.
+enum PortNameOrder {
+    static func lessThan(
+        _ leftName: String,
+        id leftID: Int64,
+        _ rightName: String,
+        id rightID: Int64
+    ) -> Bool {
+        let left = parts(leftName)
+        let right = parts(rightName)
+        switch (left.number, right.number) {
+        case let (l?, r?) where l != r:
+            return l < r
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            break
+        }
+        if left.stem != right.stem {
+            return left.stem.localizedStandardCompare(right.stem) == .orderedAscending
+        }
+        return leftID < rightID
+    }
+
+    /// Tiny faceplate text. `"7/1"` and `"Port 12"` become `"1"` / `"12"`
+    /// so an 8-point cell does not render `"7..."`.
+    static func faceplateLabel(_ name: String, fallback: Int64) -> String {
+        if let number = parts(name).number {
+            return String(number)
+        }
+        return String(fallback)
+    }
+
+    private static func parts(_ name: String) -> (stem: String, number: Int64?) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var digitsStart = trimmed.endIndex
+        while digitsStart > trimmed.startIndex {
+            let previous = trimmed.index(before: digitsStart)
+            if trimmed[previous].isNumber {
+                digitsStart = previous
+            } else {
+                break
+            }
+        }
+        guard digitsStart < trimmed.endIndex, let number = Int64(trimmed[digitsStart...]) else {
+            return (trimmed, nil)
+        }
+        return (String(trimmed[..<digitsStart]), number)
+    }
+}

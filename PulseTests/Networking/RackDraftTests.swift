@@ -133,4 +133,26 @@ final class RackDraftTests: XCTestCase {
             41
         )
     }
+
+    func testPortNamesSortNumerically() {
+        let names = ["10", "2", "1", "24", "Port 12", "Port 3", "Gi0/11", "Gi0/2"]
+        let sorted = names.enumerated().sorted { lhs, rhs in
+            PortNameOrder.lessThan(lhs.element, id: Int64(lhs.offset), rhs.element, id: Int64(rhs.offset))
+        }.map(\.element)
+        XCTAssertEqual(sorted, ["1", "2", "Gi0/2", "Port 3", "10", "Gi0/11", "Port 12", "24"])
+    }
+
+    func testFaceplateLabelUsesTrailingPortNumber() {
+        XCTAssertEqual(PortNameOrder.faceplateLabel("7/1", fallback: 99), "1")
+        XCTAssertEqual(PortNameOrder.faceplateLabel("7/12", fallback: 99), "12")
+        XCTAssertEqual(PortNameOrder.faceplateLabel("Port 24", fallback: 99), "24")
+        XCTAssertEqual(PortNameOrder.faceplateLabel("12", fallback: 99), "12")
+        XCTAssertEqual(PortNameOrder.faceplateLabel("", fallback: 3), "3")
+    }
+
+    func testPortNamesTieBreakOnStemThenID() {
+        XCTAssertTrue(PortNameOrder.lessThan("Gi0/1", id: 2, "Te0/1", id: 1))
+        XCTAssertTrue(PortNameOrder.lessThan("1", id: 5, "1", id: 9))
+        XCTAssertTrue(PortNameOrder.lessThan("12", id: 1, "A", id: 2))
+    }
 }

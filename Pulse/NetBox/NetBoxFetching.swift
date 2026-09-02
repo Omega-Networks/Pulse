@@ -102,12 +102,12 @@ enum NetBoxSyncError: Error, Equatable {
         case .httpStatus(let code, let body) where code == 401 || code == 403:
             RequestStatusManager.shared.updateStatus(
                 .netbox,
-                .authenticationFailure(code: code, message: body)
+                .authenticationFailure(code: code, message: Self.operatorMessage(code: code, body: body))
             )
         case .httpStatus(let code, let body):
             RequestStatusManager.shared.updateStatus(
                 .netbox,
-                .dataError(code: code, message: body)
+                .dataError(code: code, message: Self.operatorMessage(code: code, body: body))
             )
         case .transport(let message):
             RequestStatusManager.shared.updateStatus(.netbox, .connectionError(message))
@@ -135,9 +135,9 @@ extension NetBoxSyncError: LocalizedError {
         case .invalidServerURL(let value):
             return "NetBox server URL is invalid: \(value)"
         case .httpStatus(let code, let body) where code == 412:
-            return "NetBox conflict (412): \(body)"
+            return "NetBox conflict (412): \(Self.operatorMessage(code: code, body: body))"
         case .httpStatus(let code, let body):
-            return "NetBox HTTP \(code): \(body)"
+            return "NetBox \(code): \(Self.operatorMessage(code: code, body: body))"
         case .transport(let message):
             return message
         case .emptyPageWithNext:
@@ -146,6 +146,62 @@ extension NetBoxSyncError: LocalizedError {
             return "NetBox pagination exceeded the page safety limit"
         case .writesDisabled(let message):
             return message
+        }
+    }
+
+    /// Operator-facing body. JSON `detail` is kept; HTML proxy pages
+    /// (FortiADC 503, WAF 403) become a sentence keyed off the status.
+    static func operatorMessage(code: Int, body: String) -> String {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return fallback(code)
+        }
+        if looksLikeMarkup(trimmed) {
+            return fallback(code)
+        }
+        if let detail = jsonDetail(trimmed) {
+            return detail
+        }
+        if trimmed.count > 280 {
+            return fallback(code)
+        }
+        return trimmed
+    }
+
+    private static func looksLikeMarkup(_ body: String) -> Bool {
+        let head = body.prefix(48).lowercased()
+        return head.hasPrefix("<!")
+            || head.hasPrefix("<html")
+            || head.hasPrefix("<iframe")
+            || head.hasPrefix("<head")
+            || head.hasPrefix("<body")
+    }
+
+    private static func jsonDetail(_ body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let detail = object["detail"] as? String, !detail.isEmpty {
+            return detail
+        }
+        return nil
+    }
+
+    private static func fallback(_ code: Int) -> String {
+        switch code {
+        case 401, 403:
+            return "NetBox refused this request. Check the API token and permissions."
+        case 404:
+            return "NetBox could not find that object."
+        case 408, 504:
+            return "NetBox timed out. Try again."
+        case 429:
+            return "NetBox rate-limited this request. Try again shortly."
+        case 500, 502, 503:
+            return "NetBox is temporarily unavailable."
+        default:
+            return "NetBox returned an error (\(code))."
         }
     }
 }

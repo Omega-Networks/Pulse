@@ -31,9 +31,13 @@ import SwiftData
 @Observable
 final class LicenseSeatStore: @unchecked Sendable {
     private(set) var seatedIDs: Set<Int64> = []
+    /// Devices whose role does not count toward the license (panels,
+    /// blanks, shelves). They never hold a seat, but Connect / Disconnect
+    /// and other operator actions still have to work.
+    private(set) var unbilledIDs: Set<Int64> = []
 
     func allowsActions(deviceID: Int64) -> Bool {
-        seatedIDs.contains(deviceID)
+        unbilledIDs.contains(deviceID) || seatedIDs.contains(deviceID)
     }
 
     /// Rack hardware (blanks, panels, shelves) is not billed, so it
@@ -48,7 +52,7 @@ final class LicenseSeatStore: @unchecked Sendable {
     }
 
     func allowsLink(a: Int64, b: Int64) -> Bool {
-        seatedIDs.contains(a) && seatedIDs.contains(b)
+        allowsActions(deviceID: a) && allowsActions(deviceID: b)
     }
 
     @discardableResult
@@ -73,6 +77,7 @@ final class LicenseSeatStore: @unchecked Sendable {
         }
         try context.save()
         seatedIDs = result.effectiveIDs
+        unbilledIDs = Self.unbilledIDs(in: snapshots, presentation: presentation)
         return result
     }
 
@@ -81,12 +86,20 @@ final class LicenseSeatStore: @unchecked Sendable {
         presentation: RolePresentation,
         tier: SubscriptionTier
     ) throws {
-        let devices = try context.fetch(FetchDescriptor<Device>())
+        let snapshots = try context.fetch(FetchDescriptor<Device>()).map { $0.seatSnapshot() }
         seatedIDs = LicenseSeatReconciler.effectiveIDs(
-            devices: devices.map { $0.seatSnapshot() },
+            devices: snapshots,
             presentation: presentation,
             cap: tier.maxSeats
         )
+        unbilledIDs = Self.unbilledIDs(in: snapshots, presentation: presentation)
+    }
+
+    private static func unbilledIDs(
+        in snapshots: [SeatSnapshot],
+        presentation: RolePresentation
+    ) -> Set<Int64> {
+        Set(snapshots.filter { !presentation.countsTowardLicense(roleID: $0.roleID) }.map(\.id))
     }
 
     func canAdmitEligible(

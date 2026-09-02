@@ -40,11 +40,12 @@ struct InterfacesTable: View {
     @State var selection = Set<Int64>()
     @State private var interfaces: [InterfaceVO] = []
     @State private var isWriting = false
+    @State private var writingIDs: Set<Int64> = []
     @State private var operatorAlert: OperatorAlert?
     @State private var connectFrom: InterfaceVO?
     
     @State var sortOrder: [KeyPathComparator<InterfaceVO>] = [
-        .init(\.id, order: SortOrder.forward)
+        KeyPathComparator(\.name, comparator: .localizedStandard)
     ]
 
     private var owningDeviceSeated: Bool {
@@ -75,6 +76,7 @@ struct InterfacesTable: View {
             
             return hasNoLagParent && hasNoBridgeParent && hasNoDirectParent
         }
+        .sorted(using: sortOrder)
     }
     
     @State private var editedInterfaces: [Int64: InterfaceVO] = [:]
@@ -181,8 +183,23 @@ struct InterfacesTable: View {
             editedInterfaces.removeValue(forKey: interface.id)
             return
         }
-        let succeeded = await performWrite {
+        let succeeded = await performWrite(id: interface.id, lockTable: false) {
             try await engine.patchInterface(id: interface.id, description: value)
+        }
+        editedInterfaces.removeValue(forKey: interface.id)
+        if !succeeded {
+            loadInterfaces()
+        }
+    }
+
+    private func saveLabel(_ interface: InterfaceVO, _ value: String) async {
+        let committed = interface.label ?? ""
+        guard value != committed else {
+            editedInterfaces.removeValue(forKey: interface.id)
+            return
+        }
+        let succeeded = await performWrite(id: interface.id, lockTable: false) {
+            try await engine.patchInterface(id: interface.id, label: value)
         }
         editedInterfaces.removeValue(forKey: interface.id)
         if !succeeded {
@@ -192,8 +209,14 @@ struct InterfacesTable: View {
 
     private func setEnabled(_ interface: InterfaceVO, _ enabled: Bool) async {
         guard enabled != interface.enabled else { return }
-        await performWrite {
+        if let index = interfaces.firstIndex(where: { $0.id == interface.id }) {
+            interfaces[index].enabled = enabled
+        }
+        let succeeded = await performWrite(id: interface.id, lockTable: false) {
             try await engine.patchInterface(id: interface.id, enabled: enabled)
+        }
+        if !succeeded {
+            loadInterfaces()
         }
     }
 
@@ -239,10 +262,22 @@ struct InterfacesTable: View {
     }
 
     @discardableResult
-    private func performWrite(_ work: () async throws -> Void) async -> Bool {
-        guard !isWriting else { return false }
-        isWriting = true
-        defer { isWriting = false }
+    private func performWrite(
+        id: Int64? = nil,
+        lockTable: Bool = true,
+        _ work: () async throws -> Void
+    ) async -> Bool {
+        if lockTable {
+            guard !isWriting else { return false }
+            isWriting = true
+        }
+        if let id {
+            writingIDs.insert(id)
+        }
+        defer {
+            if lockTable { isWriting = false }
+            if let id { writingIDs.remove(id) }
+        }
         do {
             try await work()
             loadInterfaces()
@@ -265,7 +300,7 @@ extension InterfacesTable {
     //MARK: Subviews for the InterfacesTable
     private var tableView: some View {
         Table(selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Name") { (interface: InterfaceVO) in
+            TableColumn("Name", value: \.name) { (interface: InterfaceVO) in
                 HStack {
                     if let symbolName = poeSymbolName(for: interface.poeMode, type: interface.type) {
                         Image(systemName: symbolName)
@@ -279,7 +314,26 @@ extension InterfacesTable {
             }
             .width(min: 80, ideal: 160)
 
-            TableColumn("Description") { (interface: InterfaceVO) in
+            TableColumn("Label", value: \.labelValue) { (interface: InterfaceVO) in
+                EditableText(
+                    text: Binding(
+                        get: {
+                            if let edited = editedInterfaces[interface.id] {
+                                return edited.label ?? ""
+                            }
+                            return interface.label ?? ""
+                        },
+                        set: { editedInterfaces[interface.id, default: interface].label = $0 }
+                    ),
+                    onSubmitted: { value in
+                        Task { await saveLabel(interface, value) }
+                    }
+                )
+                .disabled(isWriting || writingIDs.contains(interface.id) || !owningDeviceSeated)
+            }
+            .width(min: 80, ideal: 120)
+
+            TableColumn("Description", value: \.descriptionValue) { (interface: InterfaceVO) in
                 EditableText(
                     text: Binding(
                         get: {
@@ -294,7 +348,7 @@ extension InterfacesTable {
                         Task { await saveDescription(interface, value) }
                     }
                 )
-                .disabled(isWriting || !owningDeviceSeated)
+                .disabled(isWriting || writingIDs.contains(interface.id) || !owningDeviceSeated)
             }
             .width(min: 140)
 
@@ -310,7 +364,7 @@ extension InterfacesTable {
                 )
                 .labelsHidden()
                 .id("\(interface.id)-enabled-\(interface.enabled)")
-                .disabled(isWriting || netBoxSyncEngine == nil || !owningDeviceSeated)
+                .disabled(isWriting || writingIDs.contains(interface.id) || netBoxSyncEngine == nil || !owningDeviceSeated)
                 .frame(maxWidth: .infinity)
             }
             .width(min: 64, ideal: 72, max: 88)
@@ -337,7 +391,7 @@ extension InterfacesTable {
             }
             .width(min: 120, ideal: 200)
 
-            TableColumn("Type") { (interface: InterfaceVO) in
+            TableColumn("Type", value: \.typeValue) { (interface: InterfaceVO) in
                 Text(interface.type ?? "")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

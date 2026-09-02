@@ -247,6 +247,8 @@ actor SiteDataService {
                 )
                 try context.save()
                 logger.debug("Successfully cleaned up old events")
+                refreshSeverities(in: context)
+                try context.save()
             }
             
             // Update last sync time
@@ -315,6 +317,7 @@ actor SiteDataService {
         let newEventIds = Set(eventIds).subtracting(existingEventsDict.keys)
         var insertCount = 0
         var insertedEventIds: [String] = []
+        var insertedEvents: [Event] = []
         
         for eventId in newEventIds {
             if let properties = propertiesDict[eventId] {
@@ -323,6 +326,7 @@ actor SiteDataService {
                 context.insert(event)
                 insertCount += 1
                 insertedEventIds.append(eventId)
+                insertedEvents.append(event)
             }
         }
         
@@ -331,7 +335,8 @@ actor SiteDataService {
         do {
             try context.save()
             logger.debug("Successfully saved context")
-            refreshSeverities(in: context)
+            let touched = Array(existingEventsDict.values) + insertedEvents
+            refreshSeverities(in: context, events: touched)
             try? context.save()
             
             // Map devices for newly inserted events
@@ -432,6 +437,7 @@ actor SiteDataService {
                 
                 // Process results and map to devices
                 let context = ModelContext(modelContainer)
+                var mappedEvents: [Event] = []
                 for try await batchResults in group {
                     for (hostId, events) in batchResults {
                         // Fetch device if not already in our devices array
@@ -459,23 +465,24 @@ actor SiteDataService {
                             
                             if let existing = try? context.fetch(descriptor).first {
                                 existing.update(with: eventProperty, device: device)
+                                mappedEvents.append(existing)
                                 logger.debug("Updated existing event: \(searchEventId)")
                             } else {
                                 let event = Event(eventId: searchEventId)
                                 event.update(with: eventProperty, device: device)
                                 context.insert(event)
+                                mappedEvents.append(event)
                                 logger.debug("Inserted new event: \(searchEventId)")
                             }
                         }
                     }
                     try context.save()
                 }
+                refreshSeverities(in: context, events: mappedEvents)
+                try? context.save()
             }
             
             logger.debug("Event sync completed successfully")
-            let refreshContext = ModelContext(modelContainer)
-            refreshSeverities(in: refreshContext)
-            try? refreshContext.save()
             
         } catch {
             logger.error("Failed to sync events: \(error.localizedDescription)")
@@ -488,7 +495,23 @@ actor SiteDataService {
         try? context.save()
     }
 
-    private func refreshSeverities(in context: ModelContext) {
+    /// Recompute stored pin colours. Pass the events that just changed so a
+    /// single acknowledge does not walk every device and site (that path was
+    /// ~8s at 12K devices). Full sync after stale-event delete still refreshes
+    /// the whole store so resolved problems clear.
+    private func refreshSeverities(in context: ModelContext, events: [Event]? = nil) {
+        if let events {
+            var seenDevice = Set<Int64>()
+            var seenSite = Set<Int64>()
+            for device in devicesTouched(by: events, in: context) {
+                guard seenDevice.insert(device.id).inserted else { continue }
+                device.refreshSeverityFromEvents()
+                if let site = device.site, seenSite.insert(site.id).inserted {
+                    site.refreshSeverityFromEvents()
+                }
+            }
+            return
+        }
         let devices = (try? context.fetch(FetchDescriptor<Device>())) ?? []
         for device in devices {
             device.refreshSeverityFromEvents()
@@ -497,6 +520,26 @@ actor SiteDataService {
         for site in sites {
             site.refreshSeverityFromEvents()
         }
+    }
+
+    private func devicesTouched(by events: [Event], in context: ModelContext) -> [Device] {
+        var devices: [Device] = []
+        var seen = Set<Int64>()
+        for event in events {
+            if let device = event.device, seen.insert(device.id).inserted {
+                devices.append(device)
+                continue
+            }
+            let hostId = event.hostId
+            guard hostId != 0 else { continue }
+            let descriptor = FetchDescriptor<Device>(
+                predicate: #Predicate<Device> { $0.zabbixId == hostId }
+            )
+            if let device = try? context.fetch(descriptor).first, seen.insert(device.id).inserted {
+                devices.append(device)
+            }
+        }
+        return devices
     }
 
     private func chunk<T>(array: [T], size: Int) -> [[T]] {

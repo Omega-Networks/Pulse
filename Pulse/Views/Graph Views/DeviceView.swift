@@ -258,12 +258,10 @@ struct DeviceView: View {
     private var deviceIcon: some View {
         Image(device.symbolName)
             .symbolRenderingMode(.palette)
-            .contentTransition(.symbolEffect(.replace))
-            .transition(.symbolEffect(.automatic))
-            .foregroundStyle(Color.black, device.unacknowledgedSeverityColor)
-            .shadow(color: Color.black, radius: 2)
+            .foregroundStyle(device.graphStrokeColor, device.unacknowledgedSeverityColor)
+            .shadow(color: device.graphStrokeColor.opacity(0.7), radius: 2)
             .font(.system(size: 50, weight: .regular))
-            .animation(Animation.easeInOut.speed(0.69), value: device.unacknowledgedSeverityColor)
+            .animation(.easeInOut(duration: 0.2), value: device.highestUnacknowledgedSeverityStored)
             .overlay( //MARK: This overlay enables us to compute the bounding rectangle of the Image struct.
                 GeometryReader { geometry in
                     Color.clear.preference(

@@ -67,6 +67,19 @@ enum LicenseSeatEvaluator {
            !presentation.countsTowardLicense(roleID: roleID) {
             return
         }
+        // Unlimited: every eligible device may write. Do not fetch the
+        // whole device table on each PATCH.
+        guard let cap = tier.maxSeats else { return }
+        var grantedFetch = FetchDescriptor<Device>(
+            predicate: #Predicate<Device> { $0.seatGrantedAt != nil }
+        )
+        let granted = try context.fetch(grantedFetch)
+        let effective = LicenseSeatReconciler.effectiveIDs(
+            devices: granted.map { $0.seatSnapshot() },
+            presentation: presentation,
+            cap: cap
+        )
+        if effective.contains(deviceID) { return }
         let result = try reconcile(in: context, defaults: defaults, tier: tier)
         guard result.effectiveIDs.contains(deviceID) else {
             throw BillingError.deviceNotSeated
@@ -87,6 +100,18 @@ enum LicenseSeatEvaluator {
         defaults: UserDefaults = .standard,
         tier: SubscriptionTier
     ) throws {
+        let presentation = presentation(defaults: defaults)
+        let aCounts = presentation.countsTowardLicense(roleID: try deviceRoleID(a, in: context))
+        let bCounts = presentation.countsTowardLicense(roleID: try deviceRoleID(b, in: context))
+        if !aCounts && !bCounts { return }
+        if !aCounts {
+            try requireSeated(deviceID: b, in: context, defaults: defaults, tier: tier)
+            return
+        }
+        if !bCounts {
+            try requireSeated(deviceID: a, in: context, defaults: defaults, tier: tier)
+            return
+        }
         let result = try reconcile(in: context, defaults: defaults, tier: tier)
         guard result.effectiveIDs.contains(a), result.effectiveIDs.contains(b) else {
             throw BillingError.linkRequiresBothSeats

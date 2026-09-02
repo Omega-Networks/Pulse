@@ -466,6 +466,18 @@ enum NetBoxStore {
         skipped: Int,
         in context: ModelContext
     ) throws -> ApplyResult {
+        try applyDevices(
+            records, fetchComplete: fetchComplete, skipped: skipped, keeping: nil, in: context
+        )
+    }
+
+    static func applyDevices(
+        _ records: [NetBoxRecord.Device],
+        fetchComplete: Bool,
+        skipped: Int,
+        keeping: Set<Int64>?,
+        in context: ModelContext
+    ) throws -> ApplyResult {
         let sites = try fetchByIDs(Site.self, ids: records.map(\.siteID), in: context)
         let roles = try fetchByIDs(DeviceRole.self, ids: records.map(\.roleID), in: context)
         let types = try fetchByIDs(DeviceType.self, ids: records.map(\.typeID), in: context)
@@ -522,7 +534,7 @@ enum NetBoxStore {
         }
         let deleted = try deleteStale(
             Device.self,
-            keeping: Set(records.map(\.id)),
+            keeping: keeping ?? Set(records.map(\.id)),
             allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
             in: context
         )
@@ -540,6 +552,18 @@ enum NetBoxStore {
         _ records: [NetBoxRecord.Service],
         fetchComplete: Bool,
         skipped: Int,
+        in context: ModelContext
+    ) throws -> ApplyResult {
+        try applyServices(
+            records, fetchComplete: fetchComplete, skipped: skipped, keeping: nil, in: context
+        )
+    }
+
+    static func applyServices(
+        _ records: [NetBoxRecord.Service],
+        fetchComplete: Bool,
+        skipped: Int,
+        keeping: Set<Int64>?,
         in context: ModelContext
     ) throws -> ApplyResult {
         let deviceIDs = records
@@ -568,7 +592,7 @@ enum NetBoxStore {
         }
         let deleted = try deleteStale(
             Service.self,
-            keeping: Set(records.map(\.id)),
+            keeping: keeping ?? Set(records.map(\.id)),
             allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
             in: context
         )

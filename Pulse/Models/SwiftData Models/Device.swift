@@ -285,6 +285,11 @@ final class Device {
         default: return .indigo
         }
     }
+
+    /// Disaster fill is black; a black stroke on black is unreadable.
+    var graphStrokeColor: Color {
+        highestUnacknowledgedSeverity == 5 ? .red : .black
+    }
     
     // MARK: - Helper Methods
     

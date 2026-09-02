@@ -33,7 +33,6 @@ struct RolePresentationSettings: View {
     @Environment(EntitlementStore.self) private var entitlements
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \DeviceRole.name) private var roles: [DeviceRole]
-    @Query private var devices: [Device]
     @State private var roleCapMessage: String?
     @State private var showingPaywall = false
 
@@ -125,7 +124,7 @@ struct RolePresentationSettings: View {
 
     private func applyPolicy(_ next: RolePolicy, for roleID: Int64, previous: RolePolicy) {
         if !previous.countsTowardLicense && next.countsTowardLicense {
-            let adding = devices.filter { $0.deviceRole?.id == roleID }.count
+            let adding = deviceCount(for: roleID)
             if adding > 0 {
                 let allowed = (try? seats.canAdmitEligible(
                     additional: adding,
@@ -140,6 +139,14 @@ struct RolePresentationSettings: View {
             }
         }
         store.setPolicy(next, for: roleID)
+    }
+
+    private func deviceCount(for roleID: Int64) -> Int {
+        let matchingRoleID = roleID
+        let descriptor = FetchDescriptor<Device>(
+            predicate: #Predicate<Device> { $0.deviceRole?.id == matchingRoleID }
+        )
+        return (try? modelContext.fetchCount(descriptor)) ?? 0
     }
 
     private func flag(

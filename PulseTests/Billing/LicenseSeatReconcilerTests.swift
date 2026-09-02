@@ -109,8 +109,26 @@ final class LicenseSeatReconcilerTests: XCTestCase {
         XCTAssertFalse(LicenseSeatReconciler.allowsRackEdit(
             deviceID: 99, roleID: 1, devices: devices, presentation: presentation, cap: 1
         ))
-        XCTAssertFalse(LicenseSeatReconciler.allowsActions(
+        XCTAssertTrue(LicenseSeatReconciler.allowsActions(
             deviceID: 1, devices: devices, presentation: presentation, cap: 1
+        ))
+    }
+
+    func testLinkWithOneHardwareEnd() {
+        let devices = [
+            snap(id: 1, role: 6, created: older),
+            snap(id: 2, role: 1, created: older, grant: older),
+            snap(id: 3, role: 1, created: older),
+        ]
+        XCTAssertTrue(LicenseSeatReconciler.allowsLink(
+            a: 1, b: 2, devices: devices, presentation: presentation, cap: 1
+        ))
+        XCTAssertFalse(LicenseSeatReconciler.allowsLink(
+            a: 1, b: 3, devices: devices, presentation: presentation, cap: 1
+        ))
+        XCTAssertTrue(LicenseSeatReconciler.allowsLink(
+            a: 1, b: 7, devices: devices + [snap(id: 7, role: 18, created: older)],
+            presentation: presentation, cap: 1
         ))
     }
 

@@ -85,10 +85,7 @@ struct CableManagementView: View {
             .padding(.horizontal, 10)
 
             HStack {
-                Image("OmegaLogo")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: min(28, rackWidth * 0.12), height: min(10, unitHeight * 0.4))
+                RackOmegaMark(height: min(14, unitHeight * 0.55))
                     .padding(.leading, 8)
                 Spacer()
             }
@@ -99,6 +96,23 @@ struct CableManagementView: View {
                 .stroke(Color.gray.opacity(0.7), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: rackUnitCornerRadius))
+    }
+}
+
+/// Vector swirl for 1U hardware. The landscape `OmegaLogo` PNG turns into
+/// a few dirty pixels at rack scale; `MenuBarSwirl` is the SVG.
+struct RackOmegaMark: View {
+    var height: CGFloat
+
+    var body: some View {
+        Image("MenuBarSwirl")
+            .resizable()
+            .interpolation(.high)
+            .antialiased(true)
+            .scaledToFit()
+            .frame(width: height, height: height)
+            .foregroundStyle(.white.opacity(0.9))
+            .accessibilityHidden(true)
     }
 }
 

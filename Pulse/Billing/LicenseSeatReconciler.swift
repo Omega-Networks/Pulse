@@ -133,7 +133,11 @@ enum LicenseSeatReconciler {
         presentation: RolePresentation,
         cap: Int?
     ) -> Bool {
-        effectiveIDs(devices: devices, presentation: presentation, cap: cap).contains(deviceID)
+        if let device = devices.first(where: { $0.id == deviceID }),
+           !presentation.countsTowardLicense(roleID: device.roleID) {
+            return true
+        }
+        return effectiveIDs(devices: devices, presentation: presentation, cap: cap).contains(deviceID)
     }
 
     static func allowsRackEdit(
@@ -159,8 +163,8 @@ enum LicenseSeatReconciler {
         presentation: RolePresentation,
         cap: Int?
     ) -> Bool {
-        let seated = effectiveIDs(devices: devices, presentation: presentation, cap: cap)
-        return seated.contains(a) && seated.contains(b)
+        allowsActions(deviceID: a, devices: devices, presentation: presentation, cap: cap)
+            && allowsActions(deviceID: b, devices: devices, presentation: presentation, cap: cap)
     }
 
     static func canAdmitEligible(
