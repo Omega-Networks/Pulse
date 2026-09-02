@@ -798,27 +798,27 @@ final class NetBoxWriteTests: XCTestCase {
 
     func testSitePinHygieneAndRegionSuggestion() throws {
         XCTAssertEqual(
-            NetBoxGeo.physicalAddress("328 Paremata Haywards Hill Rd, Judgeford, Porirua 5381, New Zealand"),
-            "328 Paremata Haywards Hill Rd, Judgeford, Porirua 5381, New Zealand"
+            NetBoxGeo.physicalAddress("100 Example Road, North Region"),
+            "100 Example Road, North Region"
         )
         XCTAssertEqual(NetBoxGeo.physicalAddress(String(repeating: "a", count: 250)).count, 200)
-        XCTAssertEqual(NetBoxGeo.latitude(-41.116328917), -41.11633, accuracy: 0.000001)
-        XCTAssertEqual(NetBoxGeo.longitude(174.870069123), 174.87007, accuracy: 0.000001)
+        XCTAssertEqual(NetBoxGeo.latitude(12.345678901), 12.34568, accuracy: 0.000001)
+        XCTAssertEqual(NetBoxGeo.longitude(-98.765432109), -98.76543, accuracy: 0.000001)
         let body = try NetBoxWriteJSON.encode(
             NetBoxWriteBody.SiteCreate(
                 name: "Lab",
                 slug: "lab",
                 status: "active",
-                latitude: NetBoxGeo.latitude(-41.116328917),
-                longitude: NetBoxGeo.longitude(174.870069123)
+                latitude: NetBoxGeo.latitude(12.345678901),
+                longitude: NetBoxGeo.longitude(-98.765432109)
             )
         )
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(object["latitude"] as? Double, NetBoxGeo.latitude(-41.116328917))
+        XCTAssertEqual(object["latitude"] as? Double, NetBoxGeo.latitude(12.345678901))
         XCTAssertEqual(
             NetBoxGeo.suggestedRegionID(
-                regions: [(1, "Wellington"), (2, "Porirua"), (3, "Porirua City")],
-                address: "328 Paremata Haywards Hill Rd, Judgeford, Porirua 5381"
+                regions: [(1, "West Region"), (2, "North Region"), (3, "North Region City")],
+                address: "100 Example Road, North Region"
             ),
             2
         )

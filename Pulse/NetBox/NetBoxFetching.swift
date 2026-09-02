@@ -226,13 +226,13 @@ struct NetBoxLiveFetcher: NetBoxFetching {
             : serverURL.absoluteString
         let suffix = request.path.hasPrefix("/") ? request.path : "/" + request.path
         guard var components = URLComponents(string: base + suffix) else {
-            throw NetBoxSyncError.invalidServerURL(server)
+            throw NetBoxServerURL.invalid(server)
         }
         if !request.query.isEmpty {
             components.queryItems = request.query
         }
         guard let url = components.url else {
-            throw NetBoxSyncError.invalidServerURL(server)
+            throw NetBoxServerURL.invalid(server)
         }
 
         var urlRequest = URLRequest(url: url)
@@ -253,7 +253,7 @@ struct NetBoxLiveFetcher: NetBoxFetching {
             (data, response) = try await URLSession.shared.data(for: urlRequest)
         } catch {
             logger.error(
-                "NetBox \(request.method, privacy: .public) \(url.absoluteString, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+                "NetBox \(request.method, privacy: .public) \(NetBoxServerURL.logDescription(url), privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
             )
             throw NetBoxSyncError.transport(Self.transportMessage(error))
         }
@@ -263,7 +263,7 @@ struct NetBoxLiveFetcher: NetBoxFetching {
         }
         guard (200...299).contains(http.statusCode) else {
             logger.error(
-                "NetBox \(request.method, privacy: .public) \(url.absoluteString, privacy: .public) status \(http.statusCode)"
+                "NetBox \(request.method, privacy: .public) \(NetBoxServerURL.logDescription(url), privacy: .public) status \(http.statusCode)"
             )
             throw NetBoxSyncError.httpStatus(
                 code: http.statusCode,

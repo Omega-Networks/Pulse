@@ -37,7 +37,8 @@ enum NetBoxAuthorization {
 }
 
 /// Settings URL must be `https` with a host. `http://` is rejected here even
-/// when ATS would allow it on the local network.
+/// when ATS would allow it on the local network. Userinfo (`user:pass@` or
+/// `token@`) is rejected — the API token is a separate Settings field.
 enum NetBoxServerURL {
     static func parse(_ raw: String) throws -> URL {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -47,11 +48,40 @@ enum NetBoxServerURL {
               let host = url.host,
               !host.isEmpty
         else {
-            throw NetBoxSyncError.invalidServerURL(raw)
+            throw invalid(raw)
         }
         guard scheme == "https" else {
-            throw NetBoxSyncError.invalidServerURL(raw)
+            throw invalid(raw)
+        }
+        if url.user != nil || url.password != nil {
+            throw invalid(raw)
         }
         return url
+    }
+
+    /// Associated value / operator copy. Userinfo is stripped so a pasted
+    /// `https://secret@host` cannot land in the status bar.
+    static func redacted(_ raw: String) -> String {
+        guard var components = URLComponents(string: raw),
+              components.user != nil || components.password != nil else {
+            return raw
+        }
+        components.user = nil
+        components.password = nil
+        return components.string ?? raw
+    }
+
+    /// Log line: scheme/host/port/path only. Never userinfo, query, or fragment.
+    static func logDescription(_ url: URL) -> String {
+        var components = URLComponents()
+        components.scheme = url.scheme
+        components.host = url.host
+        components.port = url.port
+        components.path = url.path
+        return components.string ?? url.host ?? "netbox"
+    }
+
+    static func invalid(_ raw: String) -> NetBoxSyncError {
+        .invalidServerURL(redacted(raw))
     }
 }

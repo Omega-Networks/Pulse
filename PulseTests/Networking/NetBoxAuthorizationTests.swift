@@ -48,6 +48,15 @@ final class NetBoxAuthorizationTests: XCTestCase {
         let url = try NetBoxServerURL.parse("https://netbox.example.com")
         XCTAssertEqual(url.scheme, "https")
         XCTAssertEqual(url.host, "netbox.example.com")
+        XCTAssertNil(url.user)
+        XCTAssertNil(url.password)
+    }
+
+    func testPathAtSignIsNotUserinfo() throws {
+        let url = try NetBoxServerURL.parse("https://netbox.example.com/path@foo")
+        XCTAssertEqual(url.host, "netbox.example.com")
+        XCTAssertNil(url.user)
+        XCTAssertNil(url.password)
     }
 
     func testHTTPServerURLIsRejected() {
@@ -69,5 +78,58 @@ final class NetBoxAuthorizationTests: XCTestCase {
         XCTAssertThrowsError(try NetBoxServerURL.parse("not a url")) { error in
             XCTAssertEqual(error as? NetBoxSyncError, .invalidServerURL("not a url"))
         }
+    }
+
+    func testUserinfoServerURLIsRejectedAndRedacted() {
+        XCTAssertThrowsError(try NetBoxServerURL.parse("https://user:pass@netbox.example.com")) { error in
+            let syncError = error as? NetBoxSyncError
+            XCTAssertEqual(syncError, .invalidServerURL("https://netbox.example.com"))
+            let description = (error as? LocalizedError)?.errorDescription ?? ""
+            XCTAssertFalse(description.contains("user"))
+            XCTAssertFalse(description.contains("pass"))
+            XCTAssertTrue(description.contains("netbox.example.com"))
+        }
+    }
+
+    func testTokenUserinfoServerURLIsRejectedAndRedacted() {
+        let raw = "https://nbt_example.not-a-real-token@netbox.example.com"
+        XCTAssertThrowsError(try NetBoxServerURL.parse(raw)) { error in
+            let description = (error as? LocalizedError)?.errorDescription ?? ""
+            XCTAssertEqual(
+                error as? NetBoxSyncError,
+                .invalidServerURL("https://netbox.example.com")
+            )
+            XCTAssertFalse(description.contains("nbt_example"))
+            XCTAssertFalse(description.contains("not-a-real-token"))
+        }
+    }
+
+    func testHTTPUserinfoIsRejectedWithoutEchoingPassword() {
+        XCTAssertThrowsError(try NetBoxServerURL.parse("http://user:pass@netbox.example.com")) { error in
+            let description = (error as? LocalizedError)?.errorDescription ?? ""
+            XCTAssertEqual(
+                error as? NetBoxSyncError,
+                .invalidServerURL("http://netbox.example.com")
+            )
+            XCTAssertFalse(description.contains("pass"))
+        }
+    }
+
+    func testRedactedLeavesGarbageUnchanged() {
+        XCTAssertEqual(NetBoxServerURL.redacted("not a url"), "not a url")
+        XCTAssertEqual(
+            NetBoxServerURL.redacted("http://netbox.example.com"),
+            "http://netbox.example.com"
+        )
+    }
+
+    func testLogDescriptionDropsUserinfoQueryAndFragment() throws {
+        let url = try XCTUnwrap(
+            URL(string: "https://user:pass@netbox.example.com:8443/api/dcim/devices/?limit=1#frag")
+        )
+        XCTAssertEqual(
+            NetBoxServerURL.logDescription(url),
+            "https://netbox.example.com:8443/api/dcim/devices"
+        )
     }
 }
