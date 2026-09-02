@@ -594,6 +594,20 @@ final class SSHConnectFormTests: XCTestCase {
         XCTAssertEqual(decoded.siteID, 1_123_581_321)
     }
 
+    /// `DeviceWebWindowTarget` must round-trip through `Codable` for the same
+    /// state-restoration reason. It is a separate type from
+    /// `DeviceWindowTarget` precisely so the SSH terminal and Device Web
+    /// scenes do not share one `WindowGroup(for:)` type (which collides and
+    /// can mount the view twice); a future "simplification" that folds it
+    /// back into `DeviceWindowTarget` would reintroduce that collision.
+    func testDeviceWebWindowTargetCodableRoundTrip() throws {
+        let original = DeviceWebWindowTarget(deviceID: 1_614_736_352)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(DeviceWebWindowTarget.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.deviceID, 1_614_736_352)
+    }
+
     /// The two targets are distinct nominal types even though both wrap
     /// `Int64`: carrying the same raw id, they encode to different
     /// payloads (keyed by `deviceID` vs `siteID`). That distinctness is
