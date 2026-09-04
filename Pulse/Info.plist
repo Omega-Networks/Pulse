@@ -52,11 +52,9 @@
 	<key>PulseMarketingHost</key>
 	<string>$(MARKETING_HOST)</string>
 	<!--
-	  Export compliance. Pulse uses non-exempt encryption (SSH, Secure
-	  Enclave wrapping, session-log AES). Set per-build, not a runtime flag.
+	  Export compliance is INFOPLIST_KEY_ITSAppUsesNonExemptEncryption on the
+	  Pulse target (NO: Connect requires no documentation upload).
 	-->
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pulse connects to devices on your local network to open their web and terminal management interfaces.</string>
 	<key>UIBackgroundModes</key>

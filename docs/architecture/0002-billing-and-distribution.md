@@ -15,6 +15,7 @@
 | Seats amendment (2026-08-17) | Cap table, insert-path enforcement, lapse ranking, intro product, and grant durability superseded as enumerated below. | Owner ratification after RolePresentation count and full-instance sync |
 | Pricing (2026-08-19) | Plus renamed Growth. Caps Free 50 / Growth 250 / Pro 1,500 / Unlimited none. List prices NZD 14.99 / 24.99 / 49.99 monthly; annual is 10 × monthly (two months free). | Owner ratification |
 | Upgrade timing (2026-08-19) | A higher-rank auto-renew product is the live tier immediately. A lower-rank change stays pending until period end. | StoreKit Testing / App Store leave upgrades on `autoRenewPreference` until the next transaction |
+| App Store encryption plist (2026-09-04) | `ITSAppUsesNonExemptEncryption` is **NO**. App Store Connect’s encryption questionnaire (standard algorithms, not France) requires no documentation upload; the plist must match or uploads fail with 90592. SSH/TLS/AES still exist; this flag means exempt from Apple-side docs, not “no crypto.” | App Store Connect App Encryption Documentation |
 
 ## Principle
 
@@ -120,7 +121,7 @@ This is a deliberate departure from the "hard refusal" pattern for new inserts. 
 
 ### 9. Export and IP compliance is bundle-level, not runtime
 
-- `ITSAppUsesNonExemptEncryption = YES` in `Info.plist`. Set per-build, not configurable at runtime.
+- `ITSAppUsesNonExemptEncryption = NO` in the generated Info.plist (`INFOPLIST_KEY_ITSAppUsesNonExemptEncryption`). App Store Connect determined no encryption documentation upload; the flag skips the per-upload questionnaire. SSH, TLS, Secure Enclave, and session-log AES still ship. Annual BIS self-classification remains a US filing, not an Apple PDF.
 - App Store Connect submission answers: "Does your app use encryption? **YES**. Does it qualify for any exemptions? **YES**" - citing 15 CFR §740.17(b)(1) License Exception ENC for standard cryptography (AES, ECDSA P-256, SHA-256, ECIES, SSH protocol algorithms; no proprietary or non-standard crypto).
 - Annual BIS Self-Classification Report (ECCN 5D002, Authorization Type ENC, Item Type "network communications/infrastructure") filed by **Feb 1 each year** to `crypt-supp8@bis.doc.gov` and `enc@nsa.gov`. NON-U.S. Components and NON-U.S. Manufacturing Locations both = New Zealand.
 - NZ NSGL: General Software Note carve-out documented in `docs/compliance/nzsgl-assessment.md` citing Wassenaar Cat 5 Part 2 Note 3 publicly-available-software exemption. No MFAT consent required.
@@ -144,7 +145,7 @@ The following invariants cannot be bypassed by configuration, runtime state, or 
 
 1. **`Device` insert refuses past cap.** `BillingError.tierCapReached` is thrown at exactly one site per insert pattern. Grep-checkable: `grep -rn "throw BillingError.tierCapReached" Pulse/` returns exactly the expected sites and no others.
 2. **`SubscriptionTier.maxDevices` is hard-coded.** A static lookup against the enum; not in `Configuration`, not in remote config, not in App Store Connect (which sets prices, not caps).
-3. **`ITSAppUsesNonExemptEncryption` lives in `Info.plist`.** Set to `YES` in the checked-in plist (SSH, Secure Enclave wrapping, session-log AES). Not runtime-readable, not configurable. The §740.17(b)(1) ENC route also carries the annual BIS self-classification report (see §9).
+3. **`ITSAppUsesNonExemptEncryption` lives in the generated Info.plist.** Set to `NO` so App Store Connect does not expect an export-compliance key (Connect: no documents required). Not a claim that Pulse uses no cryptography. The §740.17(b)(1) ENC route still carries the annual BIS self-classification report (see §9).
 4. **No tier-gated feature checks.** `grep -rn "requiresProTier\|requiresUnlimited\|isPremium" Pulse/` returns empty. Adding any future check requires amending this ADR.
 5. **Active tier sourced from `Transaction.currentEntitlements`.** Single resolver, single source of truth. No manual override, no debug bypass in Release builds.
 6. **Family Sharing unreachable.** The `.familyShared` case in `Transaction.ownershipType` is handled with a defensive `assertionFailure` only; no real code path consumes it.
@@ -202,7 +203,7 @@ When Enterprise ships, the Unlimited App Store tier's future is re-evaluated. De
 | # | Test | Pass criterion |
 |---|---|---|
 | 1 | App Store Connect configuration | Four subscription products in one group: Pro Monthly, Pro Annual, Unlimited Monthly, Unlimited Annual. Family Sharing OFF on all four. Intro offer configured on Pro Monthly only: $2.49 × 3 months, pay-as-you-go. |
-| 2 | `Info.plist` | `ITSAppUsesNonExemptEncryption = YES`. |
+| 2 | Generated Info.plist | `ITSAppUsesNonExemptEncryption = NO` (Connect: no documentation upload). |
 | 3 | Cap enforcement | `Device.init` throws `BillingError.tierCapReached` when count == cap. Unit test in `PulseTests/Billing/` verifies for each tier. |
 | 4 | No feature gating | `grep -rn "requiresProTier\|requiresUnlimited\|isPremium" Pulse/` returns empty. |
 | 5 | Single tier resolver | All tier reads route through one resolver fed by `Transaction.currentEntitlements`. Grep confirms. |
