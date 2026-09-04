@@ -14,6 +14,7 @@
 | Initial (2026-06-04) | Acceptance - three-tier subscription, App Store distribution via dual-licence posture, structural cap enforcement, intro offer on Pro monthly, no Family Sharing, subscription-lapse degrade-don't-delete | Research synthesis (five-angle deep-research pass, June 2026) |
 | Seats amendment (2026-08-17) | Cap table, insert-path enforcement, lapse ranking, intro product, and grant durability superseded as enumerated below. | Owner ratification after RolePresentation count and full-instance sync |
 | Pricing (2026-08-19) | Plus renamed Growth. Caps Free 50 / Growth 250 / Pro 1,500 / Unlimited none. List prices NZD 14.99 / 24.99 / 49.99 monthly; annual is 10 × monthly (two months free). | Owner ratification |
+| Pricing (2026-09-02) | Annual list prices snap to Apple `.99` points: NZD 149.99 / 249.99 / 499.99 (10 × monthly was 149.90 / 249.90 / 499.90). | App Store price-point grid |
 | Upgrade timing (2026-08-19) | A higher-rank auto-renew product is the live tier immediately. A lower-rank change stays pending until period end. | StoreKit Testing / App Store leave upgrades on `autoRenewPreference` until the next transaction |
 
 ## Principle
@@ -260,7 +261,7 @@ Eligibility-adding changes **in Pulse** at cap are refused. The same change via 
 
 | Was | Now |
 |---|---|
-| **§1** Free 15 / Pro 100 / Unlimited. Prices in the ADR table. | Free **50**, **Growth 250**, Pro **1,500**, Unlimited none. List prices in App Store Connect (NZD 14.99 / 24.99 / 49.99 monthly; annual = 10 × monthly). |
+| **§1** Free 15 / Pro 100 / Unlimited. Prices in the ADR table. | Free **50**, **Growth 250**, Pro **1,500**, Unlimited none. List prices in App Store Connect (NZD 14.99 / 24.99 / 49.99 monthly; annual 149.99 / 249.99 / 499.99). |
 | **§Structural-enforcement 1** `BillingError.tierCapReached` at `Device.init`. Grep that throw. | **Retired.** Sync and `Device.init` never refuse for cap. Grep `isSeated` / `allowsActions(deviceID:)`. |
 | **§2 / §6** Single billing check `device.canBeInserted(currentTier:)`. Cap abort during NetBox sync. | `allowsActions(deviceID:)` (and create/eligibility Pulse paths). `requiresProTier` grep stays empty. Sync never aborts on cap. |
 | **§8 lapse ranking** First 15 by `lastActivityAt` desc, then `createdAt`. | Oldest `seatGrantedAt` among **currently eligible** devices, count = cap. Refill by `created`, `id`. |
