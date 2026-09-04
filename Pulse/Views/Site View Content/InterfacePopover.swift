@@ -28,11 +28,16 @@ import SwiftData
 
 struct InterfacePopover: View {
     @Environment(\.modelContext) private var modelContext
-    @State var interface: Interface
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Environment(LicenseSeatStore.self) private var seats
+    @State var interface: InterfaceVO
+    @State private var isWriting = false
+    @State private var operatorAlert: OperatorAlert?
+    @State private var connectFrom: InterfaceVO?
     private var squareSize: CGFloat = 15
     private var verticalPadding: CGFloat = 5
     
-    public init(interface: Interface) {
+    public init(interface: InterfaceVO) {
         self._interface = State(initialValue: interface)
     }
     
@@ -45,7 +50,6 @@ struct InterfacePopover: View {
                     
                     Spacer()
                     
-                    
                     Label {
                         Text(interface.name)
                     } icon: {
@@ -53,7 +57,7 @@ struct InterfacePopover: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: squareSize, height: squareSize)
-                            .foregroundColor(Color.gray)
+                            .foregroundColor(interface.enabled ? .green : .red)
                         
                     }
                 }
@@ -65,37 +69,30 @@ struct InterfacePopover: View {
                     
                     Spacer()
                     
-                    Text(interface.speed ?? "N/A")
+                    Text(interface.speedLabel)
                 }
                 .padding(.vertical, verticalPadding)
-                
-//                HStack {
-//                    Text("Connected Endpoint Device") //TODO: Change it to either uplink or downlink depending on relationship
-//                        .foregroundColor(.gray)
-//                    
-//                    Spacer()
-//                    
-//                    Label {
-//                        Text(interface.connectedEndpointX?.device?.name ?? "N/A")
-//                    } icon: {
-//                        if interface.connectedEndpointX?.device != nil {
-//                            Image(interface.connectedEndpointX?.device?.symbolName ?? "")
-//                                .resizable()
-//                                .aspectRatio(contentMode: .fit)
-//                                .frame(width: self.squareSize, height: self.squareSize)
-//                                .foregroundColor(.primary)
-//                                .background(.black)
-//                        } else {
-//                            Image(systemName: "")
-//                                .resizable()
-//                                .aspectRatio(contentMode: .fit)
-//                                .frame(width: self.squareSize, height: self.squareSize)
-//                                .foregroundColor(.clear)
-//                        }
-//                    }
-//                    
-//                }
-//                .padding(.vertical, verticalPadding)
+
+                HStack {
+                    Text("Enabled")
+                        .foregroundColor(.gray)
+                    Spacer()
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { interface.enabled },
+                            set: { newValue in
+                                Task { await setEnabled(newValue) }
+                            }
+                        )
+                    )
+                    .labelsHidden()
+                    .disabled(isWriting || netBoxSyncEngine == nil || !owningDeviceSeated)
+                }
+                .padding(.vertical, verticalPadding)
+                if !owningDeviceSeated {
+                    SubscribeToResumeLabel()
+                }
                 
                 HStack {
                     Text("Connected Endpoint")
@@ -103,7 +100,23 @@ struct InterfacePopover: View {
                     
                     Spacer()
                     
-//                    Text(interface.connectedEndpointX?.name ?? "N/A")
+                    Text(interface.connectedEndpointName ?? "—")
+                }
+                .padding(.vertical, verticalPadding)
+
+                HStack {
+                    Spacer()
+                    if interface.cableId != nil || interface.connectedEndpointId != nil {
+                        Button("Disconnect") {
+                            requestDisconnect()
+                        }
+                        .disabled(isWriting || netBoxSyncEngine == nil || !linkAllowed)
+                    } else {
+                        Button("Connect…") {
+                            beginConnect()
+                        }
+                        .disabled(isWriting || netBoxSyncEngine == nil || !owningDeviceSeated)
+                    }
                 }
                 .padding(.vertical, verticalPadding)
                 
@@ -113,20 +126,134 @@ struct InterfacePopover: View {
                     
                     Spacer()
                     
-                    Label {
-                        Text(interface.name)
-                    } icon: {
-                        Image(systemName: "square")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: squareSize, height: squareSize)
-                    }
+                    Text(interface.type ?? interface.name)
                 }
                 .padding(.vertical, verticalPadding)
             }
         }
         .padding(20)
-        .frame(width: 400, height: 250)
+        .frame(width: 400, height: 280)
+        .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
+            reload()
+        }
+        .sheet(item: $connectFrom) { source in
+            ConnectInterfaceSheet(
+                source: source,
+                onCancel: { connectFrom = nil },
+                onConnect: { target in
+                    Task { await connect(to: target) }
+                }
+            )
+        }
+        .alert(item: $operatorAlert) { alert in
+            switch alert {
+            case .failed(let message):
+                return Alert(
+                    title: Text("NetBox write failed"),
+                    message: Text(message),
+                    dismissButton: .cancel(Text("OK"))
+                )
+            case .confirmDisconnect(let target):
+                return Alert(
+                    title: Text("Disconnect cable?"),
+                    message: Text("This deletes the cable in NetBox between \(target.name) and \(target.connectedEndpointName ?? "the other end"). That cannot be undone from here."),
+                    primaryButton: .cancel(),
+                    secondaryButton: .destructive(Text("Disconnect")) {
+                        Task {
+                            await Task.yield()
+                            await disconnect()
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    private var owningDeviceSeated: Bool {
+        guard let deviceID = interface.deviceId else { return false }
+        return seats.allowsActions(deviceID: deviceID)
+    }
+
+    private var linkAllowed: Bool {
+        guard owningDeviceSeated else { return false }
+        if let peer = interface.connectedEndpointDeviceId {
+            return seats.allowsLink(a: interface.deviceId ?? 0, b: peer)
+        }
+        return owningDeviceSeated
+    }
+
+    private func beginConnect() {
+        connectFrom = interface
+    }
+
+    private func setEnabled(_ enabled: Bool) async {
+        guard enabled != interface.enabled else { return }
+        await performWrite {
+            try await engine.patchInterface(id: interface.id, enabled: enabled)
+        }
+    }
+
+    private func connect(to target: InterfaceVO) async {
+        connectFrom = nil
+        await performWrite {
+            try await engine.createCable(from: interface.id, to: target.id)
+        }
+    }
+
+    private func requestDisconnect() {
+        guard interface.cableId != nil || interface.connectedEndpointId != nil else {
+            operatorAlert = .failed("This interface has no cable.")
+            return
+        }
+        operatorAlert = .confirmDisconnect(interface)
+    }
+
+    private func disconnect() async {
+        let ends = [interface.id, interface.connectedEndpointId].compactMap { $0 }
+        await performWrite {
+            try await engine.disconnectInterface(
+                id: interface.id,
+                knownCableId: interface.cableId,
+                refreshing: ends
+            )
+        }
+    }
+
+    private var engine: NetBoxSyncEngine {
+        get throws {
+            guard let netBoxSyncEngine else {
+                throw NetBoxSyncError.writesDisabled("NetBox sync engine is not available")
+            }
+            return netBoxSyncEngine
+        }
+    }
+
+    private func performWrite(_ work: () async throws -> Void) async {
+        guard !isWriting else { return }
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            try await work()
+            reload()
+        } catch {
+            operatorAlert = .failed(error.localizedDescription)
+            reload()
+        }
+    }
+
+    private func reload() {
+        let id = interface.id
+        if let deviceId = interface.deviceId,
+           let fresh = try? SiteTopologyEdges.fetchVOs(deviceId: deviceId, in: modelContext)
+            .first(where: { $0.id == id }) {
+            interface = fresh
+            return
+        }
+        if let siteId = SiteTopologyEdges.resolvedSiteId(interface: interface, in: modelContext),
+           let fresh = try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)
+            .first(where: { $0.id == id }) {
+            interface = fresh
+        }
     }
 }
 

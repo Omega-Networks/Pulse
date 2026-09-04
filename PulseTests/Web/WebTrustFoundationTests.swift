@@ -66,12 +66,12 @@ final class WebTrustFoundationTests: XCTestCase {
     // MARK: - WebServiceResolver: target from a single service
 
     func testTargetFromDeviceParentedHTTPSService() throws {
-        let service = makeService(id: 1, name: "HTTPS", ports: [8006], ip: "172.27.10.201/24")
+        let service = makeService(id: 1, name: "HTTPS", ports: [8006], ip: "192.0.2.10/24")
         let target = try XCTUnwrap(WebServiceResolver.target(from: service))
         XCTAssertEqual(target.scheme, "https")
-        XCTAssertEqual(target.host, "172.27.10.201")
+        XCTAssertEqual(target.host, "192.0.2.10")
         XCTAssertEqual(target.port, 8006)
-        XCTAssertEqual(target.url, URL(string: "https://172.27.10.201:8006/"))
+        XCTAssertEqual(target.url, URL(string: "https://192.0.2.10:8006/"))
         XCTAssertEqual(target.serviceName, "HTTPS")
     }
 

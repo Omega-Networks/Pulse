@@ -56,6 +56,11 @@ final class Event {
     init(eventId: String) {
         self.eventId = eventId
     }
+
+    /// False after this row has been deleted from the store. Reading any
+    /// persisted property then traps in SwiftData; callers that walk
+    /// `Device.events` / `@Query` after Delete All must skip these.
+    var isStoreBacked: Bool { modelContext != nil }
     
     func update(with properties: EventProperties, device: Device? = nil) {
         // Always update these properties as they come from both problem.get and event.get

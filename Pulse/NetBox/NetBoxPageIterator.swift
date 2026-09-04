@@ -1,0 +1,101 @@
+//
+//  NetBoxPageIterator.swift
+//  Pulse
+//
+//  Copyright © 2025–present Omega Networks Limited.
+//
+//  Pulse
+//  The Platform for Unified Leadership in Smart Environments.
+//
+//  This program is distributed to enable communities to build and maintain their own
+//  digital sovereignty through local control of critical infrastructure data.
+//
+//  By open sourcing Pulse, we create a circular economy where contributors can both build
+//  upon and benefit from the platform, ensuring that value flows back to communities rather
+//  than being extracted by external entities. This aligns with our commitment to intergenerational
+//  prosperity through collaborative stewardship of public infrastructure.
+//
+//  This program is free software: communities can deploy it for sovereignty, academia can
+//  extend it for research, and industry can integrate it for resilience — all under the terms
+//  of the GNU Affero General Public License version 3 as published by the Free Software Foundation.
+//
+//  You should have received a copy of the GNU Affero General Public License
+//  along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
+
+import Foundation
+
+/// Iterative fetch-all over NetBox offset pages.
+///
+/// Lab-confirmed: default page is 50, `MAX_PAGE_SIZE` is 1000. We request
+/// 1000 and advance `offset` by the number of rows actually returned.
+/// A type's fetch is complete only when a page arrives with `next == nil`.
+/// Transport or unexpected-status errors propagate; the caller must not
+/// run the delete pass after a throw.
+enum NetBoxPageIterator {
+    static let pageLimit = 1000
+    /// Safety brake against a `next` that never clears. 100 pages at
+    /// `pageLimit` is 100_000 rows — well above today's boot set.
+    static let maxPages = 100
+    /// 1M devices × 50 interfaces = 50M rows / 1000 = 50_000 pages;
+    /// +20% slack. Lab (12K × ~20) is ~240 pages.
+    static let interfaceMaxPages = 60_000
+
+    /// GET every offset page through `NetBoxFetching` and the per-element
+    /// list decoder. Invokes `body` once per page and does not accumulate
+    /// rows. A throw leaves already-delivered pages with the caller.
+    static func streamDecoded<T: Decodable & Sendable>(
+        path: String,
+        extraQuery: [URLQueryItem] = [],
+        as type: T.Type,
+        using fetcher: any NetBoxFetching,
+        maxPages: Int = NetBoxPageIterator.maxPages,
+        body: @Sendable ([T], Int) async throws -> Void
+    ) async throws -> (skipped: Int, pages: Int) {
+        var skipped = 0
+        var offset = 0
+        var pages = 0
+        while true {
+            pages += 1
+            guard pages <= maxPages else { throw NetBoxSyncError.pageLimitExceeded }
+            var query = extraQuery
+            query.append(URLQueryItem(name: "limit", value: String(pageLimit)))
+            query.append(URLQueryItem(name: "offset", value: String(offset)))
+            let data = try await fetcher.get(path: path, query: query)
+            let page = try NetBoxListDecoder.decodePage(T.self, from: data)
+            skipped += page.skipped
+            try await body(page.results, page.skipped)
+            guard page.next != nil else { break }
+            guard !page.results.isEmpty else { throw NetBoxSyncError.emptyPageWithNext }
+            offset += page.results.count
+        }
+        return (skipped, pages)
+    }
+
+    /// Materialize every page. Fine for small types (roles, tenants, …).
+    /// Interfaces must use `streamDecoded` so the full list is never held.
+    static func fetchDecoded<T: Decodable & Sendable>(
+        path: String,
+        extraQuery: [URLQueryItem] = [],
+        as type: T.Type,
+        using fetcher: any NetBoxFetching,
+        maxPages: Int = NetBoxPageIterator.maxPages
+    ) async throws -> (rows: [T], skipped: Int) {
+        let collected = CollectedRows<T>()
+        let result = try await streamDecoded(
+            path: path,
+            extraQuery: extraQuery,
+            as: type,
+            using: fetcher,
+            maxPages: maxPages
+        ) { page, _ in
+            await collected.append(page)
+        }
+        return (await collected.rows, result.skipped)
+    }
+}
+
+private actor CollectedRows<Element: Sendable> {
+    private(set) var rows: [Element] = []
+    func append(_ page: [Element]) { rows.append(contentsOf: page) }
+}

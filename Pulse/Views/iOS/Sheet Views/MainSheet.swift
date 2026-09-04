@@ -50,6 +50,9 @@ import MapKit
  */
 struct MainSheet: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(EntitlementStore.self) private var entitlements
+    @Environment(LicenseSeatStore.self) private var seats
+    @Environment(RolePresentationStore.self) private var roles
     @Query private var sites: [Site]
     @Binding var searchText: String
     var selectedSiteGroups: Set<Int64>
@@ -92,6 +95,9 @@ struct MainSheet: View {
                 SearchBar(text: $searchText)
                     .padding(.top, 20) // Remove horizontal padding
 
+                ZabbixToolbarWarning()
+                    .padding(.top, 20)
+
                 //Settings icon for inputting NetBox, Zabbix API and URL
                 Image(systemName: "gear")
                     .font(.title)
@@ -115,6 +121,9 @@ struct MainSheet: View {
             .frame(minWidth: 400, idealWidth: 450, maxWidth: 500, maxHeight: .infinity)
             .sheet(isPresented: $showSettingsSheet) {
                 SettingsView()
+                    .environment(entitlements)
+                    .environment(seats)
+                    .environment(roles)
             }
         }
     }

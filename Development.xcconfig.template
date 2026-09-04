@@ -3,3 +3,10 @@ DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
 
 // Base bundle identifier for your app
 BUNDLE_IDENTIFIER = com.yourorg.pulse
+
+// Public site for in-app Privacy / Terms links. Leave empty to derive
+// from BUNDLE_IDENTIFIER (com.yourorg.pulse → yourorg.com/pulse/privacy).
+MARKETING_HOST =
+
+// For Xcode StoreKit testing, copy Pulse/Products.storekit.template to
+// Pulse/Products.storekit and prefix every productID with BUNDLE_IDENTIFIER.

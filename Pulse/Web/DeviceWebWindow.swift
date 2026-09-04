@@ -59,12 +59,16 @@ struct DeviceWebWindowTarget: Hashable, Codable {
 struct DeviceWebScene: Scene {
 
     let modelContainer: ModelContainer
+    var entitlements: EntitlementStore
+    var seats: LicenseSeatStore
+    var roles: RolePresentationStore
 
     @ViewBuilder
     private func sceneContent(for target: DeviceWebWindowTarget?) -> some View {
         if let target {
             DeviceWebView(deviceID: target.deviceID)
                 .modelContainer(modelContainer)
+                .pulseBilling(entitlements: entitlements, seats: seats, roles: roles)
         } else {
             // SwiftUI can instantiate the scene with a nil value during
             // restoration. Show a placeholder rather than crashing.

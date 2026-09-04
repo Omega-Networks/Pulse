@@ -25,211 +25,171 @@ import SwiftData
 import XCTest
 @testable import Pulse
 
-/// Locks down the NetBox Application Service decoder and the sync wiring gate.
-/// Most cases are hermetic decode checks against the real `/api/ipam/services/`
-/// payload shape; one integration case drives `getServices()` over an in-memory
-/// container to pin the device-parent versus VM-parent relationship wiring.
+/// Locks down NetBox service ingest and the device-parent vs VM-parent wiring gate.
 final class ServicePropertiesDecodingTests: XCTestCase {
 
-    // MARK: - Device-parented service (the canonical payload)
+    private func decode(_ json: Data) throws -> NetBoxRecord.Service {
+        try NetBoxListDecoder.makeDecoder().decode(NetBoxRecord.Service.self, from: json)
+    }
 
     func testDecodeDeviceParentedService() throws {
         let json = Data("""
         {
           "id": 7,
-          "url": "https://netbox.omega.net.nz/api/ipam/services/7/",
+          "url": "https://netbox.example.com/api/ipam/services/7/",
           "display": "SSH (TCP/22)",
           "parent_object_type": "dcim.device",
           "parent_object_id": 6023,
-          "parent": { "id": 6023, "name": "OMG-08-010-LP-PB01", "description": "Proxmox Backup Server" },
+          "parent": { "id": 6023, "name": "core-switch-01", "description": "Example switch" },
           "name": "SSH",
           "protocol": { "value": "tcp", "label": "TCP" },
           "ports": [22],
-          "ipaddresses": [ { "id": 2275, "address": "172.27.10.201/24", "family": { "value": 4, "label": "IPv4" } } ],
+          "ipaddresses": [ { "id": 2275, "address": "192.0.2.10/24", "family": { "value": 4, "label": "IPv4" } } ],
           "description": "Secure shell access"
         }
         """.utf8)
 
-        let service = try JSONDecoder().decode(ServiceProperties.self, from: json)
-
+        let service = try decode(json)
         XCTAssertEqual(service.id, 7)
         XCTAssertEqual(service.name, "SSH")
         XCTAssertEqual(service.display, "SSH (TCP/22)")
-        XCTAssertEqual(service.url, "https://netbox.omega.net.nz/api/ipam/services/7/")
+        XCTAssertEqual(service.url, "https://netbox.example.com/api/ipam/services/7/")
         XCTAssertEqual(service.serviceDescription, "Secure shell access")
-
-        // Nested protocol object.
         XCTAssertEqual(service.protocolValue, "tcp")
         XCTAssertEqual(service.protocolLabel, "TCP")
-
-        // Top-level ports array.
         XCTAssertEqual(service.ports, [22])
-
-        // ipaddresses[].address pulled out in CIDR form.
-        XCTAssertEqual(service.ipAddresses, ["172.27.10.201/24"])
-
-        // Flat parent fields plus the nested parent.name.
+        XCTAssertEqual(service.ipAddresses, ["192.0.2.10/24"])
         XCTAssertEqual(service.parentObjectType, "dcim.device")
-        XCTAssertEqual(service.parentObjectId, 6023)
-        XCTAssertEqual(service.parentName, "OMG-08-010-LP-PB01")
+        XCTAssertEqual(service.parentObjectID, 6023)
+        XCTAssertEqual(service.parentName, "core-switch-01")
 
-        // Model layer: the bare-IP helper strips CIDR like Device does.
         let model = Service(id: service.id)
         model.ipAddresses = service.ipAddresses
-        XCTAssertEqual(model.primaryIPAddress, "172.27.10.201")
+        XCTAssertEqual(model.primaryIPAddress, "192.0.2.10")
     }
-
-    // MARK: - VM-parented service is retained, not dropped
 
     func testDecodeVirtualMachineParentedServiceIsRetained() throws {
         let json = Data("""
         {
           "id": 91,
-          "url": "https://netbox.omega.net.nz/api/ipam/services/91/",
+          "url": "https://netbox.example.com/api/ipam/services/91/",
           "display": "HTTPS (TCP/443)",
           "parent_object_type": "virtualization.virtualmachine",
           "parent_object_id": 4410,
-          "parent": { "id": 4410, "name": "omg-vm-web01", "description": "Web frontend VM" },
+          "parent": { "id": 4410, "name": "web-frontend-01", "description": "Web frontend VM" },
           "name": "HTTPS",
           "protocol": { "value": "tcp", "label": "TCP" },
           "ports": [443, 8443],
-          "ipaddresses": [ { "id": 9001, "address": "10.8.0.50/24", "family": { "value": 4, "label": "IPv4" } } ],
+          "ipaddresses": [ { "id": 9001, "address": "198.51.100.20/24", "family": { "value": 4, "label": "IPv4" } } ],
           "description": "Web frontend"
         }
         """.utf8)
 
-        // Decoding must SUCCEED for a VM parent: retained, not dropped, no throw.
-        let service = try JSONDecoder().decode(ServiceProperties.self, from: json)
+        let service = try decode(json)
         XCTAssertEqual(service.id, 91)
         XCTAssertEqual(service.parentObjectType, "virtualization.virtualmachine")
-        XCTAssertEqual(service.parentObjectId, 4410)
-        XCTAssertEqual(service.parentName, "omg-vm-web01")
+        XCTAssertEqual(service.parentObjectID, 4410)
+        XCTAssertEqual(service.parentName, "web-frontend-01")
         XCTAssertEqual(service.ports, [443, 8443])
 
-        // Model layer: a VM-parented service maps onto the model with all its
-        // data and a nil device relationship. processServiceBatch wires `device`
-        // only for "dcim.device" parents, so a VM-parented row is retained with
-        // device == nil rather than dropped.
         let model = Service(id: service.id)
         model.name = service.name
         model.ports = service.ports
         model.ipAddresses = service.ipAddresses
         model.parentObjectType = service.parentObjectType
-        model.parentObjectId = service.parentObjectId
+        model.parentObjectId = service.parentObjectID
         model.parentName = service.parentName
-        // No device wired because parentObjectType != "dcim.device".
         XCTAssertNil(model.device)
-        XCTAssertEqual(model.parentName, "omg-vm-web01")
-        XCTAssertEqual(model.primaryIPAddress, "10.8.0.50")
+        XCTAssertEqual(model.parentName, "web-frontend-01")
+        XCTAssertEqual(model.primaryIPAddress, "198.51.100.20")
     }
 
-    // MARK: - Array decode via the production Wrapper
-
-    func testDecodeServicesThroughWrapper() throws {
+    func testDecodeServicesThroughListDecoder() throws {
         let json = Data("""
         { "count": 1, "next": null, "previous": null, "results": [
           { "id": 7, "url": "u", "display": "SSH (TCP/22)",
             "parent_object_type": "dcim.device", "parent_object_id": 6023,
-            "parent": { "id": 6023, "name": "OMG-08-010-LP-PB01" },
+            "parent": { "id": 6023, "name": "core-switch-01" },
             "name": "SSH", "protocol": { "value": "tcp", "label": "TCP" },
             "ports": [22],
-            "ipaddresses": [ { "id": 2275, "address": "172.27.10.201/24" } ],
+            "ipaddresses": [ { "id": 2275, "address": "192.0.2.10/24" } ],
             "description": "Secure shell access" }
         ] }
         """.utf8)
 
-        let wrapper = try JSONDecoder().decode(Wrapper<ServiceProperties>.self, from: json)
-        XCTAssertEqual(wrapper.results.count, 1)
-        XCTAssertEqual(wrapper.results.first?.ports, [22])
-        XCTAssertEqual(wrapper.results.first?.ipAddresses, ["172.27.10.201/24"])
-        XCTAssertNil(wrapper.next)
+        let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Service.self, from: json)
+        XCTAssertEqual(page.results.count, 1)
+        XCTAssertEqual(page.results.first?.ports, [22])
+        XCTAssertEqual(page.results.first?.ipAddresses, ["192.0.2.10/24"])
+        XCTAssertNil(page.next)
     }
 
-    // MARK: - Missing required fields are skipped (guard/throw)
-
     func testServiceWithoutParentIsRejected() {
-        // No parent_object_type / parent_object_id: a service that cannot be
-        // wired or surfaced. The decoder throws SwiftDataError.missingData,
-        // mirroring DeviceRoleProperties.
         let json = Data("""
         { "id": 5, "name": "orphan", "protocol": { "value": "tcp", "label": "TCP" }, "ports": [1] }
         """.utf8)
-
-        XCTAssertThrowsError(try JSONDecoder().decode(ServiceProperties.self, from: json)) { error in
-            guard let swiftDataError = error as? Pulse.SwiftDataError,
-                  case .missingData = swiftDataError else {
-                return XCTFail("Expected SwiftDataError.missingData, got \(error)")
-            }
-        }
+        XCTAssertThrowsError(try decode(json))
     }
-
-    // MARK: - Malformed ipaddresses element is skipped, good ones retained
 
     func testMalformedIPAddressElementIsSkippedAndGoodRetained() throws {
         let json = Data("""
         {
           "id": 12, "url": "u", "display": "HTTPS (TCP/443)",
           "parent_object_type": "dcim.device", "parent_object_id": 6023,
-          "parent": { "id": 6023, "name": "OMG-08-010-LP-PB01" },
+          "parent": { "id": 6023, "name": "core-switch-01" },
           "name": "HTTPS", "protocol": { "value": "tcp", "label": "TCP" },
           "ports": [443],
           "ipaddresses": [
-            { "id": 1, "address": "172.27.10.201/24" },
+            { "id": 1, "address": "192.0.2.10/24" },
             "this-element-is-malformed",
-            { "id": 2, "address": "10.8.0.50/24" }
+            { "id": 2, "address": "198.51.100.20/24" }
           ],
           "description": ""
         }
         """.utf8)
-        let service = try JSONDecoder().decode(ServiceProperties.self, from: json)
-        // The malformed middle element is skipped; both good elements survive.
-        XCTAssertEqual(service.ipAddresses, ["172.27.10.201/24", "10.8.0.50/24"])
+        let service = try decode(json)
+        XCTAssertEqual(service.ipAddresses, ["192.0.2.10/24", "198.51.100.20/24"])
     }
 
-    // MARK: - processServiceBatch wires device parents and retains VM parents
-
     func testGetServicesWiresDeviceParentAndRetainsVMParent() async throws {
-        // Full app schema so Device's relationship graph resolves in-memory.
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Service.self, WebHostTrust.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [config])
 
-        // Seed the device the dcim.device-parented service points at.
         let seed = ModelContext(container)
         seed.insert(Device(id: 6023))
         try seed.save()
 
-        let deviceParented = try JSONDecoder().decode(ServiceProperties.self, from: Data("""
-        { "id": 7, "url": "u", "display": "HTTPS (TCP/8006)",
-          "parent_object_type": "dcim.device", "parent_object_id": 6023,
-          "parent": { "id": 6023, "name": "PVE" },
-          "name": "HTTPS", "protocol": { "value": "tcp", "label": "TCP" },
-          "ports": [8006], "ipaddresses": [ { "id": 1, "address": "10.0.0.1/24" } ], "description": "" }
-        """.utf8))
-        let vmParented = try JSONDecoder().decode(ServiceProperties.self, from: Data("""
-        { "id": 91, "url": "u", "display": "HTTPS (TCP/443)",
-          "parent_object_type": "virtualization.virtualmachine", "parent_object_id": 4410,
-          "parent": { "id": 4410, "name": "vm" },
-          "name": "HTTPS", "protocol": { "value": "tcp", "label": "TCP" },
-          "ports": [443], "ipaddresses": [ { "id": 2, "address": "10.0.0.2/24" } ], "description": "" }
-        """.utf8))
+        _ = try NetBoxStore.applyServices(
+            [
+                NetBoxRecord.Service(
+                    id: 7, name: "HTTPS", display: "HTTPS (TCP/8006)", url: "u",
+                    serviceDescription: "", protocolValue: "tcp", protocolLabel: "TCP",
+                    ports: [8006], ipAddresses: ["10.0.0.1/24"],
+                    parentObjectType: "dcim.device", parentObjectID: 6023, parentName: "PVE"
+                ),
+                NetBoxRecord.Service(
+                    id: 91, name: "HTTPS", display: "HTTPS (TCP/443)", url: "u",
+                    serviceDescription: "", protocolValue: "tcp", protocolLabel: "TCP",
+                    ports: [443], ipAddresses: ["10.0.0.2/24"],
+                    parentObjectType: "virtualization.virtualmachine",
+                    parentObjectID: 4410, parentName: "vm"
+                )
+            ],
+            fetchComplete: true,
+            skipped: 0,
+            in: ModelContext(container)
+        )
 
-        let actor = ProviderModelActor(modelContainer: container)
-        try await actor.getServices(serviceProperties: [deviceParented, vmParented])
-
-        let fetch = ModelContext(container)
-        let services = try fetch.fetch(FetchDescriptor<Service>())
+        let services = try ModelContext(container).fetch(FetchDescriptor<Service>())
         XCTAssertEqual(services.count, 2)
-        let deviceService = try XCTUnwrap(services.first { $0.id == 7 })
-        let vmService = try XCTUnwrap(services.first { $0.id == 91 })
-        // The wiring gate: a dcim.device parent gets the Device relationship...
-        XCTAssertEqual(deviceService.device?.id, 6023)
-        // ...a virtualization.virtualmachine parent is retained with device == nil.
-        XCTAssertNil(vmService.device)
+        XCTAssertEqual(services.first { $0.id == 7 }?.device?.id, 6023)
+        XCTAssertNil(services.first { $0.id == 91 }?.device)
     }
 }

@@ -50,18 +50,26 @@ extension ContentView {
         
         if #available(macOS 26.0, *) {
             ToolbarItem(placement: .status) {
-                Image(systemName: "swiftdata")
-                    .font(.system(size: 22))
-                    .foregroundColor(getSymbolColor(for: syncProvider.first?.lastZabbixUpdate))
+                HStack(spacing: 8) {
+                    ZabbixToolbarWarning()
+                    NetBoxSyncIndicator()
+                    Image(systemName: "swiftdata")
+                        .font(.system(size: 22))
+                        .foregroundColor(getSymbolColor(for: syncProvider.first?.lastZabbixUpdate))
+                }
             }
             .sharedBackgroundVisibility(.hidden)
             
             ToolbarSpacer()
         } else {
             ToolbarItem(placement: .status) {
-                Image(systemName: "swiftdata")
-                    .font(.system(size: 22))
-                    .foregroundColor(getSymbolColor(for: syncProvider.first?.lastZabbixUpdate))
+                HStack(spacing: 8) {
+                    ZabbixToolbarWarning()
+                    NetBoxSyncIndicator()
+                    Image(systemName: "swiftdata")
+                        .font(.system(size: 22))
+                        .foregroundColor(getSymbolColor(for: syncProvider.first?.lastZabbixUpdate))
+                }
             }
         }
         
@@ -78,6 +86,13 @@ extension ContentView {
         }
             
         ToolbarItem() {
+            AddButton {
+                openWindow(id: "new-site")
+            }
+            .help("New site in NetBox. Tap the map first to pin coordinates.")
+        }
+
+        ToolbarItem() {
             MapStyleButton(openMapStyles: $openMapStyles, mapStyle: $mapStyle)
         }
 
@@ -86,18 +101,19 @@ extension ContentView {
         }
 
 
-        ToolbarItem() {
-            // PowerSense overlay toggle
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    showPowerSenseOverlay.toggle()
+        if powerSenseReady {
+            ToolbarItem() {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showPowerSenseOverlay.toggle()
+                    }
+                }) {
+                    Image(systemName: showPowerSenseOverlay ? "bolt.fill" : "bolt")
+                        .foregroundStyle(showPowerSenseOverlay ? .blue : .gray)
+                        .scaleEffect(showPowerSenseOverlay ? 1.1 : 1.0)
                 }
-            }) {
-                Image(systemName: showPowerSenseOverlay ? "bolt.fill" : "bolt")
-                    .foregroundStyle(showPowerSenseOverlay ? .blue : .gray)
-                    .scaleEffect(showPowerSenseOverlay ? 1.1 : 1.0)
+                .help(showPowerSenseOverlay ? "Hide PowerSense Heat Map" : "Show PowerSense Heat Map")
             }
-            .help(showPowerSenseOverlay ? "Hide PowerSense Heat Map" : "Show PowerSense Heat Map")
         }
 
     }

@@ -88,6 +88,9 @@ struct SiteWindowTarget: Hashable, Codable {
 struct SSHTerminalScene: Scene {
 
     let modelContainer: ModelContainer
+    var entitlements: EntitlementStore
+    var seats: LicenseSeatStore
+    var roles: RolePresentationStore
 
     /// Scene-body content closure, factored out so the `#if os(macOS)`
     /// branches below stay focused on the modifier chain and the body
@@ -97,6 +100,7 @@ struct SSHTerminalScene: Scene {
         if let target {
             SSHTerminalView(connection: .device(target.deviceID))
                 .modelContainer(modelContainer)
+                .pulseBilling(entitlements: entitlements, seats: seats, roles: roles)
         } else {
             // SwiftUI can instantiate the scene with a nil value
             // during restoration. Show an empty placeholder rather

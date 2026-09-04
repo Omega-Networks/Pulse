@@ -1,7 +1,6 @@
 <div align="center">
   <img src="docs/media/pulse_logo.png" width="370" alt="Pulse logo" />
   <p><strong>The Platform for Unified Leadership in Smart Environments</strong></p>
-  <a href="https://github.com/omega-networks/pulse/releases"><img src="https://img.shields.io/github/v/release/omega-networks/pulse" alt="Latest release" /></a>
   <a href="https://github.com/omega-networks/pulse/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL_3.0-blue.svg" alt="License" /></a>
   <a href="https://github.com/omega-networks/pulse/graphs/contributors"><img src="https://img.shields.io/github/contributors/omega-networks/pulse?color=blue" alt="Contributors" /></a>
   <a href="https://github.com/omega-networks/pulse/stargazers"><img src="https://img.shields.io/github/stars/omega-networks/pulse?style=flat" alt="GitHub stars" /></a>
@@ -51,7 +50,7 @@ Connect to network devices over SSH without leaving Pulse. Credentials are backe
 
 ## Capabilities
 
-- ✅ NetBox integration for infrastructure visualization
+- ✅ NetBox integration for infrastructure visualization, incremental sync, and writes back to NetBox
 - ✅ Zabbix monitoring with real-time status updates
 - ✅ Historical data analysis and pattern recognition
 - ✅ 2D/3D topology visualization
@@ -420,16 +419,20 @@ Once Pulse is running:
 2. **Add devices** - Connect your infrastructure devices through NetBox
 3. **Configure monitoring & alerting** - Assign templates to your devices for monitoring data and notifications for events in Zabbix
 
-More detailed instructions to be developed in our [Wiki](https://github.com/omega-networks/pulse/wiki).
+Day-to-day use is in the [User guide](docs/user-guide.md).
 
 ---
 
 ## Documentation
 
-- **[User Guide](docs/user-guide.md)**: day-to-day operation, including setup, navigation, monitoring, and connecting to devices over SSH.
-- **[SSH credentials guide](docs/credentials.md)**: the Secure Enclave and portable credential model, host trust, and session recording.
-- **[Architecture (ADR 0001)](docs/architecture/0001-ssh-terminal-and-web-foundations.md)**: the SSH terminal and web foundations design.
-- **[Architecture diagram](docs/media/pulse_architecture_diagram.md)**: high-level data flow.
+- [User guide](docs/user-guide.md): day-to-day use, NetBox sync, racks, seats, and SSH.
+- [SSH credentials](docs/credentials.md): Secure Enclave keys, host trust, and session recording.
+- [Web companion](docs/web-companion.md): in-app device web UI and TLS trust.
+- [NetBox sync](docs/netbox-sync.md): how Pulse mirrors NetBox and writes back.
+- [SSH and web foundations](docs/architecture/0001-ssh-terminal-and-web-foundations.md): credential, trust, and session-recording model.
+- [Billing and distribution](docs/architecture/0002-billing-and-distribution.md): App Store seats and subscription caps.
+- [NetBox OpenAPI sync](docs/architecture/0003-netbox-openapi-sync.md): how the local twin is built from NetBox.
+- [Architecture diagram](docs/media/pulse_architecture_diagram.md): high-level data flow.
 
 ## Contributing
 

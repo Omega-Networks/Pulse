@@ -86,6 +86,7 @@ struct DebugSSHWindow: View {
     @State private var username: String = NSUserName()
     @State private var selectedCredentialID: UUID?
     @State private var activeTarget: SSHTerminalView.Connection?
+    @State private var seats = LicenseSeatStore()
 
     @State private var output: String = ""
     @State private var replayStatus: String = ""
@@ -282,6 +283,7 @@ struct DebugSSHWindow: View {
             .padding(.vertical, 8)
             Divider()
             SSHTerminalView(connection: target)
+                .environment(seats)
         }
     }
 

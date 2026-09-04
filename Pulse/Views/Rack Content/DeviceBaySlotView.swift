@@ -67,11 +67,11 @@ struct DeviceBaySlotView: View {
     }
     
     private func loadInstalledDevice() async {
-        guard let deviceId = bay.deviceId else {
+        guard let deviceId = bay.installedDeviceId else {
             isLoading = false
             return
         }
-        
+
         let descriptor = FetchDescriptor<Device>(
             predicate: #Predicate<Device> { device in
                 device.id == deviceId

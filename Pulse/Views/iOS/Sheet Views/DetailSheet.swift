@@ -45,23 +45,24 @@ struct DetailSheet: View {
     @Environment(\.dismiss) var dismiss
     @Environment(\.modelContext) private var modelContext
     @State private var showSiteGraph: Bool = false
-    @Binding var selectedSite: Site?
+    let site: Site
     @State private var selectedTab = 0
+    @State private var rackEdit = RackEditSession()
     
     var body: some View {
         VStack {
             //Site name, site group name
             HStack {
                 VStack(alignment: .leading) {
-                    Text(selectedSite?.name ?? "Unknown")
+                    Text(site.name)
                         .font(.title)
                         .fontWeight(.bold)
-                        .fixedSize(horizontal: false, vertical: true) // Allow the name to wrap.
+                        .fixedSize(horizontal: false, vertical: true)
                     
-                    Text(selectedSite?.group?.name ?? "No Group")
+                    Text(site.group?.name ?? "No Group")
                         .font(.caption)
                 }
-                Spacer() // Pushes content to the left and button to the right.
+                Spacer()
                 Button(action: {
                     dismiss()
                 }) {
@@ -80,8 +81,7 @@ struct DetailSheet: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .fullScreenCover(isPresented: $showSiteGraph) { //MARK: Full screen cover showing the site topology
-                    if let site = selectedSite {
-                        NavigationStack {
+                    NavigationStack {
                             TabView(selection: $selectedTab) {
                                 // Topology View Tab
                                 SiteGraphView(
@@ -108,12 +108,12 @@ struct DetailSheet: View {
                             .toolbar {
                                 ToolbarItemGroup(placement: .principal) {
                                     VStack(alignment: .center) {
-                                        Text(selectedSite?.name ?? "No Site Name")
+                                        Text(site.name)
                                             .font(.headline)
                                             .fontWeight(.bold)
                                             .fixedSize(horizontal: false, vertical: true)
                                         
-                                        Text(selectedSite?.group?.name ?? "No Group")
+                                        Text(site.group?.name ?? "No Group")
                                             .font(.caption)
                                     }
                                 }
@@ -131,46 +131,32 @@ struct DetailSheet: View {
                                 }
                             }
                             .toolbarBackground(.hidden, for: .navigationBar)
-                        }
                     }
                 }
-                #if os(macOS)
-                Section (header: Text("Events")) {
-                    if let site = selectedSite {
-                        ProblemTable(site: site)
-                            .frame(height: 400)
-                    }
-                }
-                #endif
                 
-                //Add address, GPS coordinates
                 Section (header: Text("Details")) {
-                    let site = selectedSite ?? nil
-                    
                     VStack (alignment: .leading) {
-                        //TODO: Add NetBox data
                         Text("Address")
                             .font(.headline)
-                        Text(site?.physicalAddress ?? "Unknown")
+                        Text(site.physicalAddress ?? "No address")
                             .font(.caption)
                         
                         Divider()
                         
                         Text("Devices")
                             .font(.headline)
-                        Text("\(site?.devices?.count ?? 0)")
+                        Text("\(site.devices?.count ?? 0)")
                             .font(.caption)
                     }
                 }
                 
             }
         }
+        .environment(rackEdit)
         .task {
-            guard let siteId = selectedSite?.id else { return }
-            
             do {
                 let service = SiteDataService(modelContainer: modelContext.container)
-                try await service.loadAllSiteData(for: siteId)
+                try await service.loadAllSiteData(for: site.id)
             } catch {
                 print("Error loading site data: \(error)")
             }

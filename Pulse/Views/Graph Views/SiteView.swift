@@ -33,6 +33,10 @@ struct SiteView: View {
     //MARK: All properties for SiteView
     @Environment(\.openWindow) var openWindow
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Environment(RolePresentationStore.self) private var rolePresentation
+    @Environment(LicenseSeatStore.self) private var seats
+    @Environment(EntitlementStore.self) private var entitlements
     
     // Query for the site and its devices
     @SceneStorage("selected-site-id") var storedSiteId: String = ""
@@ -60,9 +64,8 @@ struct SiteView: View {
     @State private var contentWidth: CGFloat = 220 // Default width for left hand pane
     
     //Properties for showing the sheet for configuring Devices
-    @State private var showingConfigureDeviceSheet = false
-    @State private var newDeviceRole: Int64 = 0
-    @State private var newDeviceLocation: CGPoint?
+    @State private var showingNewDeviceSheet = false
+    @State private var rackEdit = RackEditSession()
     
     //Properties to alter the laout
     @State var isHorizontalLayout: Bool = true
@@ -85,7 +88,7 @@ struct SiteView: View {
                     VStack(alignment: .leading) {
                         ScrollView(.vertical) {
                             LazyVStack(alignment: .leading) {
-                                ForEach(sites.first?.devices?.sorted { device1, device2 in
+                                ForEach(sites.first?.devices?.filter { !rolePresentation.policy(for: $0.deviceRole?.id).hideFromDeviceList }.sorted { device1, device2 in
                                     if device1.highestSeverity != device2.highestSeverity {
                                         return device1.highestSeverity > device2.highestSeverity
                                     }
@@ -123,17 +126,21 @@ struct SiteView: View {
                                     isInPopover: false,
                                     labelsEnabled: $labelsEnabled,
                                     saveCoordinates: $saveCoordinates,
-                                    isHorizontalLayout: $isHorizontalLayout,
-                                    showingConfigureDeviceSheet: $showingConfigureDeviceSheet,
-                                    newDeviceRole: $newDeviceRole,
-                                    newDeviceLocation: $newDeviceLocation
+                                    isHorizontalLayout: $isHorizontalLayout
                                 )
                                 .frame(width: 5000, height: 5000)
+                                .dropDestination(for: String.self) { items, _ in
+                                    RackEditActions.unrack(
+                                        items: items,
+                                        site: site,
+                                        session: rackEdit,
+                                        seats: seats,
+                                        presentation: rolePresentation.presentation
+                                    )
+                                }
                             }
                         }
-
                     } else {
-                        // Handle the case where site is nil
                         EmptyView()
                     }
                 }
@@ -142,7 +149,11 @@ struct SiteView: View {
                 //MARK: Right
                 if showRight {
                     if let site = sites.first {
-                        DeviceDetailsPanelView(site: site, selectedDevice: $selectedDevice)
+                        DeviceDetailsPanelView(
+                            site: site,
+                            selectedDevice: $selectedDevice,
+                            enableGestures: $enableGestures
+                        )
                     }
                 }
             }
@@ -161,8 +172,14 @@ struct SiteView: View {
         .toolbar(content: toolbarContent)
         .navigationTitle(sites.first?.name ?? "Unknown")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(rackEdit)
+        .task(id: rackEdit.draggingDeviceID) {
+            await RackEditActions.clearHoverWhenMouseReleased(session: rackEdit)
+        }
         .onChange(of: selectedDevice) {
-            showRight = selectedDevice != nil
+            if selectedDevice != nil {
+                showRight = true
+            }
         }
         .task {
             do {
@@ -171,6 +188,17 @@ struct SiteView: View {
             } catch {
                 print("Error loading site data: \(error)")
             }
+        }
+        .sheet(isPresented: $showingNewDeviceSheet) {
+            NewDeviceSheet(
+                siteId: siteId,
+                defaultTenantID: sites.first?.tenant?.id,
+                onDismiss: { showingNewDeviceSheet = false }
+            )
+                .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                .environment(entitlements)
+                .environment(seats)
+                .environment(rolePresentation)
         }
     }
 }
@@ -201,8 +229,25 @@ extension SiteView {
             
             Spacer()
         }
+        .sharedBackgroundVisibility(.hidden)
         
+        ToolbarItem(placement: .status) {
+            ZabbixToolbarWarning()
+        }
+        .sharedBackgroundVisibility(.hidden)
+
         ToolbarItemGroup (placement: .primaryAction) {
+            Button {
+                showingNewDeviceSheet = true
+            } label: {
+                Image(systemName: "plus")
+                    .fontWeight(.medium)
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            .help("New device in NetBox")
+            .padding(.all, 5.0)
+
             Button {
                 withAnimation {
                     DispatchQueue.main.async {
@@ -301,7 +346,9 @@ extension SiteView {
             .buttonStyle(.plain)
             .padding(.all, 5.0)
         }
+        .sharedBackgroundVisibility(.hidden)
     }
+
 }
 
 #endif

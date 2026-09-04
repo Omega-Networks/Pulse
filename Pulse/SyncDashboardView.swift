@@ -41,7 +41,9 @@ struct SyncDashboardView: View {
     // MARK: - Environment & State Properties
     
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
     @Query var syncProvider: [SyncProvider]
+    @State private var objectCounts = SyncObjectCounts()
     
     // MARK: - UI State
     
@@ -49,18 +51,6 @@ struct SyncDashboardView: View {
     @State var eventMonitoringTimer: Timer?
     @State var openDeleteButtons = false
     @State var openFetchButtons = false
-    
-    // MARK: - Object Counts
-    
-    @State private var deviceRolesCount: Int = 0
-    @State private var deviceTypesCount: Int = 0
-    @State private var tenantsCount: Int = 0
-    @State private var regionsCount: Int = 0
-    @State private var siteGroupsCount: Int = 0
-    @State private var sitesCount: Int = 0
-    @State private var racksCount: Int = 0
-    @State private var devicesCount: Int = 0
-    @State private var syncProviderCount: Int = 0
     
     // MARK: - API Configuration
     
@@ -84,21 +74,22 @@ struct SyncDashboardView: View {
         VStack {
             //MARK: - Main view body, containing model object counts
             HStack{
+                #if os(macOS)
                 Text("").frame(width: 150)
                 Spacer()
+                #endif
                 VStack {
                     Text("Object Counts")
                         .font(.title3)
                         .fontWeight(.bold)
                 }
                 Spacer()
-                //MARK: Primary action buttons
                 VStack {
                     HStack {
                         Text("Sync Provider")
                             .font(.title3)
                             .fontWeight(.bold)
-                        switch syncProviderCount {
+                        switch syncProvider.count {
                         case 0: Image(systemName: "multiply.square.fill")
                                 .foregroundStyle(Color.red)
                         case 1: Image(systemName: "checkmark.square.fill")
@@ -109,19 +100,32 @@ struct SyncDashboardView: View {
                         }
                     }
                 }
+                #if os(macOS)
                 .frame(width: 150)
+                #endif
             }
             .padding(4)
             
             Form {
-                LabeledContent("Device Roles:", value: String(deviceRolesCount))
-                LabeledContent("Device Types:", value: String(deviceTypesCount))
-                LabeledContent("Tenants:", value: String(tenantsCount))
-                LabeledContent("Regions:", value: String(regionsCount))
-                LabeledContent("Site Groups:", value: String(siteGroupsCount))
-                LabeledContent("Sites:", value: String(sitesCount))
-                LabeledContent("Racks:", value: String(racksCount))
-                LabeledContent("Devices:", value: String(devicesCount))
+                LabeledContent("Device Roles:", value: String(objectCounts.deviceRoles))
+                LabeledContent("Device Types:", value: String(objectCounts.deviceTypes))
+                LabeledContent("Tenant Groups:", value: String(objectCounts.tenantGroups))
+                LabeledContent("Tenants:", value: String(objectCounts.tenants))
+                LabeledContent("Regions:", value: String(objectCounts.regions))
+                LabeledContent("Site Groups:", value: String(objectCounts.siteGroups))
+                LabeledContent("Sites:", value: String(objectCounts.sites))
+                LabeledContent("Locations:", value: String(objectCounts.locations))
+                LabeledContent("Rack Roles:", value: String(objectCounts.rackRoles))
+                LabeledContent("Racks:", value: String(objectCounts.racks))
+                LabeledContent("Devices:", value: String(objectCounts.devices))
+                LabeledContent("Interfaces:", value: String(objectCounts.interfaces))
+                LabeledContent("Cables:", value: String(objectCounts.cables))
+                LabeledContent("Device Bays:", value: String(objectCounts.deviceBays))
+                LabeledContent("Front Ports:", value: String(objectCounts.frontPorts))
+                if let provider = syncProvider.first {
+                    LabeledContent("Changelog watermark:", value: watermarkLabel(provider))
+                    LabeledContent("Last delta:", value: provider.lastDeltaSummary ?? "—")
+                }
             }
             .id(contextDidSaveDate)
             HStack {
@@ -154,14 +158,21 @@ struct SyncDashboardView: View {
                 
                 Spacer()
                 
-                /// Button for fetching data from NetBox
-                ///
-                Button(isMonitoringEnabled ? "Syncing" : "Sync Data") {
+                Button("Apply changes") {
+                    Task.detached(priority: .background) {
+                        await syncDelta()
+                    }
+                }
+                .disabled(isMonitoringEnabled)
+                .help("Pull NetBox changelog since the last watermark. Same path as boot.")
+                .padding(4)
+
+                Button(isMonitoringEnabled ? "Syncing" : "Full Resync") {
                     Task.detached(priority: .background) {
                         await syncData()
                     }
                 }
-                .frame(width: 100)
+                .frame(width: 120)
                 .buttonStyle(.borderedProminent)
                 .disabled(isMonitoringEnabled)
                 .padding(4)
@@ -169,8 +180,15 @@ struct SyncDashboardView: View {
         }
         
         .task {
-            await updateCounts()
+            refreshObjectCounts()
             await checkConfigurationNeeded()
+        }
+        .onReceive(NotificationCenter.default.managedObjectContextDidSavePublisher) { _ in
+            contextDidSaveDate = .now
+            refreshObjectCounts()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
+            refreshObjectCounts()
         }
         .alert(alertTitle, isPresented: $showAlert) {
             Button("OK") { showAlert = false }
@@ -179,46 +197,6 @@ struct SyncDashboardView: View {
         }
         .onChange(of: statusManager.currentStatus) { oldValue, newValue in
             handleStatusChange(newValue)
-        }
-    }
-    
-    /**
-     Updates the count of all managed object types in the local storage.
-     
-     This function fetches counts for:
-     - Device roles and types
-     - Tenants and regions
-     - Site groups and sites
-     - Racks and devices
-     - Sync providers
-     */
-    func updateCounts() async {
-        do {
-            deviceRolesCount = try await fetchCount(for: DeviceRole.self)
-            deviceTypesCount = try await fetchCount(for: DeviceType.self)
-            tenantsCount = try await fetchCount(for: Tenant.self)
-            regionsCount = try await fetchCount(for: Region.self)
-            siteGroupsCount = try await fetchCount(for: SiteGroup.self)
-            sitesCount = try await fetchCount(for: Site.self)
-            racksCount = try await fetchCount(for: Rack.self)
-            devicesCount = try await fetchCount(for: Device.self)
-            syncProviderCount = try await fetchCount(for: SyncProvider.self)
-        } catch {
-            print("Error: \(error)")
-        }
-    }
-    
-    /**
-      Fetches the count of objects for a specific persistent model type.
-      
-      - Parameter type: The type of persistent model to count
-      - Returns: The number of objects of the specified type in storage
-      - Throws: Any errors encountered during the fetch operation
-      */
-    func fetchCount<T: PersistentModel>(for type: T.Type) async throws -> Int {
-        let descriptor = FetchDescriptor<T>()
-        return try await withModelContext { context in
-            try context.fetchCount(descriptor)
         }
     }
     
@@ -277,11 +255,6 @@ struct SyncDashboardView: View {
      - Returns: The result of the performed operation
      - Throws: Any errors encountered during the operation
      */
-    @MainActor
-    func withModelContext<T>(_ perform: @MainActor (ModelContext) throws -> T) async rethrows -> T {
-        try perform(modelContext)
-    }
-    
     /**
      Checks if API configuration is needed by verifying the existence of required API credentials.
      
@@ -316,10 +289,14 @@ struct SyncDashboardView: View {
         do {
             try modelContext.delete(model: type)
             print("\(type) data deleted successfully.")
-            Task { await updateCounts() }
+            refreshObjectCounts()
         } catch {
             print("Failed to delete all \(type).")
         }
+    }
+
+    private func refreshObjectCounts() {
+        objectCounts = (try? SyncObjectCounts.load(from: modelContext)) ?? SyncObjectCounts()
     }
     
     /**
@@ -333,30 +310,57 @@ struct SyncDashboardView: View {
      */
     func deleteAllDataAndUpdateCounts() {
         let modelsToDelete: [any PersistentModel.Type] = [
-            DeviceType.self,
-            DeviceRole.self,
-            Tenant.self,
-            Region.self,
-            SiteGroup.self,
-            Site.self,
+            Event.self,
+            Service.self,
+            Cable.self,
+            Interface.self,
+            DeviceBay.self,
+            FrontPort.self,
+            Device.self,
             Rack.self,
-            Device.self
+            SiteLocation.self,
+            RackRole.self,
+            Site.self,
+            SiteGroup.self,
+            Region.self,
+            Tenant.self,
+            TenantGroup.self,
+            DeviceType.self,
+            DeviceRole.self
         ]
-        
+
+        // Delete on a side context so the main-window @Query snapshots
+        // (map pins, EventCounter) merge a fresh fetch instead of holding
+        // rows this context just invalidated. Same-context delete(model:)
+        // after Event.rClock is what crashed Delete All.
+        let context = ModelContext(modelContext.container)
+        context.autosaveEnabled = false
         do {
             for model in modelsToDelete {
-                try modelContext.delete(model: model)
+                try context.delete(model: model)
                 print("\(model) data deleted successfully.")
             }
-            
-            Task {
-                await updateCounts()
+            try context.save()
+            let providers = try context.fetch(FetchDescriptor<SyncProvider>())
+            for provider in providers {
+                provider.resetWatermark()
             }
-            
+            try context.save()
             print("All data deleted successfully.")
+            refreshObjectCounts()
         } catch {
             print("Failed to delete all data: \(error)")
         }
+    }
+
+    private func watermarkLabel(_ provider: SyncProvider) -> String {
+        guard let id = provider.lastObjectChangeId else { return "none" }
+        if let time = provider.lastObjectChangeTime {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            return "#\(id) (\(formatter.localizedString(for: time, relativeTo: Date())))"
+        }
+        return "#\(id)"
     }
     
     
@@ -422,6 +426,8 @@ struct SyncDashboardView: View {
         case .unknownError(let message):
             alertTitle = "Error"
             alertMessage = "\(source.displayName): \(message)"
+        case .syncing:
+            return
         }
         
         showAlert = true
@@ -450,6 +456,50 @@ extension SyncDashboardView {
      - Note: This function runs on a background thread to avoid blocking the UI.
      - Note: Status updates are presented through alerts using `RequestStatusManager`.
      */
+    /// Changelog since the watermark. Boot uses the same path.
+    func syncDelta() async {
+        guard !isMonitoringEnabled else {
+            print("Sync already in progress, skipping...")
+            return
+        }
+        await MainActor.run {
+            RequestStatusManager.shared.resetStatus()
+            self.isMonitoringEnabled = true
+        }
+        defer {
+            Task { @MainActor in
+                self.isMonitoringEnabled = false
+            }
+        }
+        guard let engine = netBoxSyncEngine else {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .unknownError("NetBox sync engine is not available")
+                )
+            }
+            return
+        }
+        do {
+            try await engine.sync()
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .success(code: 200, message: "Changes applied")
+                )
+            }
+        } catch let error as NetBoxSyncError {
+            error.publish()
+        } catch {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .unknownError(error.localizedDescription)
+                )
+            }
+        }
+    }
+
     func syncData() async {
         guard !isMonitoringEnabled else {
             print("Sync already in progress, skipping...")
@@ -473,74 +523,72 @@ extension SyncDashboardView {
             }
         }
 
-        let container = modelContext.container
-
-        await Task.detached(priority: .background) {
-            let modelActor = ProviderModelActor(modelContainer: container)
-
-            do {
-                // Execute all operations sequentially
-                try await modelActor.getDeviceRoles()
-                try await modelActor.getDeviceTypes()
-                try await modelActor.getTenants()
-//                try await modelActor.getRegions()
-                try await modelActor.getSiteGroups()
-                try await modelActor.getSites()
-                try await modelActor.getRacks()
-                try await modelActor.getDevices()
-                try await modelActor.getServices()
-
-                // Only show success if all operations complete
-                await MainActor.run {
-                    RequestStatusManager.shared.updateStatus(.netbox, .success(code: 200, message: "All data synchronized successfully"))
-                }
-
-            } catch let error as NetboxRequestError {
-                print("NetBox error occurred: \(error)")
-                await MainActor.run {
-                    switch error {
-                    case .failure(let code, let message):
-                        RequestStatusManager.shared.updateStatus(.netbox, .dataError(code: code, message: message))
-                    case .networkError(let error):
-                        RequestStatusManager.shared.updateStatus(.netbox, .connectionError(error.localizedDescription))
-                    case .decodingError:
-                        RequestStatusManager.shared.updateStatus(.netbox, .dataError(code: 0, message: "Failed to decode response"))
-                    case .success:
-                        break // Should never happen in error case
-                    }
-                }
-                // Exit function on error
-                return
-
-            } catch {
-                print("Unknown error occurred: \(error)")
-                await MainActor.run {
-                    RequestStatusManager.shared.updateStatus(.netbox, .unknownError(error.localizedDescription))
-                }
-                // Exit function on error
-                return
+        guard let engine = netBoxSyncEngine else {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .unknownError("NetBox sync engine is not available")
+                )
             }
-        }.value
-
-        await updateCounts()
-    }
-
-    /**
-     A publisher that emits when the managed object context saves changes.
-     The publisher's events are delivered on the main dispatch queue.
-     */
-    @MainActor
-    private func handleNetboxError(_ error: NetboxRequestError, operation: String) async {
-        switch error {
-        case .failure(let code, let message):
-            RequestStatusManager.shared.updateStatus(.netbox, .dataError(code: code, message: "\(operation): \(message)"))
-        case .networkError(let error):
-            RequestStatusManager.shared.updateStatus(.netbox, .connectionError("\(operation): \(error.localizedDescription)"))
-        case .decodingError:
-            RequestStatusManager.shared.updateStatus(.netbox, .dataError(code: 0, message: "\(operation): Failed to decode response"))
-        case .success:
-            break
+            return
         }
+
+        do {
+            try await engine.fullSync()
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .success(code: 200, message: "All data synchronized successfully")
+                )
+            }
+        } catch let error as NetBoxSyncError {
+            error.publish()
+        } catch {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .netbox,
+                    .unknownError(error.localizedDescription)
+                )
+            }
+        }
+    }
+}
+
+private struct SyncObjectCounts {
+    var tenantGroups = 0
+    var tenants = 0
+    var deviceRoles = 0
+    var deviceTypes = 0
+    var regions = 0
+    var siteGroups = 0
+    var sites = 0
+    var locations = 0
+    var rackRoles = 0
+    var racks = 0
+    var devices = 0
+    var interfaces = 0
+    var cables = 0
+    var deviceBays = 0
+    var frontPorts = 0
+
+    static func load(from context: ModelContext) throws -> SyncObjectCounts {
+        SyncObjectCounts(
+            tenantGroups: try context.fetchCount(FetchDescriptor<TenantGroup>()),
+            tenants: try context.fetchCount(FetchDescriptor<Tenant>()),
+            deviceRoles: try context.fetchCount(FetchDescriptor<DeviceRole>()),
+            deviceTypes: try context.fetchCount(FetchDescriptor<DeviceType>()),
+            regions: try context.fetchCount(FetchDescriptor<Region>()),
+            siteGroups: try context.fetchCount(FetchDescriptor<SiteGroup>()),
+            sites: try context.fetchCount(FetchDescriptor<Site>()),
+            locations: try context.fetchCount(FetchDescriptor<SiteLocation>()),
+            rackRoles: try context.fetchCount(FetchDescriptor<RackRole>()),
+            racks: try context.fetchCount(FetchDescriptor<Rack>()),
+            devices: try context.fetchCount(FetchDescriptor<Device>()),
+            interfaces: try context.fetchCount(FetchDescriptor<Interface>()),
+            cables: try context.fetchCount(FetchDescriptor<Cable>()),
+            deviceBays: try context.fetchCount(FetchDescriptor<DeviceBay>()),
+            frontPorts: try context.fetchCount(FetchDescriptor<FrontPort>())
+        )
     }
 }
 

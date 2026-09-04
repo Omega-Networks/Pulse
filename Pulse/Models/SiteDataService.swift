@@ -37,165 +37,35 @@ enum SiteDataError: Error {
 
 actor SiteDataService {
     let modelContainer: ModelContainer
-    
+
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
-    
-    //MARK: - Loading Static Devices and Loading Bays
-    func getStaticDevices(for siteId: Int64) async throws {
-        
-        do {
-            let resource = StaticDeviceResource(siteId: siteId)
-            let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-            let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-            let request = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-            
-            let staticDeviceProperties = try await request.execute()
-            let devices = staticDeviceProperties.map { staticDeviceProperties in
-                var staticDevice = StaticDevice(id: staticDeviceProperties.id ?? 0)
-                staticDevice.name = staticDeviceProperties.name
-                staticDevice.display = staticDeviceProperties.display
-                staticDevice.created = staticDeviceProperties.created
-                staticDevice.lastUpdated = staticDeviceProperties.lastUpdated
-                staticDevice.rackPosition = staticDeviceProperties.rackPosition
-                staticDevice.rackId = staticDeviceProperties.rackId
-                staticDevice.rackName = staticDeviceProperties.rackName
-                staticDevice.frontPortCount = staticDeviceProperties.frontPortCount
-                staticDevice.rearPortCount = staticDeviceProperties.rearPortCount
-                staticDevice.frontPortCount = staticDeviceProperties.frontPortCount
-                staticDevice.deviceRole = staticDeviceProperties.deviceRoleName
-                staticDevice.deviceType = staticDeviceProperties.deviceTypeModel
-                staticDevice.site = staticDeviceProperties.siteName
-                
-                return staticDevice
-            }
-            
-            await StaticDeviceCache.shared.setStaticDevices(devices, forSiteId: siteId)
-            
-            // Load device bays for Shelf devices
-            for device in devices where device.deviceRole == "Shelf" {
-                Task {
-                    do {
-                        try await getDeviceBays(for: device.id)
-                    } catch {
-                        print("Error loading device bays for Shelf \(device.id): \(error)")
-                    }
-                }
-            }
-            
-        } catch {
-            print("Error fetching static devices: \(error)")
+
+    @MainActor
+    private static func dismissZabbixWarningIfNeeded() {
+        switch RequestStatusManager.shared.currentStatus[.zabbix] {
+        case .connectionError, .authenticationFailure, .dataError, .unknownError:
+            RequestStatusManager.shared.clear(.zabbix)
+        default:
+            break
         }
     }
-    
-    func getDeviceBays(for deviceId: Int64) async throws {
-        let resource = DeviceBayResource(deviceId: deviceId)
-        let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-        let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-        let request = APIRequest(resource: resource, apiKey: netboxApiToken, baseURL: netboxApiServer)
-        
-        let deviceBayProperties = try await request.execute()
-        
-        let deviceBays = deviceBayProperties.map { properties in
-            var deviceBay = DeviceBay(id: properties.id ?? 0)
-            deviceBay.id = properties.id ?? 0
-            deviceBay.name = properties.name
-            deviceBay.display = properties.display
-            deviceBay.created = properties.created
-            deviceBay.lastUpdated = properties.lastUpdated
-            deviceBay.deviceId = properties.installedDeviceId
-            deviceBay.deviceName = properties.installedDeviceName
-            deviceBay.staticDeviceId = properties.deviceId
-            
-            
-            deviceBay.staticDeviceName = properties.deviceName
-            
-            
-            return deviceBay
-        }
-        
-        await DeviceBayCache.shared.setDeviceBays(deviceBays, forDeviceId: deviceId)
-    }
-    
-    // Coordinator function that handles all loading
+
+    /// Zabbix items for this site. Racks, fillers, bays, interfaces, and
+    /// cables live in SwiftData from the boot / Settings full sync.
     func loadAllSiteData(for siteId: Int64) async throws {
-        try await getStaticDevices(for: siteId)
-        try await getInterfaces(for: siteId)
-        try await getItems(for: siteId)
-    }
-    
-    //     MARK: - Loading Interfaces and Items
-    
-    func getInterfaces(for siteId: Int64) async throws {
-        // Create local context
-        let localContext = ModelContext(modelContainer)
-        
-        // Create and execute fetch descriptor
-        let descriptor = FetchDescriptor<Device>(
-            predicate: #Predicate<Device> { device in
-                device.site?.id == siteId
+        do {
+            try await getItems(for: siteId)
+            await MainActor.run { Self.dismissZabbixWarningIfNeeded() }
+        } catch {
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(
+                    .zabbix,
+                    ZabbixError.status(from: error)
+                )
             }
-        )
-        
-        let devices = try localContext.fetch(descriptor)
-        
-        // Get API configuration
-        let netboxApiServer = await Configuration.shared.getNetboxApiServer()
-        let netboxApiToken = await Configuration.shared.getNetboxApiToken()
-        
-        // Create an array of device IDs which are sendable
-        let deviceIds = devices.map { $0.id }
-        
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for deviceId in deviceIds {
-                group.addTask { [deviceId] in
-                    let resource = InterfaceResource(deviceId: deviceId)
-                    let request = APIRequest(resource: resource,
-                                             apiKey: netboxApiToken,
-                                             baseURL: netboxApiServer)
-                    
-                    let interfaceProperties = try await request.execute()
-                    let interfaces = interfaceProperties.map { properties in
-                        var interface = Interface(id: properties.id)
-                        interface.created = properties.created
-                        interface.lastUpdated = properties.lastUpdated
-                        interface.name = properties.name
-                        interface.display = properties.display
-                        interface.url = properties.url
-                        interface.type = properties.type
-                        interface.label = properties.label
-                        interface.enabled = properties.enabled
-                        interface.mtu = properties.mtu
-                        interface.speed = properties.speed
-                        interface.interfaceDescription = properties.interfaceDescription
-                        interface.poeMode = properties.poeMode
-                        
-                        //Assigning properties used for relationships with Device, Connected Endpoint, Bridge, Lag and Parent
-                        interface.deviceId = properties.deviceId
-                        
-                        interface.connectedEndpointId = properties.connectedEndpointId
-                        interface.connectedEndpointName = properties.connectedEndpointName
-                        
-                        interface.lagId = properties.lagId
-                        interface.lagName = properties.lagName
-                        
-                        interface.bridgeId = properties.bridgeId
-                        interface.bridgeName = properties.bridgeName
-                        
-                        interface.parentId = properties.parentId
-                        interface.parentName = properties.parentName
-                        
-                        return interface
-                    }
-                    
-                    await InterfaceCache.shared.setInterfaces(interfaces,
-                                                              forDeviceId: deviceId
-                    )
-                }
-            }
-            
-            try await group.waitForAll()
+            throw error
         }
     }
     
@@ -208,7 +78,7 @@ actor SiteDataService {
     //        // Create and execute fetch descriptor
     //        let descriptor = FetchDescriptor<Device>(
     //            predicate: #Predicate<Device> { device in
-    //                device.site?.id == siteId && device.zabbixId != 0
+    //                device.siteId == siteId && device.zabbixId != 0
     //            }
     //        )
     //
@@ -266,12 +136,15 @@ actor SiteDataService {
         // Create and execute fetch descriptor
         let descriptor = FetchDescriptor<Device>(
             predicate: #Predicate<Device> { device in
-                device.site?.id == siteId && device.zabbixId != 0
+                device.siteId == siteId && device.zabbixId != 0
             }
         )
         
-        let devices = try localContext.fetch(descriptor)
-        
+        let presentation = RolePresentationStorage.load(from: .standard)
+        let devices = try localContext.fetch(descriptor).filter {
+            !presentation.policy(for: $0.deviceRole?.id).skipMonitoring
+        }
+
         // Extract device IDs
         let deviceZabbixIds = devices.map { $0.zabbixId }
         
@@ -357,7 +230,7 @@ actor SiteDataService {
                                                  userInfo: [NSLocalizedDescriptionKey: "All retries failed"])
                         }
                     }
-                    
+
                     // Collect all event IDs from successful batches
                     for try await batchEventIds in group {
                         currentEventIds.formUnion(batchEventIds)
@@ -374,6 +247,8 @@ actor SiteDataService {
                 )
                 try context.save()
                 logger.debug("Successfully cleaned up old events")
+                refreshSeverities(in: context)
+                try context.save()
             }
             
             // Update last sync time
@@ -388,9 +263,14 @@ actor SiteDataService {
             // Performance Testing
             let timeElapsed = Date().timeIntervalSince(startTime)
             print("Total time elapsed: \(timeElapsed) seconds")
-            
+            await MainActor.run { Self.dismissZabbixWarningIfNeeded() }
+
         } catch {
             logger.error("Failed to get problems: \(error.localizedDescription)")
+            let status = ZabbixError.status(from: error)
+            await MainActor.run {
+                RequestStatusManager.shared.updateStatus(.zabbix, status)
+            }
         }
     }
     
@@ -437,6 +317,7 @@ actor SiteDataService {
         let newEventIds = Set(eventIds).subtracting(existingEventsDict.keys)
         var insertCount = 0
         var insertedEventIds: [String] = []
+        var insertedEvents: [Event] = []
         
         for eventId in newEventIds {
             if let properties = propertiesDict[eventId] {
@@ -445,6 +326,7 @@ actor SiteDataService {
                 context.insert(event)
                 insertCount += 1
                 insertedEventIds.append(eventId)
+                insertedEvents.append(event)
             }
         }
         
@@ -453,6 +335,9 @@ actor SiteDataService {
         do {
             try context.save()
             logger.debug("Successfully saved context")
+            let touched = Array(existingEventsDict.values) + insertedEvents
+            refreshSeverities(in: context, events: touched)
+            try? context.save()
             
             // Map devices for newly inserted events
             if !insertedEventIds.isEmpty {
@@ -552,6 +437,7 @@ actor SiteDataService {
                 
                 // Process results and map to devices
                 let context = ModelContext(modelContainer)
+                var mappedEvents: [Event] = []
                 for try await batchResults in group {
                     for (hostId, events) in batchResults {
                         // Fetch device if not already in our devices array
@@ -579,17 +465,21 @@ actor SiteDataService {
                             
                             if let existing = try? context.fetch(descriptor).first {
                                 existing.update(with: eventProperty, device: device)
+                                mappedEvents.append(existing)
                                 logger.debug("Updated existing event: \(searchEventId)")
                             } else {
                                 let event = Event(eventId: searchEventId)
                                 event.update(with: eventProperty, device: device)
                                 context.insert(event)
+                                mappedEvents.append(event)
                                 logger.debug("Inserted new event: \(searchEventId)")
                             }
                         }
                     }
                     try context.save()
                 }
+                refreshSeverities(in: context, events: mappedEvents)
+                try? context.save()
             }
             
             logger.debug("Event sync completed successfully")
@@ -597,6 +487,59 @@ actor SiteDataService {
         } catch {
             logger.error("Failed to sync events: \(error.localizedDescription)")
         }
+    }
+
+    func refreshSeverities() {
+        let context = ModelContext(modelContainer)
+        refreshSeverities(in: context)
+        try? context.save()
+    }
+
+    /// Recompute stored pin colours. Pass the events that just changed so a
+    /// single acknowledge does not walk every device and site (that path was
+    /// ~8s at 12K devices). Full sync after stale-event delete still refreshes
+    /// the whole store so resolved problems clear.
+    private func refreshSeverities(in context: ModelContext, events: [Event]? = nil) {
+        if let events {
+            var seenDevice = Set<Int64>()
+            var seenSite = Set<Int64>()
+            for device in devicesTouched(by: events, in: context) {
+                guard seenDevice.insert(device.id).inserted else { continue }
+                device.refreshSeverityFromEvents()
+                if let site = device.site, seenSite.insert(site.id).inserted {
+                    site.refreshSeverityFromEvents()
+                }
+            }
+            return
+        }
+        let devices = (try? context.fetch(FetchDescriptor<Device>())) ?? []
+        for device in devices {
+            device.refreshSeverityFromEvents()
+        }
+        let sites = (try? context.fetch(FetchDescriptor<Site>())) ?? []
+        for site in sites {
+            site.refreshSeverityFromEvents()
+        }
+    }
+
+    private func devicesTouched(by events: [Event], in context: ModelContext) -> [Device] {
+        var devices: [Device] = []
+        var seen = Set<Int64>()
+        for event in events {
+            if let device = event.device, seen.insert(device.id).inserted {
+                devices.append(device)
+                continue
+            }
+            let hostId = event.hostId
+            guard hostId != 0 else { continue }
+            let descriptor = FetchDescriptor<Device>(
+                predicate: #Predicate<Device> { $0.zabbixId == hostId }
+            )
+            if let device = try? context.fetch(descriptor).first, seen.insert(device.id).inserted {
+                devices.append(device)
+            }
+        }
+        return devices
     }
 
     private func chunk<T>(array: [T], size: Int) -> [[T]] {

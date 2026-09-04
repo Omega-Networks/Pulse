@@ -1,0 +1,156 @@
+{
+  "identifier": "Pulse",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [
+    {
+      "id": "pulse.device-capacity",
+      "localizations": [
+        {
+          "description": "How many billable devices Pulse can act on.",
+          "displayName": "Device capacity",
+          "locale": "en_US"
+        }
+      ],
+      "name": "Device capacity",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "499.90",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "A0000001",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Act on every device that counts toward a seat.",
+              "displayName": "Unlimited",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.yourorg.pulse.unlimited.annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Unlimited Annual",
+          "subscriptionGroupID": "pulse.device-capacity",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "49.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "A0000002",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Act on every device that counts toward a seat.",
+              "displayName": "Unlimited",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.yourorg.pulse.unlimited.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Unlimited Monthly",
+          "subscriptionGroupID": "pulse.device-capacity",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "249.90",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "A0000003",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Act on up to 1,500 devices that count toward a seat.",
+              "displayName": "Pro",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.yourorg.pulse.pro.annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Pro Annual",
+          "subscriptionGroupID": "pulse.device-capacity",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "24.99",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "A0000004",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Act on up to 1,500 devices that count toward a seat.",
+              "displayName": "Pro",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.yourorg.pulse.pro.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Pro Monthly",
+          "subscriptionGroupID": "pulse.device-capacity",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "149.90",
+          "familyShareable": false,
+          "groupNumber": 3,
+          "internalID": "A0000005",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Act on up to 250 devices that count toward a seat.",
+              "displayName": "Growth",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.yourorg.pulse.growth.annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Growth Annual",
+          "subscriptionGroupID": "pulse.device-capacity",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "14.99",
+          "familyShareable": false,
+          "groupNumber": 3,
+          "internalID": "A0000006",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Act on up to 250 devices that count toward a seat.",
+              "displayName": "Growth",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.yourorg.pulse.growth.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Growth Monthly",
+          "subscriptionGroupID": "pulse.device-capacity",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

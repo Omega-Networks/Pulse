@@ -48,6 +48,7 @@ import SwiftData
         case connectionError(String)
         case dataError(code: Int, message: String)
         case unknownError(String)
+        case syncing(String)
     }
     
     @MainActor
@@ -63,5 +64,18 @@ import SwiftData
     @MainActor
     func resetStatus() {
         currentStatus.removeAll()
+    }
+
+    /// Drop a `.syncing` marker without touching a terminal status.
+    @MainActor
+    func clearSyncing(_ source: RequestSource) {
+        if case .syncing = currentStatus[source] {
+            currentStatus[source] = nil
+        }
+    }
+
+    @MainActor
+    func clear(_ source: RequestSource) {
+        currentStatus[source] = nil
     }
 }
