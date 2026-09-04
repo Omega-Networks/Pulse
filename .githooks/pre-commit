@@ -1,0 +1,31 @@
+#!/bin/sh
+# Block literal Apple Team IDs and the gitignored xcconfig from being committed.
+# Enable with: git config core.hooksPath .githooks
+#
+# Xcode Automatic signing rewrites project.pbxproj on Archive / Signing tab
+# with DEVELOPMENT_TEAM = <your 10-char Team ID>. That must stay in the
+# local Development.xcconfig only.
+
+set -e
+
+fail() {
+  echo "pre-commit: $1" >&2
+  echo "pre-commit: restore with: git checkout -- Pulse.xcodeproj/project.pbxproj" >&2
+  exit 1
+}
+
+if git diff --cached --name-only | grep -qx 'Development.xcconfig'; then
+  fail "Development.xcconfig is gitignored and must not be committed"
+fi
+
+# Staged pbxproj / plist / entitlements only.
+staged=$(git diff --cached --name-only -z -- '*.pbxproj' '*.plist' '*.entitlements' | tr '\0' '\n')
+[ -z "$staged" ] && exit 0
+
+# Apple Team IDs are 10-char A-Z0-9 (no lowercase).
+if git diff --cached -U0 -- '*.pbxproj' '*.plist' '*.entitlements' \
+  | grep -E '^\+' | grep -E 'DEVELOPMENT_TEAM = [A-Z0-9]{10}' >/dev/null; then
+  fail "literal DEVELOPMENT_TEAM (Team ID) in staged Xcode files; keep \$(DEVELOPMENT_TEAM) or omit the key"
+fi
+
+exit 0
