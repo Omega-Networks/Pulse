@@ -49,6 +49,7 @@ final class Configuration: @unchecked Sendable {
         static let zabbixApiServer = "zabbixApiServer"
         static let zabbixApiUser = "zabbixApiUser"
         static let zabbixApiToken = "zabbixApiToken"
+        static let zabbixAuthMode = "zabbixAuthMode"
         static let problemTimeWindow = "problemTimeWindow"
         static let hasCompletedInitialSetup = "hasCompletedInitialSetup"
 
@@ -199,6 +200,7 @@ final class Configuration: @unchecked Sendable {
         UserDefaults.standard.removeObject(forKey: Keys.netboxApiServer)
         UserDefaults.standard.removeObject(forKey: Keys.zabbixApiServer)
         UserDefaults.standard.removeObject(forKey: Keys.zabbixApiUser)
+        UserDefaults.standard.removeObject(forKey: Keys.zabbixAuthMode)
         UserDefaults.standard.removeObject(forKey: Keys.hasCompletedInitialSetup)
     }
     
@@ -272,6 +274,18 @@ final class Configuration: @unchecked Sendable {
         if status != errSecSuccess {
             print("Failed to save Zabbix API Token to Keychain: \(status)")
         }
+    }
+
+    func getZabbixAuthMode() -> ZabbixAuthMode {
+        guard let raw = UserDefaults.standard.string(forKey: Keys.zabbixAuthMode),
+              let mode = ZabbixAuthMode(rawValue: raw) else {
+            return .default
+        }
+        return mode
+    }
+
+    func setZabbixAuthMode(_ mode: ZabbixAuthMode) {
+        UserDefaults.standard.set(mode.rawValue, forKey: Keys.zabbixAuthMode)
     }
     
     // MARK: - Bulk Updates

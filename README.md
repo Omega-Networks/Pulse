@@ -326,9 +326,10 @@ Zabbix provides real-time monitoring metrics.
 1. In the Pulse app, go to **Pulse** then **Settings**
 2. Find the **Zabbix Settings** section
 3. Enter your Zabbix server URL under **API Server** (e.g., `https://zabbix.yourdomain.com`)
-4. Enter your username and password under **API User** and **API Token** respectively
-5. Click **Apply Settings**
-6. Pulse will begin pulling monitoring data
+4. Enter a Zabbix **API Token** (Users → API tokens). Pulse uses `Authorization: Bearer` (required on Zabbix 7.2+)
+5. Only on Zabbix 6.0–6.2: enable **Legacy JSON-RPC authentication** and enter **API User**
+6. Click **Apply Settings**
+7. Pulse will begin pulling monitoring data
 
 ---
 
@@ -382,8 +383,10 @@ Zabbix provides real-time monitoring metrics.
 
 **Solution:**
 1. Verify Zabbix URL is correct and reachable
-2. Check username and password
-3. Verify your user has sufficient permissions in Zabbix (ensure API access is enabled)
+2. Prefer a Zabbix API token (Users → API tokens), not a UI password
+3. On Zabbix 7.2+, leave **Legacy JSON-RPC authentication** off
+4. On Zabbix 6.0–6.2, turn legacy on and check username + password
+5. If a reverse proxy sits in front of Zabbix, it must forward the `Authorization` header to `api_jsonrpc.php`
 
 ---
 

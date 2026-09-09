@@ -14,7 +14,7 @@ Pulse reads infrastructure inventory from NetBox and monitoring status from Zabb
 In the **Settings** tab:
 
 1. Under **NetBox Settings**, enter your NetBox **API Server** URL (for example `https://netbox.example.com`) and **API Token**.
-2. Under **Zabbix Settings**, enter the Zabbix **API Server** URL, **API User**, and **API Token**. Zabbix is optional but recommended for live monitoring.
+2. Under **Zabbix Settings**, enter the Zabbix **API Server** URL and an **API Token** (Users → API tokens). Pulse sends `Authorization: Bearer`. That is required on Zabbix 7.2+ and works on 6.4 and 7.0. For Zabbix 6.0–6.2 only, turn on **Legacy JSON-RPC authentication** and also enter **API User** (username + password session in the JSON body). Leave legacy off unless you are on those old releases. Zabbix is optional but recommended for live monitoring.
 3. Click **Apply Settings**. Pulse validates the connection and begins syncing.
 
 The first sync pulls sites, devices, roles, and types from NetBox. Later launches refresh in the background.

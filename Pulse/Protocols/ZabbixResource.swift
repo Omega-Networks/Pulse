@@ -36,11 +36,11 @@ final class ZabbixAPI: @unchecked Sendable {
     // Use an actor to protect shared state
     private actor SessionState {
         private(set) var token: String?
-        
-        func setToken(_ newToken: String) {
+
+        func setToken(_ newToken: String?) {
             token = newToken
         }
-        
+
         func getToken() -> String? {
             token
         }
@@ -52,51 +52,51 @@ final class ZabbixAPI: @unchecked Sendable {
         logger.debug("Initializing ZabbixAPI singleton")
     }
     
-    /// Retrieves the session token, either from cache or by fetching a new one
-    /// - Returns: A valid session token
-    /// - Throws: NSError if token retrieval fails
+    /// Credential for the configured auth mode. API-token mode returns the
+    /// stored token (no login). Legacy mode returns a `user.login` session.
+    func credential(for mode: ZabbixAuthMode) async throws -> String {
+        switch mode {
+        case .apiToken:
+            let token = await Configuration.shared.getZabbixApiToken()
+            guard !token.isEmpty else { throw ZabbixError.authenticationFailed }
+            return token
+        case .legacy:
+            return try await getSessionToken()
+        }
+    }
+
+    func clearSession() async {
+        await sessionState.setToken(nil)
+    }
+
+    /// Retrieves a legacy JSON-RPC session via `user.login`.
     func getSessionToken() async throws -> String {
-        let startTime = Date()
-        
-        // Check current token first
         if let token = await sessionState.getToken() {
             logger.debug("Using cached session token")
             return token
         }
-        
-        logger.debug("No cached token found, fetching new session token")
-        
-        // Fetch new token
-        let userLoginResource = UserLoginResource(
-            username: await Configuration.shared.getZabbixApiUser(),
-            password: await Configuration.shared.getZabbixApiToken()
-        )
-        
-        let requestStartTime = Date()
+
+        let username = await Configuration.shared.getZabbixApiUser()
+        let password = await Configuration.shared.getZabbixApiToken()
+        guard !username.isEmpty, !password.isEmpty else {
+            throw ZabbixError.authenticationFailed
+        }
+
+        let userLoginResource = UserLoginResource(username: username, password: password)
         let urlRequest = try await userLoginResource.request
-        logger.debug("Request generation took: \(Date().timeIntervalSince(requestStartTime))s")
-        
-        let networkStartTime = Date()
         let data: Data
         do {
             (data, _) = try await URLSession.shared.data(for: urlRequest)
         } catch {
             throw ZabbixError.fromTransport(error)
         }
-        logger.debug("Network request took: \(Date().timeIntervalSince(networkStartTime))s")
-        
+
         let jsonObject = try zabbixJSONObject(from: data)
-        
-        if let result = jsonObject["result"] as? String {
+        if let result = jsonObject["result"] as? String, !result.isEmpty {
             await sessionState.setToken(result)
-            logger.debug("Successfully retrieved and cached new session token")
-            logger.debug("Total token retrieval took: \(Date().timeIntervalSince(startTime))s")
             return result
-        } else {
-            let errorDescription = jsonObject["error"] as? String ?? "Unknown error"
-            logger.error("Failed to retrieve session token: \(errorDescription)")
-            throw NSError(domain: "InvalidResult", code: -1, userInfo: [NSLocalizedDescriptionKey: errorDescription])
         }
+        throw ZabbixError.fromRPC(jsonObject)
     }
 }
 
@@ -128,29 +128,32 @@ extension ZabbixResource {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json-rpc", forHTTPHeaderField: "Content-Type")
-            
-            // Prepare request data
-            var requestData: [String: Any] = [
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params ?? [:],
-                "id": 1
-            ]
-            
-            // Only fetch auth token if needed
-            if method != "user.login" {
-                let tokenStartTime = Date()
-                requestData["auth"] = try await ZabbixAPI.shared.getSessionToken()
-                logger.debug("Token retrieval took: \(Date().timeIntervalSince(tokenStartTime))s")
+
+            let mode = await Configuration.shared.getZabbixAuthMode()
+            var bodyAuth: String?
+            if ZabbixJSONRPC.methodNeedsAuth(method) {
+                let credential = try await ZabbixAPI.shared.credential(for: mode)
+                let applied = ZabbixJSONRPC.appliedAuth(
+                    mode: mode, method: method, credential: credential
+                )
+                bodyAuth = applied.bodyAuth
+                if let bearer = applied.bearerHeader {
+                    request.setValue(bearer, forHTTPHeaderField: "Authorization")
+                }
             }
-            
-            // Serialize request data
-            let serializationStartTime = Date()
+
+            let requestData = ZabbixJSONRPC.requestBody(
+                method: method,
+                params: params ?? [:],
+                id: 1,
+                bodyAuth: bodyAuth
+            )
             request.httpBody = try JSONSerialization.data(withJSONObject: requestData)
-            logger.debug("Request serialization took: \(Date().timeIntervalSince(serializationStartTime))s")
-            
+
             if let headers = headers {
-                request.allHTTPHeaderFields = headers
+                for (key, value) in headers {
+                    request.setValue(value, forHTTPHeaderField: key)
+                }
             }
             
             logger.debug("Total request generation took: \(Date().timeIntervalSince(startTime))s")
@@ -215,6 +218,19 @@ enum ZabbixError: Error, LocalizedError, Equatable {
         case .invalidResponse, .missingParameters:
             return .dataError(code: 0, message: zabbix.localizedDescription)
         }
+    }
+
+    static func fromRPC(_ object: [String: Any]) -> ZabbixError {
+        let description = ZabbixJSONRPC.errorDescription(from: object)
+        if ZabbixJSONRPC.looksLikeRejectedBodyAuth(description) {
+            return .invalidResponse(
+                "Zabbix 7.2+ rejected body auth. Use API token authentication (default) in Settings."
+            )
+        }
+        if ZabbixJSONRPC.looksLikeUnauthorized(description) {
+            return .authenticationFailed
+        }
+        return .invalidResponse(description)
     }
 }
 
@@ -400,16 +416,13 @@ func fetchHostEvents(hostIds: [String]? = nil, eventIds: [String]? = nil) async 
     }
     
     let jsonObject = try zabbixJSONObject(from: data)
-    if let result = jsonObject["result"] as? [[String: Any]] {
-        let jsonData = try JSONSerialization.data(withJSONObject: result)
-        let events = try JSONDecoder().decode([EventProperties].self, from: jsonData)
-        logger.debug("Successfully fetched \(events.count) events")
-        return events
-    } else {
-        let errorDescription = jsonObject["error"] as? String ?? "Unknown error"
-        logger.error("Error fetching events: \(errorDescription)")
-        throw ZabbixError.invalidResponse(errorDescription)
+    guard let result = jsonObject["result"] as? [[String: Any]] else {
+        throw ZabbixError.fromRPC(jsonObject)
     }
+    let jsonData = try JSONSerialization.data(withJSONObject: result)
+    let events = try JSONDecoder().decode([EventProperties].self, from: jsonData)
+    logger.debug("Successfully fetched \(events.count) events")
+    return events
 }
 
 func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) async throws -> [EventProperties] {
@@ -435,16 +448,13 @@ func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) asyn
     }
     
     let jsonObject = try zabbixJSONObject(from: data)
-    if let result = jsonObject["result"] as? [[String: Any]] {
-        let jsonData = try JSONSerialization.data(withJSONObject: result)
-        let problems = try JSONDecoder().decode([EventProperties].self, from: jsonData)
-        logger.debug("Successfully fetched \(problems.count) problems")
-        return problems
-    } else {
-        let errorDescription = jsonObject["error"] as? String ?? "Unknown error"
-        logger.error("Error fetching problems: \(errorDescription)")
-        throw ZabbixError.invalidResponse(errorDescription)
+    guard let result = jsonObject["result"] as? [[String: Any]] else {
+        throw ZabbixError.fromRPC(jsonObject)
     }
+    let jsonData = try JSONSerialization.data(withJSONObject: result)
+    let problems = try JSONDecoder().decode([EventProperties].self, from: jsonData)
+    logger.debug("Successfully fetched \(problems.count) problems")
+    return problems
 }
 
 func updateHostEvents(params: UpdateParameters) async throws {
@@ -486,16 +496,13 @@ func fetchItems(hostId: Int64) async throws -> [ItemProperties] {
     }
     
     let jsonObject = try zabbixJSONObject(from: data)
-    if let result = jsonObject["result"] as? [[String: Any]] {
-        let jsonData = try JSONSerialization.data(withJSONObject: result)
-        let items = try JSONDecoder().decode([ItemProperties].self, from: jsonData)
-        logger.debug("Successfully fetched \(items.count) items")
-        return items
-    } else {
-        let errorDescription = jsonObject["error"] as? String ?? "Unknown error"
-        logger.error("Error fetching items: \(errorDescription)")
-        throw ZabbixError.invalidResponse(errorDescription)
+    guard let result = jsonObject["result"] as? [[String: Any]] else {
+        throw ZabbixError.fromRPC(jsonObject)
     }
+    let jsonData = try JSONSerialization.data(withJSONObject: result)
+    let items = try JSONDecoder().decode([ItemProperties].self, from: jsonData)
+    logger.debug("Successfully fetched \(items.count) items")
+    return items
 }
 
 // Function to fetch Histories
@@ -521,17 +528,14 @@ func fetchHistories(itemId: String, timeFrom: Date? = nil, timeTill: Date? = nil
     let request = try await resource.request
     let (data, _) = try await URLSession.shared.data(for: request)
     
-    let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-    if let result = jsonObject?["result"] as? [[String: Any]] {
-        let jsonData = try JSONSerialization.data(withJSONObject: result)
-        let histories = try JSONDecoder().decode([HistoryProperties].self, from: jsonData)
-        logger.debug("Successfully fetched \(histories.count) history entries")
-        return histories
-    } else {
-        let errorDescription = jsonObject?["error"] as? String ?? "Unknown error"
-        logger.error("Error fetching histories: \(errorDescription)")
-        throw ZabbixError.invalidResponse(errorDescription)
+    let jsonObject = try zabbixJSONObject(from: data)
+    guard let result = jsonObject["result"] as? [[String: Any]] else {
+        throw ZabbixError.fromRPC(jsonObject)
     }
+    let jsonData = try JSONSerialization.data(withJSONObject: result)
+    let histories = try JSONDecoder().decode([HistoryProperties].self, from: jsonData)
+    logger.debug("Successfully fetched \(histories.count) history entries")
+    return histories
 }
 
 // MARK: Consolidate to single URL Resource
