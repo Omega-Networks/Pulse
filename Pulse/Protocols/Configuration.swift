@@ -104,9 +104,10 @@ final class Configuration: @unchecked Sendable {
         let hasNetboxServer = !getNetboxApiServer().isEmpty
         let hasNetboxToken = !getNetboxApiToken().isEmpty
         let hasZabbixServer = !getZabbixApiServer().isEmpty
-        let hasZabbixUser = !getZabbixApiUser().isEmpty
         let hasZabbixToken = !getZabbixApiToken().isEmpty
-        
+        let needsZabbixUser = getZabbixAuthMode() == .legacy
+        let hasZabbixUser = !needsZabbixUser || !getZabbixApiUser().isEmpty
+
         let isConfigured = hasNetboxServer && hasNetboxToken && hasZabbixServer && hasZabbixUser && hasZabbixToken
         
         if !isConfigured {
@@ -141,7 +142,7 @@ final class Configuration: @unchecked Sendable {
         if getZabbixApiServer().isEmpty {
             missingFields.append("Zabbix Server URL")
         }
-        if getZabbixApiUser().isEmpty {
+        if getZabbixAuthMode() == .legacy, getZabbixApiUser().isEmpty {
             missingFields.append("Zabbix Username")
         }
         if getZabbixApiToken().isEmpty {
@@ -277,11 +278,10 @@ final class Configuration: @unchecked Sendable {
     }
 
     func getZabbixAuthMode() -> ZabbixAuthMode {
-        guard let raw = UserDefaults.standard.string(forKey: Keys.zabbixAuthMode),
-              let mode = ZabbixAuthMode(rawValue: raw) else {
-            return .default
-        }
-        return mode
+        ZabbixAuthMode.resolved(
+            storedRawValue: UserDefaults.standard.string(forKey: Keys.zabbixAuthMode),
+            hasUsername: !getZabbixApiUser().isEmpty
+        )
     }
 
     func setZabbixAuthMode(_ mode: ZabbixAuthMode) {

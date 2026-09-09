@@ -106,4 +106,40 @@ final class ZabbixJSONRPCTests: XCTestCase {
     func testDefaultAuthModeIsApiToken() {
         XCTAssertEqual(ZabbixAuthMode.default, .apiToken)
     }
+
+    func testMissingModeWithUsernameIsLegacy() {
+        XCTAssertEqual(
+            ZabbixAuthMode.resolved(storedRawValue: nil, hasUsername: true),
+            .legacy
+        )
+    }
+
+    func testMissingModeWithoutUsernameIsApiToken() {
+        XCTAssertEqual(
+            ZabbixAuthMode.resolved(storedRawValue: nil, hasUsername: false),
+            .apiToken
+        )
+    }
+
+    func testStoredModeWinsOverUsername() {
+        XCTAssertEqual(
+            ZabbixAuthMode.resolved(storedRawValue: "apiToken", hasUsername: true),
+            .apiToken
+        )
+        XCTAssertEqual(
+            ZabbixAuthMode.resolved(storedRawValue: "legacy", hasUsername: false),
+            .legacy
+        )
+    }
+
+    func testUnknownStoredModeFallsBackLikeMissing() {
+        XCTAssertEqual(
+            ZabbixAuthMode.resolved(storedRawValue: "not-a-mode", hasUsername: true),
+            .legacy
+        )
+        XCTAssertEqual(
+            ZabbixAuthMode.resolved(storedRawValue: "not-a-mode", hasUsername: false),
+            .apiToken
+        )
+    }
 }

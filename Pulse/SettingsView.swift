@@ -252,17 +252,17 @@ struct SettingsView: View {
             ) {
                 TextField("API Server", text: $zabbixApiServer)
                     .textFieldStyle(.roundedBorder)
-                SecureField("API Token", text: $zabbixApiToken)
+                SecureField(zabbixLegacyAuth ? "Password" : "API Token", text: $zabbixApiToken)
                     .textFieldStyle(.roundedBorder)
                 Toggle("Legacy JSON-RPC authentication", isOn: $zabbixLegacyAuth)
                 if zabbixLegacyAuth {
-                    Text("For Zabbix 6.0–7.0 only. Sends the session in the JSON-RPC body. Zabbix 7.2 and later reject this. Prefer an API token.")
+                    Text("Required for Zabbix 6.0-6.2. Sends the session in the JSON-RPC body. Leave off on 6.4+ and use an API token. Zabbix 7.2 and later reject body auth.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextField("API User", text: $zabbixApiUser)
                         .textFieldStyle(.roundedBorder)
                 } else {
-                    Text("Uses Authorization: Bearer with a Zabbix API token (Users → API tokens). Required on 7.2+; works on 6.4 and 7.0.")
+                    Text("Uses Authorization: Bearer with a Zabbix API token (Users -> API tokens). Required on 7.2+; works on 6.4 and 7.0.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
