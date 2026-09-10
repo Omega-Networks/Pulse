@@ -103,20 +103,15 @@ final class Configuration: @unchecked Sendable {
         // Check if all required credentials are present
         let hasNetboxServer = !getNetboxApiServer().isEmpty
         let hasNetboxToken = !getNetboxApiToken().isEmpty
-        let hasZabbixServer = !getZabbixApiServer().isEmpty
-        let hasZabbixToken = !getZabbixApiToken().isEmpty
-        let needsZabbixUser = getZabbixAuthMode() == .legacy
-        let hasZabbixUser = !needsZabbixUser || !getZabbixApiUser().isEmpty
+        let zabbixOK = isZabbixConfiguredIfPresent()
 
-        let isConfigured = hasNetboxServer && hasNetboxToken && hasZabbixServer && hasZabbixUser && hasZabbixToken
+        let isConfigured = hasNetboxServer && hasNetboxToken && zabbixOK
         
         if !isConfigured {
             print("Configuration check failed:")
             print("  NetBox Server: \(hasNetboxServer ? "✓" : "✗")")
             print("  NetBox Token: \(hasNetboxToken ? "✓" : "✗")")
-            print("  Zabbix Server: \(hasZabbixServer ? "✓" : "✗")")
-            print("  Zabbix User: \(hasZabbixUser ? "✓" : "✗")")
-            print("  Zabbix Token: \(hasZabbixToken ? "✓" : "✗")")
+            print("  Zabbix: \(zabbixOK ? "✓" : "✗")")
         }
         
         return isConfigured
@@ -139,14 +134,14 @@ final class Configuration: @unchecked Sendable {
         if getNetboxApiToken().isEmpty {
             missingFields.append("NetBox API Token")
         }
-        if getZabbixApiServer().isEmpty {
-            missingFields.append("Zabbix Server URL")
-        }
-        if getZabbixAuthMode() == .legacy, getZabbixApiUser().isEmpty {
-            missingFields.append("Zabbix Username")
-        }
-        if getZabbixApiToken().isEmpty {
-            missingFields.append("Zabbix API Token")
+        let zabbixServer = getZabbixApiServer()
+        if !zabbixServer.isEmpty {
+            if getZabbixApiToken().isEmpty {
+                missingFields.append("Zabbix API Token")
+            }
+            if getZabbixAuthMode() == .legacy, getZabbixApiUser().isEmpty {
+                missingFields.append("Zabbix Username")
+            }
         }
         
         return (missingFields.isEmpty, missingFields)
@@ -286,6 +281,19 @@ final class Configuration: @unchecked Sendable {
 
     func setZabbixAuthMode(_ mode: ZabbixAuthMode) {
         UserDefaults.standard.set(mode.rawValue, forKey: Keys.zabbixAuthMode)
+    }
+
+    /// Empty Zabbix is valid (optional). A server URL requires a token, and
+    /// legacy mode also requires a username.
+    func isZabbixConfiguredIfPresent() -> Bool {
+        if getZabbixApiServer().isEmpty { return true }
+        if getZabbixApiToken().isEmpty { return false }
+        if getZabbixAuthMode() == .legacy, getZabbixApiUser().isEmpty { return false }
+        return true
+    }
+
+    func isZabbixReady() -> Bool {
+        !getZabbixApiServer().isEmpty && !getZabbixApiToken().isEmpty
     }
     
     // MARK: - Bulk Updates

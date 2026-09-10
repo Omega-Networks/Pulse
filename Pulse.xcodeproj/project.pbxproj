@@ -152,6 +152,7 @@
 		A11CAFE0000000000000NB63 /* NetBoxAuthorizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */; };
 		A11CAFE0000000000000ZB11 /* ZabbixAuthMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000ZB10 /* ZabbixAuthMode.swift */; };
 		A11CAFE0000000000000ZB13 /* ZabbixJSONRPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000ZB12 /* ZabbixJSONRPC.swift */; };
+		A11CAFE0000000000000ZB21 /* ZabbixServerURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000ZB20 /* ZabbixServerURL.swift */; };
 		A11CAFE0000000000000ZB15 /* ZabbixJSONRPCTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000ZB14 /* ZabbixJSONRPCTests.swift */; };
 		A11CAFE0000000000000NB26 /* NetBoxAPI in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB27 /* NetBoxAPI */; };
 		A11CAFE0000000000000NB22 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB20 /* OpenAPIRuntime */; };
@@ -521,6 +522,7 @@
 		A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxAuthorizationTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000ZB10 /* ZabbixAuthMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZabbixAuthMode.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000ZB12 /* ZabbixJSONRPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZabbixJSONRPC.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000ZB20 /* ZabbixServerURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZabbixServerURL.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000ZB14 /* ZabbixJSONRPCTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZabbixJSONRPCTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -964,6 +966,7 @@
 				C96191BD2ACA5813000198DB /* ZabbixResource.swift */,
 				A11CAFE0000000000000ZB10 /* ZabbixAuthMode.swift */,
 				A11CAFE0000000000000ZB12 /* ZabbixJSONRPC.swift */,
+				A11CAFE0000000000000ZB20 /* ZabbixServerURL.swift */,
 				41A0BE9D2C8FC05200C39B50 /* Configuration.swift */,
 				41AF55722D14B8B500072BF6 /* RequestStatusManager.swift */,
 			);
@@ -1497,6 +1500,7 @@
 				A11CAFE0000000000000NB61 /* NetBoxAuthorization.swift in Sources */,
 				A11CAFE0000000000000ZB11 /* ZabbixAuthMode.swift in Sources */,
 				A11CAFE0000000000000ZB13 /* ZabbixJSONRPC.swift in Sources */,
+				A11CAFE0000000000000ZB21 /* ZabbixServerURL.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

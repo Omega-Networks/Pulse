@@ -100,7 +100,7 @@ extension Notification.Name {
 }
 
 
-struct ItemProperties: Decodable {
+struct ItemProperties: Decodable, Sendable {
     
     // MARK: Codable
     
@@ -121,7 +121,7 @@ struct ItemProperties: Decodable {
         case tag, value
     }
     
-    struct Tag: Decodable {
+    struct Tag: Decodable, Sendable {
         let tag: String
         let value: String
     }

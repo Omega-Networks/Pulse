@@ -74,50 +74,31 @@ extension PowerSenseZabbixResource {
         get async throws {
             let logger = Logger(subsystem: "powersense", category: "zabbixResource")
 
-            // Get PowerSense Zabbix URL from configuration
             let powerSenseZabbixServer = await Configuration.shared.getPowerSenseZabbixServer()
             guard !powerSenseZabbixServer.isEmpty else {
                 logger.error("PowerSense Zabbix server URL not configured")
                 throw PowerSenseZabbixError.invalidRequest
             }
 
-            // Build the API URL - try different common paths
-            let apiPath = "api_jsonrpc.php"
-            guard let baseURL = URL(string: powerSenseZabbixServer),
-                  let url = URL(string: apiPath, relativeTo: baseURL) else {
+            let endpoint: URL
+            do {
+                endpoint = try ZabbixServerURL.jsonRPCEndpoint(powerSenseZabbixServer)
+            } catch {
                 logger.error("PowerSense Zabbix server URL invalid: \(powerSenseZabbixServer)")
                 throw PowerSenseZabbixError.invalidRequest
             }
 
-            logger.debug("PowerSense API URL: \(url.absoluteString)")
-
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json-rpc", forHTTPHeaderField: "Content-Type")
-
-            // Add bearer token authentication for newer Zabbix versions
             let bearerToken = try await PowerSenseZabbixAPI.shared.getBearerToken()
-            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
-
-            // Prepare request data (no auth field needed with bearer token)
-            let requestData: [String: Any] = [
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params ?? [:],
-                "id": 1
-            ]
-
-            // Serialize request data
-            request.httpBody = try JSONSerialization.data(withJSONObject: requestData)
-
-            // Add any additional headers
-            if let headers = headers {
-                for (key, value) in headers {
-                    request.setValue(value, forHTTPHeaderField: key)
-                }
-            }
-
-            return request
+            let applied = ZabbixJSONRPC.appliedAuth(
+                mode: .apiToken, method: method, credential: bearerToken
+            )
+            return try ZabbixJSONRPC.urlRequest(
+                endpoint: endpoint,
+                method: method,
+                params: params ?? [:],
+                applied: applied,
+                extraHeaders: headers
+            )
         }
     }
 }

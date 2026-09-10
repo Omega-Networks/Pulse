@@ -58,6 +58,61 @@ enum ZabbixJSONRPC {
         return body
     }
 
+    struct DecodedList<Element: Sendable>: Sendable {
+        var items: [Element]
+        var skipped: Int
+    }
+
+    static func decodeElements<T: Decodable>(
+        _ type: T.Type,
+        from object: [String: Any]
+    ) throws -> DecodedList<T> {
+        guard let result = object["result"] as? [[String: Any]] else {
+            throw ZabbixError.fromRPC(object)
+        }
+        let decoder = JSONDecoder()
+        var items: [T] = []
+        var skipped = 0
+        items.reserveCapacity(result.count)
+        for element in result {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: element)
+                items.append(try decoder.decode(T.self, from: data))
+            } catch {
+                skipped += 1
+            }
+        }
+        return DecodedList(items: items, skipped: skipped)
+    }
+
+    static func urlRequest(
+        endpoint: URL,
+        method: String,
+        params: [String: Any],
+        applied: AppliedAuth,
+        extraHeaders: [String: String]?,
+        id: Int = 1
+    ) throws -> URLRequest {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = ZabbixServerURL.timeout
+        request.setValue("application/json-rpc", forHTTPHeaderField: "Content-Type")
+        if let bearer = applied.bearerHeader {
+            request.setValue(bearer, forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: requestBody(
+                method: method, params: params, id: id, bodyAuth: applied.bodyAuth
+            )
+        )
+        if let extraHeaders {
+            for (key, value) in extraHeaders {
+                request.setValue(value, forHTTPHeaderField: key)
+            }
+        }
+        return request
+    }
+
     /// Zabbix puts `error` as `{code, message, data}`, not a string.
     static func errorDescription(from object: [String: Any]) -> String {
         if let text = object["error"] as? String, !text.isEmpty {
