@@ -142,15 +142,8 @@ extension ContentView {
      This function sets up a timer to regularly check for Zabbix updates and triggers notifications if needed.
      */
     func startMonitoringZabbixUpdates() {
-        zabbixUpdateTimer?.invalidate() // Invalidate any existing timer.
-        // On initial app start, run monitoring of Zabbix updates
-        self.monitorZabbixUpdate()
-        
-        zabbixUpdateTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-            Task { @MainActor in
-                self.monitorZabbixUpdate()
-            }
-        }
+        // Problem feed is the 120s poll in updateEventMonitoring.
+        // The stale-data toast timer here never worked.
     }
     
     /**

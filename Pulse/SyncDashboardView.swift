@@ -270,7 +270,9 @@ struct SyncDashboardView: View {
         let zabbixServer = await config.getZabbixApiServer()
         let zabbixToken = await config.getZabbixApiToken()
         
-        isConfigurationNeeded = netboxServer.isEmpty || netboxToken.isEmpty || zabbixServer.isEmpty || zabbixToken.isEmpty
+        let zabbixPartial = (!zabbixServer.isEmpty && zabbixToken.isEmpty)
+            || (zabbixServer.isEmpty && !zabbixToken.isEmpty)
+        isConfigurationNeeded = netboxServer.isEmpty || netboxToken.isEmpty || zabbixPartial
         
         if isConfigurationNeeded {
             netboxApiServer = netboxServer
