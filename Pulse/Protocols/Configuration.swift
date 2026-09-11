@@ -49,6 +49,7 @@ final class Configuration: @unchecked Sendable {
         static let zabbixApiServer = "zabbixApiServer"
         static let zabbixApiUser = "zabbixApiUser"
         static let zabbixApiToken = "zabbixApiToken"
+        static let zabbixAuthMode = "zabbixAuthMode"
         static let problemTimeWindow = "problemTimeWindow"
         static let hasCompletedInitialSetup = "hasCompletedInitialSetup"
 
@@ -103,9 +104,10 @@ final class Configuration: @unchecked Sendable {
         let hasNetboxServer = !getNetboxApiServer().isEmpty
         let hasNetboxToken = !getNetboxApiToken().isEmpty
         let hasZabbixServer = !getZabbixApiServer().isEmpty
-        let hasZabbixUser = !getZabbixApiUser().isEmpty
         let hasZabbixToken = !getZabbixApiToken().isEmpty
-        
+        let needsZabbixUser = getZabbixAuthMode() == .legacy
+        let hasZabbixUser = !needsZabbixUser || !getZabbixApiUser().isEmpty
+
         let isConfigured = hasNetboxServer && hasNetboxToken && hasZabbixServer && hasZabbixUser && hasZabbixToken
         
         if !isConfigured {
@@ -140,7 +142,7 @@ final class Configuration: @unchecked Sendable {
         if getZabbixApiServer().isEmpty {
             missingFields.append("Zabbix Server URL")
         }
-        if getZabbixApiUser().isEmpty {
+        if getZabbixAuthMode() == .legacy, getZabbixApiUser().isEmpty {
             missingFields.append("Zabbix Username")
         }
         if getZabbixApiToken().isEmpty {
@@ -199,6 +201,7 @@ final class Configuration: @unchecked Sendable {
         UserDefaults.standard.removeObject(forKey: Keys.netboxApiServer)
         UserDefaults.standard.removeObject(forKey: Keys.zabbixApiServer)
         UserDefaults.standard.removeObject(forKey: Keys.zabbixApiUser)
+        UserDefaults.standard.removeObject(forKey: Keys.zabbixAuthMode)
         UserDefaults.standard.removeObject(forKey: Keys.hasCompletedInitialSetup)
     }
     
@@ -272,6 +275,17 @@ final class Configuration: @unchecked Sendable {
         if status != errSecSuccess {
             print("Failed to save Zabbix API Token to Keychain: \(status)")
         }
+    }
+
+    func getZabbixAuthMode() -> ZabbixAuthMode {
+        ZabbixAuthMode.resolved(
+            storedRawValue: UserDefaults.standard.string(forKey: Keys.zabbixAuthMode),
+            hasUsername: !getZabbixApiUser().isEmpty
+        )
+    }
+
+    func setZabbixAuthMode(_ mode: ZabbixAuthMode) {
+        UserDefaults.standard.set(mode.rawValue, forKey: Keys.zabbixAuthMode)
     }
     
     // MARK: - Bulk Updates

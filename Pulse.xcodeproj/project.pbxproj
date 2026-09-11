@@ -150,6 +150,9 @@
 		A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */; };
 		A11CAFE0000000000000NB61 /* NetBoxAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB60 /* NetBoxAuthorization.swift */; };
 		A11CAFE0000000000000NB63 /* NetBoxAuthorizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */; };
+		A11CAFE0000000000000ZB11 /* ZabbixAuthMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000ZB10 /* ZabbixAuthMode.swift */; };
+		A11CAFE0000000000000ZB13 /* ZabbixJSONRPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000ZB12 /* ZabbixJSONRPC.swift */; };
+		A11CAFE0000000000000ZB15 /* ZabbixJSONRPCTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAFE0000000000000ZB14 /* ZabbixJSONRPCTests.swift */; };
 		A11CAFE0000000000000NB26 /* NetBoxAPI in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB27 /* NetBoxAPI */; };
 		A11CAFE0000000000000NB22 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB20 /* OpenAPIRuntime */; };
 		A11CAFE0000000000000NB23 /* OpenAPIURLSession in Frameworks */ = {isa = PBXBuildFile; productRef = A11CAFE0000000000000NB21 /* OpenAPIURLSession */; };
@@ -516,6 +519,9 @@
 		A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxSyncEngineTests.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB60 /* NetBoxAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxAuthorization.swift; sourceTree = "<group>"; };
 		A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxAuthorizationTests.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000ZB10 /* ZabbixAuthMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZabbixAuthMode.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000ZB12 /* ZabbixJSONRPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZabbixJSONRPC.swift; sourceTree = "<group>"; };
+		A11CAFE0000000000000ZB14 /* ZabbixJSONRPCTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZabbixJSONRPCTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -823,6 +829,7 @@
 				A11CAFE0000000000000NB82 /* NetBoxDeltaTests.swift */,
 				A11CAFE0000000000000NB94 /* NetBoxWriteTests.swift */,
 				A11CAFE0000000000000NB62 /* NetBoxAuthorizationTests.swift */,
+				A11CAFE0000000000000ZB14 /* ZabbixJSONRPCTests.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -955,6 +962,8 @@
 			children = (
 				C97136DE2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift */,
 				C96191BD2ACA5813000198DB /* ZabbixResource.swift */,
+				A11CAFE0000000000000ZB10 /* ZabbixAuthMode.swift */,
+				A11CAFE0000000000000ZB12 /* ZabbixJSONRPC.swift */,
 				41A0BE9D2C8FC05200C39B50 /* Configuration.swift */,
 				41AF55722D14B8B500072BF6 /* RequestStatusManager.swift */,
 			);
@@ -1486,6 +1495,8 @@
 				A11CAFE0000000000000NB93 /* NetBoxWriteService.swift in Sources */,
 				A11CAFE0000000000000NB97 /* NetBoxGeo.swift in Sources */,
 				A11CAFE0000000000000NB61 /* NetBoxAuthorization.swift in Sources */,
+				A11CAFE0000000000000ZB11 /* ZabbixAuthMode.swift in Sources */,
+				A11CAFE0000000000000ZB13 /* ZabbixJSONRPC.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1510,6 +1521,7 @@
 				A11CAFE0000000000000NB83 /* NetBoxDeltaTests.swift in Sources */,
 				A11CAFE0000000000000NB95 /* NetBoxWriteTests.swift in Sources */,
 				A11CAFE0000000000000NB63 /* NetBoxAuthorizationTests.swift in Sources */,
+				A11CAFE0000000000000ZB15 /* ZabbixJSONRPCTests.swift in Sources */,
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
 				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
 				B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */,

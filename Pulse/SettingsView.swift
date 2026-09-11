@@ -50,6 +50,7 @@ struct SettingsView: View {
     @State private var zabbixApiUser: String = ""
     @State private var zabbixApiServer: String = ""
     @State private var zabbixApiToken: String = ""
+    @State private var zabbixLegacyAuth = false
     @State private var problemTimeWindow: Double = 1  // In hours
 
     // PowerSense Settings
@@ -251,10 +252,20 @@ struct SettingsView: View {
             ) {
                 TextField("API Server", text: $zabbixApiServer)
                     .textFieldStyle(.roundedBorder)
-                TextField("API User", text: $zabbixApiUser)
+                SecureField(zabbixLegacyAuth ? "Password" : "API Token", text: $zabbixApiToken)
                     .textFieldStyle(.roundedBorder)
-                SecureField("API Token", text: $zabbixApiToken)
-                    .textFieldStyle(.roundedBorder)
+                Toggle("Legacy JSON-RPC authentication", isOn: $zabbixLegacyAuth)
+                if zabbixLegacyAuth {
+                    Text("Required for Zabbix 6.0-6.2. Sends the session in the JSON-RPC body. Leave off on 6.4+ and use an API token. Zabbix 7.2 and later reject body auth.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("API User", text: $zabbixApiUser)
+                        .textFieldStyle(.roundedBorder)
+                } else {
+                    Text("Uses Authorization: Bearer with a Zabbix API token (Users -> API tokens). Required on 7.2+; works on 6.4 and 7.0.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.bottom, 4)
             #if os(macOS)
@@ -525,6 +536,7 @@ struct SettingsView: View {
         netboxApiToken = await config.getNetboxApiToken()
         zabbixApiUser = await config.getZabbixApiUser()
         zabbixApiToken = await config.getZabbixApiToken()
+        zabbixLegacyAuth = await config.getZabbixAuthMode() == .legacy
 
         problemTimeWindow = Double(await config.getProblemTimeWindow()) / 3600.0
     }
@@ -558,6 +570,8 @@ struct SettingsView: View {
             zabbixApiUser: zabbixApiUser,
             zabbixApiToken: zabbixApiToken
         )
+        await config.setZabbixAuthMode(zabbixLegacyAuth ? .legacy : .apiToken)
+        await ZabbixAPI.shared.clearSession()
         
         // Verify the save worked
         let savedNetbox = await config.getNetboxApiServer()
