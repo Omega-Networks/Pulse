@@ -8,8 +8,8 @@ DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
 BUNDLE_IDENTIFIER = com.yourorg.pulse
 
 // App Store marketing version (CFBundleShortVersionString) and build (CFBundleVersion)
-MARKETING_VERSION = 1.0
-CURRENT_PROJECT_VERSION = 2026.09.04
+MARKETING_VERSION = 1.0.1
+CURRENT_PROJECT_VERSION = 2026.09.11
 
 // Public site for in-app Privacy / Terms links. Leave empty to derive
 // from BUNDLE_IDENTIFIER (com.yourorg.pulse → yourorg.com/pulse/privacy).
