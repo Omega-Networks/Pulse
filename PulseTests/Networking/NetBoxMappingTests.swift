@@ -433,6 +433,10 @@ final class NetBoxMappingTests: XCTestCase {
 
     // MARK: - Delete gate
 
+    // applyTenantGroups is the App Store 1.0 launch crash (generic
+    // `#Predicate<T>` in fetchByIDs). Debug does not reproduce
+    // DataUtilities.swift:85; Release configuration is the gate.
+
     func testPoisonedFetchDoesNotDeleteStaleRows() throws {
         let container = try makeContainer()
         let context = ModelContext(container)

@@ -46,7 +46,7 @@ enum NetBoxStore {
 
     /// Per-id delete for changelog `action=delete`. Missing ids are a no-op.
     @discardableResult
-    static func deleteIDs<T: PersistentModel & NetBoxIdentified>(
+    static func deleteIDs<T: NetBoxStorable>(
         _ type: T.Type,
         ids: [Int64],
         in context: ModelContext
@@ -907,7 +907,7 @@ enum NetBoxStore {
         in context: ModelContext,
         apply: (Record, Model) -> Void,
         create: (Record) -> Model
-    ) throws where Record: NetBoxRecordID, Model: PersistentModel & NetBoxIdentified {
+    ) throws where Record: NetBoxRecordID, Model: NetBoxStorable {
         var existing = try fetchByIDs(Model.self, ids: records.map(\.id), in: context)
         for record in records {
             if let model = existing[record.id] {
@@ -921,25 +921,46 @@ enum NetBoxStore {
         }
     }
 
-    private static func fetchByIDs<T: PersistentModel & NetBoxIdentified>(
+    /// Keyed fetch by NetBox id. Do not put `#Predicate<T>` in this generic
+    /// body: Release builds crash in `DataUtilities.swift:85` because the
+    /// macro records `\T.id` instead of the schema keypath (Apple Forums
+    /// 765660). Catalog types scan in memory; streamed types expand
+    /// `#Predicate` against a concrete model in their `NetBoxStorable`
+    /// witness.
+    private static func fetchByIDs<T: NetBoxStorable>(
         _ type: T.Type,
         ids: [Int64],
         in context: ModelContext
     ) throws -> [Int64: T] {
         let unique = Array(Set(ids))
         guard !unique.isEmpty else { return [:] }
-        let descriptor = FetchDescriptor<T>(
-            predicate: #Predicate<T> { unique.contains($0.id) }
-        )
-        let rows = try withUserInitiatedQoS {
-            try context.fetch(descriptor)
-        }
+        let rows = try T.fetchMatchingIDs(unique, in: context)
         var map: [Int64: T] = [:]
         map.reserveCapacity(rows.count)
         for row in rows {
             map[row.id] = row
         }
         return map
+    }
+
+    fileprivate static func fetchAllMatching<T: PersistentModel & NetBoxIdentified>(
+        ids: [Int64],
+        in context: ModelContext
+    ) throws -> [T] {
+        let unique = Set(ids)
+        let rows = try withUserInitiatedQoS {
+            try context.fetch(FetchDescriptor<T>())
+        }
+        return rows.filter { unique.contains($0.id) }
+    }
+
+    fileprivate static func fetchIdentified<T: PersistentModel & NetBoxIdentified>(
+        predicate: Predicate<T>,
+        in context: ModelContext
+    ) throws -> [T] {
+        try withUserInitiatedQoS {
+            try context.fetch(FetchDescriptor<T>(predicate: predicate))
+        }
     }
 
     /// Returns the number of rows deleted, or `-1` if the pass was not allowed.
@@ -1000,19 +1021,130 @@ protocol NetBoxIdentified: AnyObject {
     var id: Int64 { get }
 }
 
-extension TenantGroup: NetBoxIdentified {}
-extension Tenant: NetBoxIdentified {}
-extension Region: NetBoxIdentified {}
-extension DeviceRole: NetBoxIdentified {}
-extension DeviceType: NetBoxIdentified {}
-extension SiteGroup: NetBoxIdentified {}
-extension Site: NetBoxIdentified {}
-extension SiteLocation: NetBoxIdentified {}
-extension RackRole: NetBoxIdentified {}
-extension Rack: NetBoxIdentified {}
-extension Device: NetBoxIdentified {}
-extension Service: NetBoxIdentified {}
-extension Interface: NetBoxIdentified {}
-extension Cable: NetBoxIdentified {}
-extension DeviceBay: NetBoxIdentified {}
-extension FrontPort: NetBoxIdentified {}
+/// Persistent NetBox row that can be fetched by id without a generic
+/// `#Predicate<T>`. Witnesses must expand `#Predicate` against the concrete
+/// type, or scan in memory. A default `#Predicate<Self>` implementation
+/// crashes in Release (Apple Forums 765660).
+protocol NetBoxStorable: PersistentModel, NetBoxIdentified {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Self]
+}
+
+extension TenantGroup: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [TenantGroup] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension Tenant: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Tenant] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension Region: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Region] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension DeviceRole: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [DeviceRole] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension DeviceType: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [DeviceType] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension SiteGroup: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [SiteGroup] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension Site: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Site] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension SiteLocation: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [SiteLocation] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension RackRole: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [RackRole] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension Rack: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Rack] {
+        try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension Device: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Device] {
+        let unique = Array(Set(ids))
+        return try NetBoxStore.fetchIdentified(
+            predicate: #Predicate<Device> { unique.contains($0.id) },
+            in: context
+        )
+    }
+}
+
+extension Service: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Service] {
+        let unique = Array(Set(ids))
+        return try NetBoxStore.fetchIdentified(
+            predicate: #Predicate<Service> { unique.contains($0.id) },
+            in: context
+        )
+    }
+}
+
+extension Interface: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Interface] {
+        let unique = Array(Set(ids))
+        return try NetBoxStore.fetchIdentified(
+            predicate: #Predicate<Interface> { unique.contains($0.id) },
+            in: context
+        )
+    }
+}
+
+extension Cable: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Cable] {
+        let unique = Array(Set(ids))
+        return try NetBoxStore.fetchIdentified(
+            predicate: #Predicate<Cable> { unique.contains($0.id) },
+            in: context
+        )
+    }
+}
+
+extension DeviceBay: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [DeviceBay] {
+        let unique = Array(Set(ids))
+        return try NetBoxStore.fetchIdentified(
+            predicate: #Predicate<DeviceBay> { unique.contains($0.id) },
+            in: context
+        )
+    }
+}
+
+extension FrontPort: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [FrontPort] {
+        let unique = Array(Set(ids))
+        return try NetBoxStore.fetchIdentified(
+            predicate: #Predicate<FrontPort> { unique.contains($0.id) },
+            in: context
+        )
+    }
+}
