@@ -101,6 +101,7 @@ For experienced developers, here's the quick version:
 ```bash
    git clone https://github.com/omega-networks/pulse.git
    cd pulse
+   git config core.hooksPath .githooks
 ```
 
 2. Configure build settings
@@ -116,7 +117,9 @@ For experienced developers, here's the quick version:
 
 4. Open and build
    - Open `Pulse.xcodeproj` in Xcode 26+
-   - Select your development team in project settings
+   - Do **not** pick a Team in Signing & Capabilities — that writes your
+     Team ID into the shared project file. Signing reads `DEVELOPMENT_TEAM`
+     from `Development.xcconfig`.
    - Build and run (⌘+R)
 
 5. Configure data sources
@@ -272,16 +275,18 @@ BUNDLE_IDENTIFIER = omega-networks.Pulse
 open Pulse.xcodeproj
 ```
 
-##### B. Select Your Development Team
+##### B. Signing
 
-1. In Xcode, click on the **Pulse** project in the left sidebar (blue icon at the top)
-2. In the main editor area, select the **Pulse** target
-3. Click the **Signing & Capabilities** tab
-4. Under **"Team"**, select your team from the dropdown
-   - It should show your name or organisation name
+Signing comes from `Development.xcconfig` (`DEVELOPMENT_TEAM` and `BUNDLE_IDENTIFIER`). Do **not** choose a Team under **Signing & Capabilities** — Xcode then writes the literal Team ID into `project.pbxproj`, which must stay templated for the public repo.
+
+If Xcode has dirtied `Pulse.xcodeproj/project.pbxproj` after Archive or opening Signing, restore it:
+
+```bash
+git checkout -- Pulse.xcodeproj/project.pbxproj
+```
 
 **If you see a signing error:**
-- Make sure your Team ID in `Development.xcconfig` matches what's selected here
+- Confirm `DEVELOPMENT_TEAM` and `BUNDLE_IDENTIFIER` in `Development.xcconfig`
 - Make sure you're connected to the internet
 - Verify **"Automatically manage signing"** is checked
 - Make sure your Bundle Identifier matches what's registered in the Apple Developer Portal (case sensitive)
@@ -348,12 +353,10 @@ Zabbix provides real-time monitoring metrics.
 **Problem:** "Failed to register bundle identifier" or similar signing errors.
 
 **Solution:**
-1. Verify your Team ID is correct in `Development.xcconfig`
+1. Verify your Team ID is correct in `Development.xcconfig` — do not set Team in the Xcode GUI
 2. Make sure you're connected to the internet
-3. In Xcode, go to **Signing & Capabilities** tab
-4. Verify your Bundle Identifier matches exactly what's registered in the Apple Developer Portal (including capitalization)
-5. Try unchecking and rechecking **"Automatically manage signing"**
-6. If the bundle identifier shows as "not available", you need to register it in the Apple Developer Portal first
+3. Verify your Bundle Identifier matches exactly what's registered in the Apple Developer Portal (including capitalization)
+4. If the bundle identifier shows as "not available", you need to register it in the Apple Developer Portal first
 
 #### Build Takes Forever
 

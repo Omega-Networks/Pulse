@@ -8,12 +8,16 @@
 	  ENABLE_INCOMING_NETWORK_CONNECTIONS, ENABLE_USER_SELECTED_FILES)
 	  but live in source so the contract is grep-visible at review time
 	  rather than buried in project.pbxproj.
+
+	  Outgoing only. Pulse is a client (NetBox, Zabbix, SSH, Device Web).
+	  com.apple.security.network.server / Incoming Connections is for a
+	  process that listens or that uses UDP in the sandbox (Apple DTS:
+	  UDP needs the server entitlement). Turn it back on when RTSP
+	  (or anything else) actually binds or receives UDP.
 	-->
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
 	<key>com.apple.security.network.client</key>
-	<true/>
-	<key>com.apple.security.network.server</key>
 	<true/>
 	<key>com.apple.security.files.user-selected.read-only</key>
 	<true/>

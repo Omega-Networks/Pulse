@@ -59,8 +59,11 @@ docs/devlog/
 # Working plans. ADRs under docs/architecture/ are the public record.
 docs/plans/
 
-# Grok / other agent session scratch (if ever created under the repo root).
-.grok/
+# Grok session scratch. Project skills are the exception so commit
+# hygiene stays in git.
+.grok/*
+!.grok/skills/
+!.grok/skills/**/
 
 # Agent task prompts and companion handoff files — local only, never ship.
 *AGENT_PROMPT.md

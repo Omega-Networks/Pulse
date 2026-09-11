@@ -202,6 +202,7 @@ struct EventTable: View {
     }
 }
 
+#if DEBUG
 #Preview("Event Table", traits: .modifier(PreviewData())) {
     @Previewable @Query(filter: #Predicate<Site> { $0.id == 1 }) var sites: [Site]
     
@@ -211,3 +212,4 @@ struct EventTable: View {
             .frame(width: 600, height: 400) // Good size for table preview
     }
 }
+#endif
