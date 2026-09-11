@@ -207,11 +207,11 @@ final class LicenseSeatReconcilerTests: XCTestCase {
             17
         )
         XCTAssertEqual(
-            SubscriptionPricing.annualSavingsPercent(monthly: 24.99, annual: 249),
+            SubscriptionPricing.annualSavingsPercent(monthly: 24.99, annual: 249.99),
             17
         )
         XCTAssertEqual(
-            SubscriptionPricing.annualSavingsPercent(monthly: 14.99, annual: 149.90),
+            SubscriptionPricing.annualSavingsPercent(monthly: 14.99, annual: 149.99),
             17
         )
         XCTAssertNil(SubscriptionPricing.annualSavingsPercent(monthly: 10, annual: 120))
