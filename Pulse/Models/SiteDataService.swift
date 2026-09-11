@@ -204,7 +204,7 @@ actor SiteDataService {
                 let devices = (try? context.fetch(deviceFetchDescriptor)) ?? []
                 logger.debug("Found \(devices.count) devices to process")
                 
-                let zabbixIds = devices.map { String($0.zabbixId) }
+                let zabbixIds = Array(Set(devices.map { String($0.zabbixId) }))
                 let batches = chunk(array: zabbixIds, size: batchSize)
                 logger.debug("Created \(batches.count) batches of size \(batchSize)")
 
@@ -271,14 +271,24 @@ actor SiteDataService {
         
         let existingEvents = (try? context.fetch(descriptor)) ?? []
         logger.debug("Fetched \(existingEvents.count) existing events")
-        
-        // Create lookup dictionaries
-        let existingEventsDict = Dictionary(uniqueKeysWithValues:
-            existingEvents.map { ($0.eventId, $0) }
+
+        // Last-wins. `uniqueKeysWithValues` traps in Release when
+        // problem.get returns the same eventid twice (duplicate zabbix
+        // host ids, overlapping batches, or a trigger on more than one
+        // host).
+        let existingEventsDict = Dictionary(
+            existingEvents.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
-        let propertiesDict = Dictionary(uniqueKeysWithValues:
-            eventPropertiesList.map { ($0.eventId, $0) }
+        let propertiesDict = Dictionary(
+            eventPropertiesList.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
+        if propertiesDict.count != eventPropertiesList.count {
+            logger.debug(
+                "Collapsed \(eventPropertiesList.count - propertiesDict.count) duplicate problem rows"
+            )
+        }
         
         logger.debug("Created lookup dictionaries")
         
@@ -380,7 +390,7 @@ actor SiteDataService {
             if let eventIds = eventIds {
                 apiParameters = eventIds
             } else {
-                apiParameters = devices.map { String($0.zabbixId) }
+                apiParameters = Array(Set(devices.map { String($0.zabbixId) }))
             }
             
             let batches = chunk(array: apiParameters, size: batchSize)

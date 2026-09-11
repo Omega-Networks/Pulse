@@ -86,7 +86,8 @@ actor PowerSenseSyncActor {
         // Pre-fetch ALL existing devices once into a dictionary (O(1) lookup)
         let allExistingDevices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
         var existingDevicesById: [String: PowerSenseDevice] = Dictionary(
-            uniqueKeysWithValues: allExistingDevices.map { ($0.deviceId, $0) }
+            allExistingDevices.map { ($0.deviceId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
         logger.info("Pre-fetched \(existingDevicesById.count) existing devices for bulk lookup")
 
@@ -152,10 +153,11 @@ actor PowerSenseSyncActor {
         // Build device lookup ONCE for all batches
         let allDevices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
         let devicesByName: [String: PowerSenseDevice] = Dictionary(
-            uniqueKeysWithValues: allDevices.compactMap { device -> (String, PowerSenseDevice)? in
+            allDevices.compactMap { device -> (String, PowerSenseDevice)? in
                 guard let name = device.name else { return nil }
                 return (name, device)
-            }
+            },
+            uniquingKeysWith: { _, last in last }
         )
         logger.debug("Built device lookup: \(devicesByName.count) devices by name")
 
@@ -197,13 +199,15 @@ actor PowerSenseSyncActor {
             }
         )
         let existingEvents = try modelContext.fetch(existingEventsDescriptor)
-        let existingEventsDict = Dictionary(uniqueKeysWithValues:
-            existingEvents.map { ($0.eventId, $0) }
+        let existingEventsDict = Dictionary(
+            existingEvents.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
 
-        // Step 2: Properties lookup
-        let propertiesDict = Dictionary(uniqueKeysWithValues:
-            eventPropertiesList.map { ($0.eventId, $0) }
+        // Step 2: Properties lookup. Last-wins: problem.get can repeat eventid.
+        let propertiesDict = Dictionary(
+            eventPropertiesList.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
 
         // Step 3: Update existing events, track affected devices
@@ -354,8 +358,9 @@ actor PowerSenseSyncActor {
         let activeProblemIds = Set(problems.map { $0.eventId })
 
         let existingEvents = try modelContext.fetch(FetchDescriptor<PowerSenseEvent>())
-        let existingEventsDict = Dictionary(uniqueKeysWithValues:
-            existingEvents.map { ($0.eventId, $0) }
+        let existingEventsDict = Dictionary(
+            existingEvents.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
 
         var activeCount = 0
@@ -379,10 +384,11 @@ actor PowerSenseSyncActor {
             // Build device lookup for event linking
             let allDevices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
             let devicesByName: [String: PowerSenseDevice] = Dictionary(
-                uniqueKeysWithValues: allDevices.compactMap { device -> (String, PowerSenseDevice)? in
+                allDevices.compactMap { device -> (String, PowerSenseDevice)? in
                     guard let name = device.name else { return nil }
                     return (name, device)
-                }
+                },
+                uniquingKeysWith: { _, last in last }
             )
             let newEventCount = try processPowerSenseEvents(newProblems, modelContext: modelContext, devicesByName: devicesByName)
             activeCount += newEventCount
