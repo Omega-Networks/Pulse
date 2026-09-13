@@ -103,7 +103,7 @@ struct HistoryData {
  A struct that represents the properties of a History record.
  It conforms to Decodable for JSON parsing.
  */
-struct HistoryProperties: Decodable {
+struct HistoryProperties: Decodable, Sendable {
     
     // MARK: Codable
     

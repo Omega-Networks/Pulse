@@ -243,7 +243,7 @@ final class Event {
 //},
 
 /// A struct encapsulating the properties of an Event.
-struct EventProperties: Decodable {
+struct EventProperties: Decodable, Sendable {
     
     // MARK: - Codable
     
@@ -262,9 +262,20 @@ struct EventProperties: Decodable {
     
     struct Host: Decodable {
         let hostId: String
-        
+
         private enum CodingKeys: String, CodingKey {
             case hostId = "hostid"
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            if let s = try? values.decode(String.self, forKey: .hostId) {
+                hostId = s
+            } else if let i = try? values.decode(Int64.self, forKey: .hostId) {
+                hostId = String(i)
+            } else {
+                throw SwiftDataError.missingData
+            }
         }
     }
     
@@ -287,19 +298,26 @@ struct EventProperties: Decodable {
     
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        
-        let rawEventId = try? values.decode(String.self, forKey: .eventId)
-        let rawName = try? values.decode(String.self, forKey: .name)
-        let rawValue = try? values.decode(String.self, forKey: .value)
-        let rawSource = try? values.decode(String.self, forKey: .source)
-        let rawObject = try? values.decode(String.self, forKey: .object)
-        let rawObjectId = try? values.decode(String.self, forKey: .objectId)
-        let rawRClock = try? values.decode(String.self, forKey: .rClock)
-        let rawClock = try? values.decode(String.self, forKey: .clock)
-        let rawAcknowledged = try? values.decode(String.self, forKey: .acknowledged)
-        let rawSeverity = try? values.decode(String.self, forKey: .severity)
-        let rawOpData = try? values.decode(String.self, forKey: .opData)
-        let rawSuppressed = try? values.decode(String.self, forKey: .suppressed)
+
+        func flex(_ key: CodingKeys) -> String? {
+            if let s = try? values.decode(String.self, forKey: key) { return s }
+            if let i = try? values.decode(Int64.self, forKey: key) { return String(i) }
+            if let d = try? values.decode(Double.self, forKey: key) { return String(d) }
+            return nil
+        }
+
+        let rawEventId = flex(.eventId)
+        let rawName = flex(.name)
+        let rawValue = flex(.value)
+        let rawSource = flex(.source)
+        let rawObject = flex(.object)
+        let rawObjectId = flex(.objectId)
+        let rawRClock = flex(.rClock)
+        let rawClock = flex(.clock)
+        let rawAcknowledged = flex(.acknowledged)
+        let rawSeverity = flex(.severity)
+        let rawOpData = flex(.opData)
+        let rawSuppressed = flex(.suppressed)
         
         // Nested Hosts attributes
         var rawHostIds: [String] = []

@@ -171,24 +171,27 @@ actor SiteDataService {
     func getProblems(using eventIds: [String]? = nil, hostIds: [String]? = nil) async {
         let logger = Logger(subsystem: "zabbix", category: "problemSync")
         let batchSize = 200
-        let maxRetries = 3
-        
+
+        let config = await Configuration.shared
+        guard await config.isZabbixReady() else {
+            logger.debug("Zabbix not configured; skipping problem sync")
+            return
+        }
+
         logger.debug("Starting problem sync process")
-        let startTime = Date()
-        
-        
+
         do {
             if let eventIds = eventIds {
-                // Fast path - just update specific events
                 logger.debug("Fetching specific events: \(eventIds)")
-                let eventPropertiesList = try await fetchHostProblems(eventIds: eventIds)
-                await processEvents(eventPropertiesList, modelContainer: modelContainer)
+                let decoded = try await fetchHostProblems(eventIds: eventIds)
+                await processEvents(decoded.items, modelContainer: modelContainer)
+                try stampZabbixUpdate()
                 
             } else if let hostIds = hostIds {
-                // Specific hosts path - just update those hosts
                 logger.debug("Fetching problems for hosts: \(hostIds)")
-                let eventPropertiesList = try await fetchHostProblems(hostIds: hostIds)
-                await processEvents(eventPropertiesList, modelContainer: modelContainer)
+                let decoded = try await fetchHostProblems(hostIds: hostIds)
+                await processEvents(decoded.items, modelContainer: modelContainer)
+                try stampZabbixUpdate()
                 
             } else {
                 // Full sync path
@@ -201,68 +204,45 @@ actor SiteDataService {
                 let devices = (try? context.fetch(deviceFetchDescriptor)) ?? []
                 logger.debug("Found \(devices.count) devices to process")
                 
-                let zabbixIds = devices.map { String($0.zabbixId) }
+                let zabbixIds = Array(Set(devices.map { String($0.zabbixId) }))
                 let batches = chunk(array: zabbixIds, size: batchSize)
                 logger.debug("Created \(batches.count) batches of size \(batchSize)")
-                
-                // Process batches and collect current event IDs
-                var currentEventIds: Set<String> = []
-                try await withThrowingTaskGroup(of: [String].self) { group in
-                    for (index, batch) in batches.enumerated() {
-                        group.addTask {
-                            logger.debug("Processing batch \(index + 1)/\(batches.count)")
-                            var lastError: Error?
-                            for attempt in 1...maxRetries {
-                                do {
-                                    let eventPropertiesList = try await fetchHostProblems(hostIds: batch)
-                                    await self.processEvents(eventPropertiesList, modelContainer: self.modelContainer)
-                                    return eventPropertiesList.map { $0.eventId }
-                                } catch {
-                                    lastError = error
-                                    logger.error("Batch \(index + 1) attempt \(attempt) failed: \(error.localizedDescription)")
-                                    if attempt < maxRetries {
-                                        try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000)
-                                        continue
-                                    }
-                                }
-                            }
-                            throw lastError ?? NSError(domain: "BatchProcessing", code: -1,
-                                                 userInfo: [NSLocalizedDescriptionKey: "All retries failed"])
-                        }
-                    }
 
-                    // Collect all event IDs from successful batches
-                    for try await batchEventIds in group {
-                        currentEventIds.formUnion(batchEventIds)
-                    }
+                let parts = try await mapZabbixBatchesCapped(batches) { index, batch in
+                    logger.debug("Processing problem batch \(index + 1)/\(batches.count)")
+                    return try await fetchHostProblems(hostIds: batch)
                 }
-                
-                // Delete outdated events
-                logger.debug("Cleaning up old events")
-                try context.delete(
-                    model: Event.self,
-                    where: #Predicate<Event> { event in
-                        !currentEventIds.contains(event.eventId)
-                    }
-                )
-                try context.save()
-                logger.debug("Successfully cleaned up old events")
-                refreshSeverities(in: context)
-                try context.save()
+                var items: [EventProperties] = []
+                var skipped = 0
+                for part in parts {
+                    items.append(contentsOf: part.items)
+                    skipped += part.skipped
+                }
+                await processEvents(items, modelContainer: modelContainer)
+
+                let currentEventIds = Set(items.map(\.eventId))
+                let fetchComplete = skipped == 0
+                if fetchComplete {
+                    logger.debug("Cleaning up old events")
+                    try context.delete(
+                        model: Event.self,
+                        where: #Predicate<Event> { event in
+                            !currentEventIds.contains(event.eventId)
+                        }
+                    )
+                    try context.save()
+                    refreshSeverities(in: context)
+                    try context.save()
+                } else {
+                    logger.debug("Skipping stale-event delete; skipped=\(skipped)")
+                }
+
+                if fetchComplete {
+                    try stampZabbixUpdate()
+                }
             }
-            
-            // Update last sync time
-            let finalContext = ModelContext(modelContainer)
-            if let syncProvider = try? finalContext.fetch(FetchDescriptor<SyncProvider>()).first {
-                syncProvider.lastZabbixUpdate = Date()
-                logger.debug("Updated last sync time")
-                try finalContext.save()
-            }
-            
+
             logger.debug("Problem sync process completed successfully")
-            // Performance Testing
-            let timeElapsed = Date().timeIntervalSince(startTime)
-            print("Total time elapsed: \(timeElapsed) seconds")
             await MainActor.run { Self.dismissZabbixWarningIfNeeded() }
 
         } catch {
@@ -291,14 +271,24 @@ actor SiteDataService {
         
         let existingEvents = (try? context.fetch(descriptor)) ?? []
         logger.debug("Fetched \(existingEvents.count) existing events")
-        
-        // Create lookup dictionaries
-        let existingEventsDict = Dictionary(uniqueKeysWithValues:
-            existingEvents.map { ($0.eventId, $0) }
+
+        // Last-wins. `uniqueKeysWithValues` traps in Release when
+        // problem.get returns the same eventid twice (duplicate zabbix
+        // host ids, overlapping batches, or a trigger on more than one
+        // host).
+        let existingEventsDict = Dictionary(
+            existingEvents.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
-        let propertiesDict = Dictionary(uniqueKeysWithValues:
-            eventPropertiesList.map { ($0.eventId, $0) }
+        let propertiesDict = Dictionary(
+            eventPropertiesList.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
+        if propertiesDict.count != eventPropertiesList.count {
+            logger.debug(
+                "Collapsed \(eventPropertiesList.count - propertiesDict.count) duplicate problem rows"
+            )
+        }
         
         logger.debug("Created lookup dictionaries")
         
@@ -365,7 +355,6 @@ actor SiteDataService {
     func getEvents(using eventIds: [String]? = nil, deviceIds: [String]? = nil) async {
         let logger = Logger(subsystem: "zabbix", category: "eventSync")
         let batchSize = 200
-        let maxRetries = 3
         
         logger.debug("Starting event sync process")
         
@@ -401,91 +390,115 @@ actor SiteDataService {
             if let eventIds = eventIds {
                 apiParameters = eventIds
             } else {
-                apiParameters = devices.map { String($0.zabbixId) }
+                apiParameters = Array(Set(devices.map { String($0.zabbixId) }))
             }
             
             let batches = chunk(array: apiParameters, size: batchSize)
             logger.debug("Created \(batches.count) batches for processing")
-                        
-            try await withThrowingTaskGroup(of: [(String, [EventProperties])].self) { group in
-                // Create tasks for each batch
-                for (index, batch) in batches.enumerated() {
-                    group.addTask {
-                        logger.debug("Processing batch \(index + 1)/\(batches.count)")
-                        var lastError: Error?
-                        for attempt in 1...maxRetries {
-                            do {
-                                let eventPropertiesList = try await fetchHostEvents(
-                                    hostIds: eventIds == nil ? batch : nil,  // Fix the condition
-                                    eventIds: eventIds != nil ? batch : nil
-                                )
-                                return eventPropertiesList.flatMap { event in
-                                    event.hostIds.map { hostId in (hostId, [event]) }
-                                }
-                            } catch {
-                                lastError = error
-                                if attempt < maxRetries {
-                                    try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000)
-                                    continue
-                                }
-                            }
-                        }
-                        throw lastError ?? NSError(domain: "BatchProcessing", code: -1,
-                                                 userInfo: [NSLocalizedDescriptionKey: "All retries failed"])
-                    }
+
+            let mapped = try await mapZabbixBatchesCapped(batches) { index, batch in
+                logger.debug("Processing event batch \(index + 1)/\(batches.count)")
+                let decoded = try await fetchHostEvents(
+                    hostIds: eventIds == nil ? batch : nil,
+                    eventIds: eventIds != nil ? batch : nil
+                )
+                return decoded.items.flatMap { event in
+                    event.hostIds.map { hostId in (hostId, [event]) }
                 }
-                
-                // Process results and map to devices
-                let context = ModelContext(modelContainer)
-                var mappedEvents: [Event] = []
-                for try await batchResults in group {
-                    for (hostId, events) in batchResults {
-                        // Fetch device if not already in our devices array
-                        let device: Device?
-                        if let existingDevice = devices.first(where: { String($0.zabbixId) == hostId }) {
-                            device = existingDevice
-                        } else {
-                            let zabbixIdInt = Int64(hostId) ?? 0
-                            let descriptor = FetchDescriptor<Device>(
-                                predicate: #Predicate<Device> { $0.zabbixId == zabbixIdInt }
-                            )
-                            device = try? context.fetch(descriptor).first
-                        }
-                        
-                        guard device != nil else { continue }
-                                                
-                        // Update or insert events
-                        for eventProperty in events {
-                            let searchEventId = eventProperty.eventId  // Keep as String
-                            let descriptor = FetchDescriptor<Event>(
-                                predicate: #Predicate<Event> { event in
-                                    event.eventId == searchEventId
-                                }
-                            )
-                            
-                            if let existing = try? context.fetch(descriptor).first {
-                                existing.update(with: eventProperty, device: device)
-                                mappedEvents.append(existing)
-                                logger.debug("Updated existing event: \(searchEventId)")
-                            } else {
-                                let event = Event(eventId: searchEventId)
-                                event.update(with: eventProperty, device: device)
-                                context.insert(event)
-                                mappedEvents.append(event)
-                                logger.debug("Inserted new event: \(searchEventId)")
-                            }
-                        }
-                    }
-                    try context.save()
-                }
-                refreshSeverities(in: context, events: mappedEvents)
-                try? context.save()
             }
+
+            let context = ModelContext(modelContainer)
+            var mappedEvents: [Event] = []
+            for batchResults in mapped {
+                for (hostId, events) in batchResults {
+                    let device: Device?
+                    if let existingDevice = devices.first(where: { String($0.zabbixId) == hostId }) {
+                        device = existingDevice
+                    } else {
+                        let zabbixIdInt = Int64(hostId) ?? 0
+                        let descriptor = FetchDescriptor<Device>(
+                            predicate: #Predicate<Device> { $0.zabbixId == zabbixIdInt }
+                        )
+                        device = try? context.fetch(descriptor).first
+                    }
+
+                    guard device != nil else { continue }
+
+                    for eventProperty in events {
+                        let searchEventId = eventProperty.eventId
+                        let descriptor = FetchDescriptor<Event>(
+                            predicate: #Predicate<Event> { event in
+                                event.eventId == searchEventId
+                            }
+                        )
+
+                        if let existing = try? context.fetch(descriptor).first {
+                            existing.update(with: eventProperty, device: device)
+                            mappedEvents.append(existing)
+                        } else {
+                            let event = Event(eventId: searchEventId)
+                            event.update(with: eventProperty, device: device)
+                            context.insert(event)
+                            mappedEvents.append(event)
+                        }
+                    }
+                }
+            }
+            try context.save()
+            refreshSeverities(in: context, events: mappedEvents)
+            try? context.save()
             
             logger.debug("Event sync completed successfully")
             
         } catch {
             logger.error("Failed to sync events: \(error.localizedDescription)")
+        }
+    }
+
+    private func stampZabbixUpdate() throws {
+        let context = ModelContext(modelContainer)
+        if let syncProvider = try context.fetch(FetchDescriptor<SyncProvider>()).first {
+            syncProvider.lastZabbixUpdate = Date()
+            try context.save()
+        }
+    }
+
+    private func mapZabbixBatchesCapped<Out: Sendable>(
+        _ batches: [[String]],
+        operation: @escaping @Sendable (Int, [String]) async throws -> Out
+    ) async throws -> [Out] {
+        let maxInFlight = 4
+        let maxRetries = 3
+        return try await withThrowingTaskGroup(of: Out.self) { group in
+            var iterator = batches.enumerated().makeIterator()
+            func submitNext() {
+                guard let (index, batch) = iterator.next() else { return }
+                group.addTask {
+                    var lastError: Error?
+                    for attempt in 1...maxRetries {
+                        do {
+                            return try await operation(index, batch)
+                        } catch {
+                            lastError = error
+                            if attempt < maxRetries {
+                                try await Task.sleep(
+                                    nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000
+                                )
+                            }
+                        }
+                    }
+                    throw lastError ?? ZabbixError.unreachable
+                }
+            }
+            for _ in 0..<min(maxInFlight, batches.count) {
+                submitNext()
+            }
+            var results: [Out] = []
+            while let value = try await group.next() {
+                results.append(value)
+                submitNext()
+            }
+            return results
         }
     }
 

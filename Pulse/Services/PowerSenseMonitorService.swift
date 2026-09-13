@@ -315,7 +315,10 @@ actor BackgroundMonitorActor {
                 predicate: #Predicate { eventIds.contains($0.eventId) }
             )
         )
-        let existingDict = Dictionary(uniqueKeysWithValues: existingEvents.map { ($0.eventId, $0) })
+        let existingDict = Dictionary(
+            existingEvents.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
+        )
 
         // Step 3: Categorize problems, tracking affected devices
         var newEventIds: [String] = []
@@ -430,19 +433,26 @@ actor BackgroundMonitorActor {
         logger.debug("Fetched \(allDetailedEvents.count) events in \(String(format: "%.2f", fetchDuration))s (\(batches.count) batch(es))")
 
         // Build lookup
-        let detailedEventsDict = Dictionary(uniqueKeysWithValues: allDetailedEvents.map { ($0.eventId, $0) })
+        let detailedEventsDict = Dictionary(
+            allDetailedEvents.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
+        )
 
         // Pre-fetch devices by zabbixHostId
         let allDevices = try modelContext.fetch(FetchDescriptor<PowerSenseDevice>())
-        let devicesByHostId: [String: PowerSenseDevice] = Dictionary(uniqueKeysWithValues:
+        let devicesByHostId = Dictionary(
             allDevices.compactMap { device -> (String, PowerSenseDevice)? in
                 guard let hostId = device.zabbixHostId else { return nil }
                 return (hostId, device)
-            }
+            },
+            uniquingKeysWith: { _, last in last }
         )
 
         // Create problem lookup
-        let problemDict = Dictionary(uniqueKeysWithValues: validProblems.map { ($0.eventId, $0) })
+        let problemDict = Dictionary(
+            validProblems.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
+        )
 
         var linkedCount = 0
         var unlinkedCount = 0
@@ -514,7 +524,10 @@ actor BackgroundMonitorActor {
 
         // Filter valid problems
         let validProblems = problems.filter { $0.ontDeviceName != nil }
-        let problemDict = Dictionary(uniqueKeysWithValues: validProblems.map { ($0.eventId, $0) })
+        let problemDict = Dictionary(
+            validProblems.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
+        )
 
         // Update resolutions
         var resolvedCount = 0

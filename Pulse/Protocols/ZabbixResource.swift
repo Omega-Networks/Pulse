@@ -119,42 +119,28 @@ extension ZabbixResource {
             
             // Get base URL from configuration
             let zabbixServer = await Configuration.shared.getZabbixApiServer()
-            guard !zabbixServer.isEmpty,
-                  let url = URL(string: zabbixServer)?.appendingPathComponent("zabbix/api_jsonrpc.php") else {
+            guard !zabbixServer.isEmpty else {
                 logger.error("Zabbix server URL not configured or invalid")
                 throw ZabbixError.invalidRequest
             }
-            
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json-rpc", forHTTPHeaderField: "Content-Type")
+            let endpoint = try ZabbixServerURL.jsonRPCEndpoint(zabbixServer)
 
             let mode = await Configuration.shared.getZabbixAuthMode()
-            var bodyAuth: String?
+            var applied = ZabbixJSONRPC.AppliedAuth(bodyAuth: nil, bearerHeader: nil)
             if ZabbixJSONRPC.methodNeedsAuth(method) {
                 let credential = try await ZabbixAPI.shared.credential(for: mode)
-                let applied = ZabbixJSONRPC.appliedAuth(
+                applied = ZabbixJSONRPC.appliedAuth(
                     mode: mode, method: method, credential: credential
                 )
-                bodyAuth = applied.bodyAuth
-                if let bearer = applied.bearerHeader {
-                    request.setValue(bearer, forHTTPHeaderField: "Authorization")
-                }
             }
 
-            let requestData = ZabbixJSONRPC.requestBody(
+            let request = try ZabbixJSONRPC.urlRequest(
+                endpoint: endpoint,
                 method: method,
                 params: params ?? [:],
-                id: 1,
-                bodyAuth: bodyAuth
+                applied: applied,
+                extraHeaders: headers
             )
-            request.httpBody = try JSONSerialization.data(withJSONObject: requestData)
-
-            if let headers = headers {
-                for (key, value) in headers {
-                    request.setValue(value, forHTTPHeaderField: key)
-                }
-            }
             
             logger.debug("Total request generation took: \(Date().timeIntervalSince(startTime))s")
             return request
@@ -183,6 +169,7 @@ func zabbixJSONObject(from data: Data) throws -> [String: Any] {
 
 enum ZabbixError: Error, LocalizedError, Equatable {
     case invalidRequest
+    case invalidServerURL(String)
     case invalidResponse(String)
     case authenticationFailed
     case sessionExpired
@@ -192,6 +179,7 @@ enum ZabbixError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidRequest: return "Zabbix is not configured."
+        case .invalidServerURL: return "Zabbix server URL must be https with a host and no userinfo."
         case .invalidResponse(let message): return "Zabbix returned an error: \(message)"
         case .authenticationFailed: return "Zabbix authentication failed. Check the API user and token in Settings."
         case .sessionExpired: return "The Zabbix session expired."
@@ -211,7 +199,7 @@ enum ZabbixError: Error, LocalizedError, Equatable {
     static func status(from error: Error) -> RequestStatusManager.RequestStatus {
         let zabbix = fromTransport(error)
         switch zabbix {
-        case .unreachable, .invalidRequest:
+        case .unreachable, .invalidRequest, .invalidServerURL:
             return .connectionError(zabbix.localizedDescription)
         case .authenticationFailed, .sessionExpired:
             return .authenticationFailure(code: 401, message: zabbix.localizedDescription)
@@ -396,7 +384,7 @@ struct RetrieveHistoryResource: ZabbixResource {
 }
 
 //MARK: Retrieving Event data
-func fetchHostEvents(hostIds: [String]? = nil, eventIds: [String]? = nil) async throws -> [EventProperties] {
+func fetchHostEvents(hostIds: [String]? = nil, eventIds: [String]? = nil) async throws -> ZabbixJSONRPC.DecodedList<EventProperties> {
     let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
     
     logger.debug("Fetching events: hostIds=\(hostIds?.description ?? "nil"), eventIds=\(eventIds?.description ?? "nil")")
@@ -416,16 +404,12 @@ func fetchHostEvents(hostIds: [String]? = nil, eventIds: [String]? = nil) async 
     }
     
     let jsonObject = try zabbixJSONObject(from: data)
-    guard let result = jsonObject["result"] as? [[String: Any]] else {
-        throw ZabbixError.fromRPC(jsonObject)
-    }
-    let jsonData = try JSONSerialization.data(withJSONObject: result)
-    let events = try JSONDecoder().decode([EventProperties].self, from: jsonData)
-    logger.debug("Successfully fetched \(events.count) events")
-    return events
+    let decoded = try ZabbixJSONRPC.decodeElements(EventProperties.self, from: jsonObject)
+    logger.debug("Successfully fetched \(decoded.items.count) events skipped=\(decoded.skipped)")
+    return decoded
 }
 
-func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) async throws -> [EventProperties] {
+func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) async throws -> ZabbixJSONRPC.DecodedList<EventProperties> {
     let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
     
     guard hostIds != nil || eventIds != nil else {
@@ -448,13 +432,9 @@ func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) asyn
     }
     
     let jsonObject = try zabbixJSONObject(from: data)
-    guard let result = jsonObject["result"] as? [[String: Any]] else {
-        throw ZabbixError.fromRPC(jsonObject)
-    }
-    let jsonData = try JSONSerialization.data(withJSONObject: result)
-    let problems = try JSONDecoder().decode([EventProperties].self, from: jsonData)
-    logger.debug("Successfully fetched \(problems.count) problems")
-    return problems
+    let decoded = try ZabbixJSONRPC.decodeElements(EventProperties.self, from: jsonObject)
+    logger.debug("Successfully fetched \(decoded.items.count) problems skipped=\(decoded.skipped)")
+    return decoded
 }
 
 func updateHostEvents(params: UpdateParameters) async throws {
@@ -472,11 +452,17 @@ func updateHostEvents(params: UpdateParameters) async throws {
     
     let resource = EventAcknowledgeResource(params: jsonBody)
     let request = try await resource.request
-    let (data, _) = try await URLSession.shared.data(for: request)
-    
-    if let responseString = String(data: data, encoding: .utf8) {
-        logger.debug("Update successful. Response: \(responseString)")
+    let data: Data
+    do {
+        (data, _) = try await URLSession.shared.data(for: request)
+    } catch {
+        throw ZabbixError.fromTransport(error)
     }
+    let jsonObject = try zabbixJSONObject(from: data)
+    guard jsonObject["result"] != nil else {
+        throw ZabbixError.fromRPC(jsonObject)
+    }
+    logger.debug("event.acknowledge accepted for \(params.eventIds.count) events")
 }
 
 
@@ -496,13 +482,9 @@ func fetchItems(hostId: Int64) async throws -> [ItemProperties] {
     }
     
     let jsonObject = try zabbixJSONObject(from: data)
-    guard let result = jsonObject["result"] as? [[String: Any]] else {
-        throw ZabbixError.fromRPC(jsonObject)
-    }
-    let jsonData = try JSONSerialization.data(withJSONObject: result)
-    let items = try JSONDecoder().decode([ItemProperties].self, from: jsonData)
-    logger.debug("Successfully fetched \(items.count) items")
-    return items
+    let decoded = try ZabbixJSONRPC.decodeElements(ItemProperties.self, from: jsonObject)
+    logger.debug("Successfully fetched \(decoded.items.count) items skipped=\(decoded.skipped)")
+    return decoded.items
 }
 
 // Function to fetch Histories
@@ -529,13 +511,9 @@ func fetchHistories(itemId: String, timeFrom: Date? = nil, timeTill: Date? = nil
     let (data, _) = try await URLSession.shared.data(for: request)
     
     let jsonObject = try zabbixJSONObject(from: data)
-    guard let result = jsonObject["result"] as? [[String: Any]] else {
-        throw ZabbixError.fromRPC(jsonObject)
-    }
-    let jsonData = try JSONSerialization.data(withJSONObject: result)
-    let histories = try JSONDecoder().decode([HistoryProperties].self, from: jsonData)
-    logger.debug("Successfully fetched \(histories.count) history entries")
-    return histories
+    let decoded = try ZabbixJSONRPC.decodeElements(HistoryProperties.self, from: jsonObject)
+    logger.debug("Successfully fetched \(decoded.items.count) history entries skipped=\(decoded.skipped)")
+    return decoded.items
 }
 
 // MARK: Consolidate to single URL Resource

@@ -142,4 +142,90 @@ final class ZabbixJSONRPCTests: XCTestCase {
             .apiToken
         )
     }
+
+    func testHostOnlyURLUsesDefaultZabbixJsonRPCPath() throws {
+        let url = try ZabbixServerURL.jsonRPCEndpoint("https://zabbix.example.com")
+        XCTAssertEqual(url.absoluteString, "https://zabbix.example.com/zabbix/api_jsonrpc.php")
+    }
+
+    func testZabbixPathAppendsJsonRPCFile() throws {
+        let url = try ZabbixServerURL.jsonRPCEndpoint("https://zabbix.example.com/zabbix")
+        XCTAssertEqual(url.absoluteString, "https://zabbix.example.com/zabbix/api_jsonrpc.php")
+    }
+
+    func testHTTPServerURLIsRejected() {
+        XCTAssertThrowsError(try ZabbixServerURL.parse("http://zabbix.example.com")) { error in
+            XCTAssertEqual(error as? ZabbixError, .invalidServerURL("http://zabbix.example.com"))
+        }
+    }
+
+    func testUserinfoServerURLIsRejected() {
+        XCTAssertThrowsError(try ZabbixServerURL.parse("https://token@zabbix.example.com")) { error in
+            XCTAssertEqual(
+                error as? ZabbixError,
+                .invalidServerURL("https://token@zabbix.example.com")
+            )
+        }
+    }
+
+    func testEmptyServerURLIsInvalidRequest() {
+        XCTAssertThrowsError(try ZabbixServerURL.parse("  ")) { error in
+            XCTAssertEqual(error as? ZabbixError, .invalidRequest)
+        }
+    }
+
+    func testDecodeSkipsPoisonElement() throws {
+        struct Row: Decodable, Sendable { let eventid: String }
+        let object: [String: Any] = [
+            "jsonrpc": "2.0",
+            "result": [
+                ["eventid": "1"],
+                ["nope": true]
+            ],
+            "id": 1
+        ]
+        let decoded = try ZabbixJSONRPC.decodeElements(Row.self, from: object)
+        XCTAssertEqual(decoded.items.map(\.eventid), ["1"])
+        XCTAssertEqual(decoded.skipped, 1)
+    }
+
+    func testDecodeMissingResultIsRPCError() {
+        let object: [String: Any] = [
+            "error": [
+                "code": -32600,
+                "message": "Invalid request.",
+                "data": "Invalid parameter \"/\": unexpected parameter \"auth\"."
+            ]
+        ]
+        XCTAssertThrowsError(try ZabbixJSONRPC.decodeElements(TinyID.self, from: object)) { error in
+            XCTAssertEqual(
+                error as? ZabbixError,
+                .invalidResponse(
+                    "Zabbix 7.2+ rejected body auth. Use API token authentication (default) in Settings."
+                )
+            )
+        }
+    }
+
+    func testURLRequestTimeoutAndBearer() throws {
+        let endpoint = try ZabbixServerURL.jsonRPCEndpoint("https://zabbix.example.com/zabbix")
+        let applied = ZabbixJSONRPC.appliedAuth(
+            mode: .apiToken, method: "problem.get", credential: "tok"
+        )
+        let request = try ZabbixJSONRPC.urlRequest(
+            endpoint: endpoint,
+            method: "problem.get",
+            params: [:],
+            applied: applied,
+            extraHeaders: nil
+        )
+        XCTAssertEqual(request.timeoutInterval, ZabbixServerURL.timeout)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+        let body = try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any]
+        XCTAssertNil(body?["auth"])
+    }
+}
+
+private struct TinyID: Decodable, Sendable {
+    let eventid: String
 }
