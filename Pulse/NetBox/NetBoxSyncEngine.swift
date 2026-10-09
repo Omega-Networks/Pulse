@@ -454,6 +454,14 @@ actor NetBoxSyncEngine {
                     time: nil
                 )
             )
+            if self.writePolicy.deviceAndSiteWritesEnabled {
+                let tier = self.subscriptionTier()
+                try await self.applyOnStore { context in
+                    try LicenseSeatEvaluator.grantNewDevice(
+                        id: row.id, in: context, tier: tier
+                    )
+                }
+            }
             do {
                 try await self.refreshDeviceInterfaces(deviceID: row.id)
             } catch {

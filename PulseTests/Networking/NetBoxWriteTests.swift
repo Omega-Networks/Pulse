@@ -655,6 +655,81 @@ final class NetBoxWriteTests: XCTestCase {
         }
     }
 
+    func testRequireAdmitUnlimitedWithUngrantedTableSucceeds() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let role = DeviceRole(id: 1)
+        context.insert(role)
+        for id in 1...80 {
+            let device = Device(id: Int64(id))
+            device.deviceRole = role
+            context.insert(device)
+        }
+        try context.save()
+
+        let defaults = UserDefaults(suiteName: "pulse.tests.admitUnlimited")!
+        defaults.removePersistentDomain(forName: "pulse.tests.admitUnlimited")
+        RolePresentationStorage.save(.omegaDefault(), to: defaults)
+
+        try LicenseSeatEvaluator.requireAdmit(
+            roleID: 1, in: context, defaults: defaults, tier: .unlimited
+        )
+        let grants = try context.fetch(FetchDescriptor<Device>()).compactMap(\.seatGrantedAt)
+        XCTAssertTrue(grants.isEmpty)
+    }
+
+    func testRequireAdmitDoesNotRewriteExistingGrants() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let role = DeviceRole(id: 1)
+        context.insert(role)
+        let granted = Date(timeIntervalSince1970: 1_600_000_000)
+        for id in 1...10 {
+            let device = Device(id: Int64(id))
+            device.deviceRole = role
+            device.seatGrantedAt = granted
+            context.insert(device)
+        }
+        try context.save()
+
+        let defaults = UserDefaults(suiteName: "pulse.tests.admitNoRewrite")!
+        defaults.removePersistentDomain(forName: "pulse.tests.admitNoRewrite")
+        RolePresentationStorage.save(.omegaDefault(), to: defaults)
+
+        try LicenseSeatEvaluator.requireAdmit(
+            roleID: 1, in: context, defaults: defaults, tier: .free
+        )
+        let stamps = try context.fetch(FetchDescriptor<Device>()).compactMap(\.seatGrantedAt)
+        XCTAssertEqual(stamps.count, 10)
+        XCTAssertTrue(stamps.allSatisfy { $0 == granted })
+    }
+
+    func testRequireLinkBothSeatedLeavesGrants() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let role = DeviceRole(id: 1)
+        context.insert(role)
+        let granted = Date(timeIntervalSince1970: 1_600_000_000)
+        for id in 1...2 {
+            let device = Device(id: Int64(id))
+            device.deviceRole = role
+            device.seatGrantedAt = granted
+            context.insert(device)
+        }
+        try context.save()
+
+        let defaults = UserDefaults(suiteName: "pulse.tests.linkBothSeated")!
+        defaults.removePersistentDomain(forName: "pulse.tests.linkBothSeated")
+        RolePresentationStorage.save(.omegaDefault(), to: defaults)
+
+        try LicenseSeatEvaluator.requireLink(
+            a: 1, b: 2, in: context, defaults: defaults, tier: .free
+        )
+        let stamps = try context.fetch(FetchDescriptor<Device>()).compactMap(\.seatGrantedAt)
+        XCTAssertEqual(stamps.count, 2)
+        XCTAssertTrue(stamps.allSatisfy { $0 == granted })
+    }
+
     func testCreateBillableDeviceAtCapIsRefused() async throws {
         let container = try makeContainer()
         let seed = ModelContext(container)
@@ -726,6 +801,79 @@ final class NetBoxWriteTests: XCTestCase {
         XCTAssertEqual(fetcher.sends.map(\.path), ["/api/dcim/devices/"])
         XCTAssertTrue(
             try ModelContext(container).fetch(FetchDescriptor<Device>()).contains { $0.id == 51 }
+        )
+        XCTAssertNotNil(
+            try ModelContext(container).fetch(FetchDescriptor<Device>()).first { $0.id == 51 }?.seatGrantedAt
+        )
+    }
+
+    func testCreateDeviceGrantsSeatUnderCap() async throws {
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 4))
+        seed.insert(DeviceRole(id: 1))
+        seed.insert(DeviceType(id: 8))
+        try seed.save()
+
+        let created = Data(
+            #"{"id":9,"name":"core-1","site":{"id":4},"role":{"id":1},"device_type":{"id":8}}"#.utf8
+        )
+        let fetcher = WriteFetcher()
+        fetcher.sendQueue = [
+            NetBoxHTTPResponse(status: 201, body: created, etag: nil),
+        ]
+        fetcher.getBodies["/api/dcim/devices/9/"] = created
+        fetcher.getBodies["/api/dcim/interfaces/"] = Data(
+            #"{"count":0,"next":null,"results":[]}"#.utf8
+        )
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.createDevice(
+            NetBoxWriteBody.DeviceCreate(
+                name: "core-1", deviceType: 8, role: 1, site: 4, status: "active"
+            )
+        )
+        let row = try ModelContext(container).fetch(FetchDescriptor<Device>()).first { $0.id == 9 }
+        XCTAssertNotNil(row?.seatGrantedAt)
+    }
+
+    func testCreateDeviceUnlimitedDoesNotRefuseFullUngrantedTable() async throws {
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 4))
+        let role = DeviceRole(id: 1)
+        seed.insert(role)
+        seed.insert(DeviceType(id: 8))
+        for id in 1...80 {
+            let device = Device(id: Int64(id))
+            device.deviceRole = role
+            seed.insert(device)
+        }
+        try seed.save()
+
+        let created = Data(
+            #"{"id":81,"name":"plus-u","site":{"id":4},"role":{"id":1},"device_type":{"id":8}}"#.utf8
+        )
+        let fetcher = WriteFetcher()
+        fetcher.sendQueue = [
+            NetBoxHTTPResponse(status: 201, body: created, etag: nil),
+        ]
+        fetcher.getBodies["/api/dcim/devices/81/"] = created
+        fetcher.getBodies["/api/dcim/interfaces/"] = Data(
+            #"{"count":0,"next":null,"results":[]}"#.utf8
+        )
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            subscriptionTier: { .unlimited }
+        )
+        try await engine.createDevice(
+            NetBoxWriteBody.DeviceCreate(
+                name: "plus-u", deviceType: 8, role: 1, site: 4, status: "active"
+            )
+        )
+        XCTAssertEqual(fetcher.sends.map(\.path), ["/api/dcim/devices/"])
+        XCTAssertNotNil(
+            try ModelContext(container).fetch(FetchDescriptor<Device>()).first { $0.id == 81 }?.seatGrantedAt
         )
     }
 
