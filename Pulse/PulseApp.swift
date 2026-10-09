@@ -334,6 +334,7 @@ struct PulseApp: App {
                     initState.updateProgress(step, label)
                 }
             }
+            await netBoxSyncEngine.startIdleChangelog()
 
             initState.updateProgress(16, "Setting up Tips...")
             tipManager.configure()

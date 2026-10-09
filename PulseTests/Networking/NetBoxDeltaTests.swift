@@ -293,6 +293,183 @@ final class NetBoxDeltaTests: XCTestCase {
         XCTAssertEqual(devices.first { $0.id == 30 }?.name, "hidden")
     }
 
+    func testIdleCatchUpAppliesFrontPortAndAnnounces() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/core/object-changes/"] = Data("""
+        {"count":1,"next":null,"results":[
+          {"id":11,"action":{"value":"create"},
+           "changed_object_type":"dcim.frontport","changed_object_id":7}
+        ]}
+        """.utf8)
+        fetcher.bodies["/api/dcim/front-ports/7/"] = Data(
+            #"{"id":7,"name":"1","device":{"id":5,"name":"panel"}}"#.utf8
+        )
+        let notes = NoteCounter()
+        let token = NotificationCenter.default.addObserver(
+            forName: .netBoxStoreDidApply,
+            object: nil,
+            queue: nil
+        ) { _ in
+            notes.increment()
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        await engine.runIdleCatchUp()
+
+        let ports = try ModelContext(container).fetch(FetchDescriptor<FrontPort>())
+        XCTAssertTrue(ports.contains { $0.id == 7 })
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            11
+        )
+        XCTAssertEqual(notes.count, 1)
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/"))
+    }
+
+    func testIdleCatchUpSkipsSafetyMirror() async throws {
+        let container = try makeContainer()
+        let lastFull = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        try seedWatermark(container, id: 10, lastFull: lastFull)
+        let fetcher = DeltaFetcher()
+        let notes = NoteCounter()
+        let token = NotificationCenter.default.addObserver(
+            forName: .netBoxStoreDidApply,
+            object: nil,
+            queue: nil
+        ) { _ in
+            notes.increment()
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        await engine.runIdleCatchUp()
+
+        XCTAssertTrue(fetcher.paths.isEmpty)
+        XCTAssertEqual(notes.count, 0)
+        let provider = try XCTUnwrap(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first
+        )
+        XCTAssertEqual(
+            provider.lastFullMirrorAt?.timeIntervalSince1970 ?? 0,
+            lastFull.timeIntervalSince1970,
+            accuracy: 1
+        )
+        XCTAssertEqual(provider.lastObjectChangeId, 10)
+    }
+
+    func testIdleCatchUpLeavesWatermarkWhenPageCapHits() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.unlimitedNext = true
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        await engine.runIdleCatchUp()
+
+        XCTAssertEqual(fetcher.idGtListCalls, NetBoxPageIterator.maxPages)
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/"))
+        XCTAssertEqual(fetcher.latestCursorCalls, 0)
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            10
+        )
+    }
+
+    func testSecondIdleCatchUpDoesNotListTwice() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/core/object-changes/"] = Data(#"{"count":0,"next":null,"results":[]}"#.utf8)
+        fetcher.armHold = true
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+
+        async let first: Void = engine.runIdleCatchUp()
+        await fetcher.waitUntilListBlocked()
+        await engine.runIdleCatchUp()
+        XCTAssertEqual(fetcher.idGtListCalls, 1)
+        fetcher.releaseList()
+        await first
+        XCTAssertEqual(fetcher.idGtListCalls, 1)
+    }
+
+    func testSyncAfterIdlePassAppliesAChangeTheIdlePassDidNotSee() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.armHold = true
+        fetcher.idGtQueue = [
+            Data(#"{"count":0,"next":null,"results":[]}"#.utf8),
+            Data("""
+            {"count":1,"next":null,"results":[
+              {"id":11,"action":{"value":"create"},
+               "changed_object_type":"dcim.device","changed_object_id":20}
+            ]}
+            """.utf8),
+        ]
+        fetcher.bodies["/api/dcim/devices/20/"] = Data(
+            #"{"id":20,"name":"edge","site":{"id":1},"role":{"id":2},"device_type":{"id":8}}"#.utf8
+        )
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+
+        async let idle: Void = engine.runIdleCatchUp()
+        await fetcher.waitUntilListBlocked()
+        async let synced: Void = engine.sync()
+        fetcher.releaseList()
+        await idle
+        try await synced
+
+        let devices = try ModelContext(container).fetch(FetchDescriptor<Device>())
+        XCTAssertTrue(devices.contains { $0.id == 20 })
+        XCTAssertEqual(fetcher.idGtListCalls, 2)
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/"))
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            11
+        )
+    }
+
+    func testFullSyncStillMirrorsWhileIdleListIsInFlight() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.emptySuccess = true
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.armHold = true
+        fetcher.idGtQueue = [Data(#"{"count":0,"next":null,"results":[]}"#.utf8)]
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+
+        async let idle: Void = engine.runIdleCatchUp()
+        await fetcher.waitUntilListBlocked()
+        async let mirrored: Void = engine.fullSync()
+        fetcher.releaseList()
+        await idle
+        try await mirrored
+
+        XCTAssertGreaterThanOrEqual(fetcher.idGtListCalls, 1)
+        XCTAssertTrue(fetcher.paths.contains("/api/dcim/devices/"))
+    }
+
+    private func seedWatermark(
+        _ container: ModelContainer,
+        id: Int64,
+        lastFull: Date = Date()
+    ) throws {
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 1))
+        seed.insert(Device(id: 5))
+        let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
+        provider.lastObjectChangeId = id
+        provider.lastFullMirrorAt = lastFull
+        seed.insert(provider)
+        try seed.save()
+    }
+
     private func change(
         id: Int64, type: String, object: Int64, action: String
     ) -> NetBoxRecord.ObjectChange {
@@ -321,6 +498,69 @@ final class NetBoxDeltaTests: XCTestCase {
     }
 }
 
+private final class NoteCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+    func increment() {
+        lock.lock()
+        value += 1
+        lock.unlock()
+    }
+}
+
+/// Blocks the first `id__gt` changelog list until `release()`.
+private final class ListHold: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entered = false
+    private var released = false
+    private var enterWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func blockFirstList() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if released {
+                lock.unlock()
+                cont.resume()
+                return
+            }
+            entered = true
+            let pending = enterWaiters
+            enterWaiters.removeAll()
+            releaseWaiters.append(cont)
+            lock.unlock()
+            pending.forEach { $0.resume() }
+        }
+    }
+
+    func waitUntilBlocked() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if entered {
+                lock.unlock()
+                cont.resume()
+                return
+            }
+            enterWaiters.append(cont)
+            lock.unlock()
+        }
+    }
+
+    func release() {
+        lock.lock()
+        released = true
+        let pending = releaseWaiters
+        releaseWaiters.removeAll()
+        lock.unlock()
+        pending.forEach { $0.resume() }
+    }
+}
+
 private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     var paths: [String] = []
     var bodies: [String: Data] = [:]
@@ -329,10 +569,29 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     var emptySuccess = false
     var latestCursorQueue: [Data] = []
     var latestCursorCalls = 0
+    var unlimitedNext = false
+    var armHold = false
+    var idGtQueue: [Data] = []
+    private(set) var idGtListCalls = 0
+    private let lock = NSLock()
+    private let hold = ListHold()
     private let emptyPage = Data(#"{"count":0,"next":null,"results":[]}"#.utf8)
+    private let nextPage = Data(
+        #"{"count":1,"next":"https://netbox.example/api/core/object-changes/?offset=1","results":[{"id":1,"action":{"value":"update"},"changed_object_type":"extras.tag","changed_object_id":1}]}"#.utf8
+    )
+
+    func waitUntilListBlocked() async {
+        await hold.waitUntilBlocked()
+    }
+
+    func releaseList() {
+        hold.release()
+    }
 
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
+        lock.lock()
         paths.append(path)
+        lock.unlock()
         if transportOn.contains(path) {
             throw NetBoxSyncError.transport("killed")
         }
@@ -341,14 +600,30 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
         }
         if path == "/api/core/object-changes/",
            query.contains(where: { $0.name == "ordering" && $0.value == "-id" }) {
+            lock.lock()
             latestCursorCalls += 1
-            if !latestCursorQueue.isEmpty {
-                return latestCursorQueue.removeFirst()
+            let queued = latestCursorQueue.isEmpty ? nil : latestCursorQueue.removeFirst()
+            lock.unlock()
+            if let queued { return queued }
+        }
+        if path == "/api/core/object-changes/",
+           query.contains(where: { $0.name == "id__gt" }) {
+            lock.lock()
+            idGtListCalls += 1
+            let holdThis = armHold
+            let queued = idGtQueue.isEmpty ? nil : idGtQueue.removeFirst()
+            let repeatNext = unlimitedNext
+            lock.unlock()
+            if holdThis {
+                await hold.blockFirstList()
             }
+            if let queued { return queued }
+            if repeatNext { return nextPage }
         }
-        if let body = bodies[path] {
-            return body
-        }
+        lock.lock()
+        let body = bodies[path]
+        lock.unlock()
+        if let body { return body }
         if emptySuccess {
             return emptyPage
         }

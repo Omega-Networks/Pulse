@@ -29,11 +29,12 @@ import OSLog
 import SwiftData
 import SwiftUI
 
-/// Single owner of NetBox read-sync and MACD writes. Boot and Sync
-/// Dashboard both call `fullSync()`. Overlapping callers join the
-/// in-flight pass. `lastNetBoxUpdate` is stamped only after every type
-/// applies successfully. Writes wait for that pass, then re-fetch
-/// through the delta-apply path — no speculative local state.
+/// Single owner of NetBox read-sync and MACD writes. Boot and Apply
+/// changes call `sync()` (a delta, or a full mirror when the watermark
+/// is missing, gone, or older than the safety interval). Full Resync
+/// calls `fullSync()`. Overlapping user callers join that pass. While
+/// the app is open, `startIdleChangelog()` repeats the delta only.
+/// Writes re-fetch the object they changed and do not page the changelog.
 actor NetBoxSyncEngine {
     private let modelContainer: ModelContainer
     private let fetcher: any NetBoxFetching
@@ -46,6 +47,20 @@ actor NetBoxSyncEngine {
     private let logger = Logger(subsystem: "netbox", category: "sync")
     private var inFlight: Task<Void, Error>?
     private var writes: Task<Void, Error>?
+    /// True from the moment a write asks for the engine until it returns.
+    /// An idle pass stops between objects instead of making Add Device
+    /// wait for the rest of the changelog window.
+    private var writeInProgress = false
+    /// True while boot, Apply changes, or Full Resync is waiting to start
+    /// or running. Idle must not treat that wait as its own pass.
+    private var userSyncWaiting = false
+    private var idleLoop: Task<Void, Never>?
+    private var quietCatchUp: Task<Void, Never>?
+    private var idleTask: Task<Void, Never>?
+    private var idleRunning = false
+    /// Last `.full` reason we logged from an idle skip, so a due safety
+    /// mirror does not log on every tick.
+    private var lastIdleSkipLog: String?
 
     init(
         modelContainer: ModelContainer,
@@ -66,13 +81,19 @@ actor NetBoxSyncEngine {
     /// Weekly safety full mirror. Changelog misses out-of-request-context edits.
     static let safetyMirrorInterval: TimeInterval = 7 * 24 * 60 * 60
 
+    /// While Pulse is open, apply the changelog this often. Same cadence
+    /// as the Zabbix problem timer, so the twin is not busier than monitoring.
+    static let idleChangelogInterval: Duration = .seconds(120)
+
+    /// After the last successful write in a burst, apply the changelog
+    /// once so template children (front ports, bays) land without the
+    /// button waiting.
+    static let idleChangelogQuietPeriod: Duration = .seconds(2)
+
     /// Boot entry: delta when a watermark is usable, otherwise a full mirror.
     func sync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
-        try? await writes?.value
-        if let inFlight {
-            try await inFlight.value
-            return
-        }
+        guard try await claimUserSync() else { return }
+        defer { userSyncWaiting = false }
         let task = Task(priority: .userInitiated) {
             try await self.performBootSync(progress: progress)
         }
@@ -89,11 +110,8 @@ actor NetBoxSyncEngine {
 
     /// Settings → Sync Data. Always a full mirror, then a fresh watermark.
     func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
-        try? await writes?.value
-        if let inFlight {
-            try await inFlight.value
-            return
-        }
+        guard try await claimUserSync() else { return }
+        defer { userSyncWaiting = false }
         let task = Task(priority: .userInitiated) {
             let cursor = try? await self.latestChangelogCursor()
             try await self.performFullSync(progress: progress)
@@ -108,6 +126,56 @@ actor NetBoxSyncEngine {
             logger.error("NetBox full sync failed: \(error.localizedDescription)")
             throw error
         }
+    }
+
+    /// One changelog loop for the process. The first tick waits out the
+    /// interval so it does not repeat the boot delta. Idempotent.
+    func startIdleChangelog() {
+        guard idleLoop == nil else { return }
+        idleLoop = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.idleChangelogInterval)
+                if Task.isCancelled { break }
+                await self.runIdleCatchUp()
+            }
+        }
+    }
+
+    /// Delta since the watermark. Does not start a full mirror. A second
+    /// caller while one pass is running returns. Boot and the dashboard
+    /// keep using `sync()` / `fullSync()`.
+    func runIdleCatchUp() async {
+        guard inFlight == nil, !writeInProgress, !userSyncWaiting, !idleRunning else { return }
+        idleRunning = true
+        let task = Task { await self.performIdleCatchUp() }
+        idleTask = task
+        await task.value
+        idleTask = nil
+        idleRunning = false
+    }
+
+    /// Wait out writes and any idle pass, then let the caller start a user
+    /// sync. Returns false when this caller joined an in-flight user sync.
+    private func claimUserSync() async throws -> Bool {
+        try? await writes?.value
+        if let inFlight {
+            try await inFlight.value
+            return false
+        }
+        userSyncWaiting = true
+        if let idle = idleTask {
+            await idle.value
+        }
+        // A write may have taken the engine while this call waited for idle.
+        if writeInProgress {
+            try? await writes?.value
+        }
+        if let inFlight {
+            userSyncWaiting = false
+            try await inFlight.value
+            return false
+        }
+        return true
     }
 
     private func performFullSync(progress: (@Sendable (Int, String) -> Void)?) async throws {
@@ -157,7 +225,11 @@ actor NetBoxSyncEngine {
                 return
             }
             progress?(0, "Applying NetBox changes...")
-            try await performDelta(after: watermarkID)
+            try await performDelta(
+                after: watermarkID,
+                fallbackToFullMirror: true,
+                yieldToWriters: false
+            )
         }
     }
 
@@ -195,7 +267,7 @@ actor NetBoxSyncEngine {
         description: String? = nil,
         label: String? = nil
     ) async throws {
-        try await performWrite(catchUp: false, announce: false, waitForSync: false) {
+        try await performWrite(announce: false, waitForSync: false) {
             let tier = self.subscriptionTier()
             try await self.applyOnStore { context in
                 let deviceID = try LicenseSeatEvaluator.deviceID(forInterface: id, in: context)
@@ -504,13 +576,11 @@ actor NetBoxSyncEngine {
         }
     }
 
-    /// Operator writes apply the object they touched. Changelog catch-up
-    /// (`performDelta` of every `id__gt` since the last sync) is `sync()`'s
-    /// job. Awaiting it here made Add Device wait on console-port noise
-    /// and a WAL checkpoint. `patchInterface` already passed `catchUp:
-    /// false`; that is now the default.
+    /// Operator writes apply the object they touched. The changelog window
+    /// belongs to `sync()`, Full Resync, and the idle loop. Waiting for the
+    /// current idle object (not the rest of the window) keeps two store
+    /// applies from saving at once.
     private func performWrite(
-        catchUp: Bool = false,
         announce: Bool = true,
         waitForSync: Bool = true,
         _ work: @escaping @Sendable () async throws -> Void
@@ -518,9 +588,19 @@ actor NetBoxSyncEngine {
         if waitForSync, let inFlight {
             try await inFlight.value
         }
+        writeInProgress = true
+        defer { writeInProgress = false }
         let previous = writes
         let task = Task {
             try? await previous?.value
+            if let idle = await self.idleTask {
+                await idle.value
+            }
+            // A user sync may have claimed the engine while this write
+            // waited for the current idle object.
+            if waitForSync, let inFlight = await self.inFlight {
+                try await inFlight.value
+            }
             try await work()
         }
         writes = task
@@ -531,14 +611,25 @@ actor NetBoxSyncEngine {
                     NotificationCenter.default.post(name: .netBoxStoreDidApply, object: nil)
                 }
             }
-            if catchUp {
-                await catchUpWatermark()
-            }
+            scheduleQuietCatchUp()
         } catch {
             if let syncError = error as? NetBoxSyncError {
                 await syncError.publish()
             }
             throw error
+        }
+    }
+
+    /// One delta, 2s after the last successful write. Rearming cancels the
+    /// previous quiet task so a burst of adds shares a single pass. No-op
+    /// until `startIdleChangelog()` has armed the loop (tests stay quiet).
+    private func scheduleQuietCatchUp() {
+        guard idleLoop != nil else { return }
+        quietCatchUp?.cancel()
+        quietCatchUp = Task {
+            try? await Task.sleep(for: Self.idleChangelogQuietPeriod)
+            guard !Task.isCancelled else { return }
+            await self.runIdleCatchUp()
         }
     }
 
@@ -1000,23 +1091,43 @@ actor NetBoxSyncEngine {
         }
     }
 
-    /// Advance the changelog watermark after a write so the next boot
-    /// does not re-walk side effects. Failure is logged, not thrown.
-    private func catchUpWatermark() async {
-        let watermark: Int64?
+    /// Changelog since the watermark, without a full mirror. Failure is
+    /// logged. The watermark stays put so the next tick retries.
+    private func performIdleCatchUp() async {
+        let plan: SyncPlan
         do {
-            watermark = try await applyOnStore { context in
-                try context.fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId
+            plan = try await applyOnStore { context in
+                try Self.decideSync(in: context)
             }
         } catch {
-            logger.error("Post-write watermark read failed: \(error.localizedDescription)")
+            logger.error("Idle changelog could not read the sync plan: \(error.localizedDescription)")
             return
         }
-        guard let watermark else { return }
-        do {
-            try await performDelta(after: watermark)
-        } catch {
-            logger.error("Post-write changelog catch-up failed: \(error.localizedDescription)")
+        switch plan {
+        case .full(let reason):
+            if lastIdleSkipLog != reason {
+                logger.info("Idle changelog skipped; full mirror is due (\(reason, privacy: .public))")
+                lastIdleSkipLog = reason
+            }
+            return
+        case .delta(let watermarkID):
+            lastIdleSkipLog = nil
+            if watermarkID > 0, await changelogRecordMissing(id: watermarkID) {
+                logger.error("Idle changelog skipped; watermark \(watermarkID) is gone")
+                return
+            }
+            do {
+                let applied = try await performDelta(
+                    after: watermarkID,
+                    fallbackToFullMirror: false,
+                    yieldToWriters: true
+                )
+                if applied > 0 {
+                    await announceStoreDidApply()
+                }
+            } catch {
+                logger.error("Idle changelog failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1031,7 +1142,17 @@ actor NetBoxSyncEngine {
         }
     }
 
-    private func performDelta(after watermarkID: Int64) async throws {
+    /// Applies the `id__gt` window. Returns how many objects were applied.
+    /// `fallbackToFullMirror` is the boot / Apply changes page-cap path.
+    /// The idle pass passes false and leaves the watermark. `yieldToWriters`
+    /// stops between objects when a write or a user sync is waiting, and
+    /// does not advance the watermark.
+    @discardableResult
+    private func performDelta(
+        after watermarkID: Int64,
+        fallbackToFullMirror: Bool,
+        yieldToWriters: Bool
+    ) async throws -> Int {
         let extra = [
             URLQueryItem(name: "id__gt", value: String(watermarkID)),
             URLQueryItem(name: "ordering", value: "id"),
@@ -1045,11 +1166,15 @@ actor NetBoxSyncEngine {
                 as: NetBoxRecord.ObjectChange.self
             )
         } catch NetBoxSyncError.pageLimitExceeded {
-            logger.error("Changelog exceeded the page cap; falling back to a full mirror")
-            let cursor = try? await latestChangelogCursor()
-            try await performFullSync(progress: nil)
-            try await stampFullSuccess(cursor: cursor)
-            return
+            if fallbackToFullMirror {
+                logger.error("Changelog exceeded the page cap; falling back to a full mirror")
+                let cursor = try? await latestChangelogCursor()
+                try await performFullSync(progress: nil)
+                try await stampFullSuccess(cursor: cursor)
+                return 0
+            }
+            logger.error("Changelog exceeded the page cap; leaving the watermark")
+            throw NetBoxSyncError.pageLimitExceeded
         }
         if skipped > 0 {
             throw NetBoxSyncError.dataError("Changelog page skipped \(skipped) elements")
@@ -1060,9 +1185,15 @@ actor NetBoxSyncEngine {
                 "Skipping unknown changelog type \(unknown.changedObjectType, privacy: .public) id \(unknown.changedObjectID)"
             )
         }
+        var applied = 0
         var touchedDeviceSites = false
         for item in planned.items {
+            if yieldToWriters, writeInProgress || inFlight != nil || userSyncWaiting {
+                logger.info("Idle changelog paused for a write or sync")
+                return applied
+            }
             try await applyDeltaItem(item)
+            applied += 1
             if item.kind == .device { touchedDeviceSites = true }
         }
         if let water = planned.highWater {
@@ -1081,6 +1212,7 @@ actor NetBoxSyncEngine {
         if touchedDeviceSites {
             await SiteDataService(modelContainer: modelContainer).refreshSeverities()
         }
+        return applied
     }
 
     private func applyDeltaItem(_ item: NetBoxDeltaItem) async throws {
