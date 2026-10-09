@@ -813,6 +813,9 @@ final class NetBoxWriteTests: XCTestCase {
         seed.insert(Site(id: 4))
         seed.insert(DeviceRole(id: 1))
         seed.insert(DeviceType(id: 8))
+        let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
+        provider.lastObjectChangeId = 40
+        seed.insert(provider)
         try seed.save()
 
         let created = Data(
@@ -834,6 +837,7 @@ final class NetBoxWriteTests: XCTestCase {
         )
         let row = try ModelContext(container).fetch(FetchDescriptor<Device>()).first { $0.id == 9 }
         XCTAssertNotNil(row?.seatGrantedAt)
+        XCTAssertFalse(fetcher.gets.contains { $0.hasPrefix("/api/core/object-changes") })
     }
 
     func testCreateDeviceUnlimitedDoesNotRefuseFullUngrantedTable() async throws {
@@ -1110,7 +1114,10 @@ private final class WriteFetcher: NetBoxFetching, @unchecked Sendable {
     var getBodies: [String: Data] = [:]
     var getQueue: [String: [Data]] = [:]
 
+    var gets: [String] = []
+
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
+        gets.append(path)
         if var pages = getQueue[path], !pages.isEmpty {
             let next = pages.removeFirst()
             getQueue[path] = pages
