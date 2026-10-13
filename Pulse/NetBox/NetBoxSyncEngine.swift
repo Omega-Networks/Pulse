@@ -77,11 +77,15 @@ actor NetBoxSyncEngine {
     private var lastIdleSkipLog: String?
     /// The idle changelog hit the page cap. Further idle ticks must not
     /// re-download that window. Launch and Apply changes clear it.
+    /// Pages already applied stay stamped.
     private var idlePageCapLatched = false
     /// Device rows the current delta created, updated, or deleted.
     private var passDeviceIDs: [Int64] = []
-    /// Boot, Apply changes, Full Resync, and a failed-boot heal seat
-    /// the whole store. Idle seats only `passDeviceIDs`.
+    /// Objects applied by the current delta. A later page can fail
+    /// after earlier pages have already been stamped.
+    private var passAppliedCount = 0
+    /// A full mirror and a failed-boot heal seat the whole store.
+    /// A delta boot, Apply changes, and idle seat only `passDeviceIDs`.
     private var passSeatsWholeStore = false
 
     init(
@@ -128,6 +132,7 @@ actor NetBoxSyncEngine {
             await postApply(await makeSeatNotice())
         } catch {
             logger.error("NetBox sync failed: \(error.localizedDescription)")
+            await postPartialDelta()
             throw error
         }
     }
@@ -279,6 +284,7 @@ actor NetBoxSyncEngine {
                 return
             }
             progress?(0, "Applying NetBox changes...")
+            beginSeatPass(wholeStore: false)
             try await performDelta(
                 after: watermarkID,
                 fallbackToFullMirror: true,
@@ -1211,10 +1217,12 @@ actor NetBoxSyncEngine {
         return rows.count
     }
 
-    /// Changelog since the watermark, without a full mirror. A transport
-    /// or decode failure is logged and the next tick retries. A page cap
-    /// is reported once and latched so the window is not downloaded again
-    /// until a user sync starts. The watermark stays put either way.
+    /// Changelog since the watermark, without a full mirror. Each fully
+    /// applied page stamps its own high water before the next page is
+    /// fetched. A transport or decode failure retries from that watermark.
+    /// A page cap is reported once and latched. Pages applied before the
+    /// cap stay applied. Launch and Apply changes clear the latch and
+    /// still full-mirror when the cap is hit.
     private func performIdleCatchUp() async {
         beginSeatPass(wholeStore: false)
         let plan: SyncPlan
@@ -1254,8 +1262,10 @@ actor NetBoxSyncEngine {
                 await MainActor.run {
                     NetBoxSyncError.pageLimitExceeded.publish()
                 }
+                await postPartialDelta()
             } catch {
                 logger.error("Idle changelog failed: \(error.localizedDescription)")
+                await postPartialDelta()
             }
         }
     }
@@ -1271,12 +1281,14 @@ actor NetBoxSyncEngine {
         }
     }
 
-    /// Applies the `id__gt` window. Returns how many objects were applied.
-    /// `fallbackToFullMirror` is the boot / Apply changes page-cap path.
-    /// The idle pass passes false and leaves the watermark. `yieldToWriters`
-    /// stops before the next changelog page, and between objects, when a
-    /// write or a user sync is waiting. Fetched pages that were not applied
-    /// stay unapplied, and the watermark does not move.
+    /// Applies the `id__gt` window one page at a time. Returns how many
+    /// objects were applied. A fully read page is coalesced on its own,
+    /// applied, and stamped before the next page is fetched. The watermark
+    /// never moves backward. `fallbackToFullMirror` is the boot / Apply
+    /// changes page-cap path. The idle pass passes false and does not
+    /// full-mirror. `yieldToWriters` stops before the next page, and
+    /// between objects, when a write or a user sync is waiting. A page
+    /// that was not fully applied is not stamped.
     @discardableResult
     private func performDelta(
         after watermarkID: Int64,
@@ -1287,9 +1299,7 @@ actor NetBoxSyncEngine {
             URLQueryItem(name: "id__gt", value: String(watermarkID)),
             URLQueryItem(name: "ordering", value: "id"),
         ]
-        let buffer = ChangelogPageBuffer()
-        let rows: [NetBoxRecord.ObjectChange]
-        let skipped: Int
+        let progress = ChangelogCursor(cursor: watermarkID)
         do {
             _ = try await NetBoxPageIterator.streamDecoded(
                 path: "/api/core/object-changes/",
@@ -1302,26 +1312,62 @@ actor NetBoxSyncEngine {
                     }
                 }
             ) { page, pageSkipped in
-                await buffer.add(page, skipped: pageSkipped)
+                try await self.consumeChangelogPage(
+                    page,
+                    pageSkipped: pageSkipped,
+                    yieldToWriters: yieldToWriters,
+                    progress: progress
+                )
             }
-            rows = await buffer.rows
-            skipped = await buffer.skipped
+            if !progress.moved {
+                try await stampDeltaSuccess(
+                    id: watermarkID,
+                    time: nil,
+                    summary: "no changes"
+                )
+            }
+            await refreshTouchedSites(progress)
+            return progress.applied
         } catch is ChangelogYield {
             logger.info("Idle changelog paused for a write or sync")
-            return 0
-        } catch NetBoxSyncError.pageLimitExceeded {
+            await refreshTouchedSites(progress)
+            return progress.applied
+        } catch let error as NetBoxSyncError where error == .pageLimitExceeded {
             if fallbackToFullMirror {
                 logger.error("Changelog exceeded the page cap; falling back to a full mirror")
-                let cursor = try? await latestChangelogCursor()
-                try await performFullSync(progress: nil)
-                try await stampFullSuccess(cursor: cursor)
+                do {
+                    let cursor = try? await latestChangelogCursor()
+                    try await performFullSync(progress: nil)
+                    try await stampFullSuccess(cursor: cursor)
+                } catch {
+                    await refreshTouchedSites(progress)
+                    throw error
+                }
+                beginSeatPass(wholeStore: true)
+                await refreshTouchedSites(progress)
                 return 0
             }
-            logger.error("Changelog exceeded the page cap; leaving the watermark")
-            throw NetBoxSyncError.pageLimitExceeded
+            logger.error("Changelog exceeded the page cap; applied pages stay stamped")
+            await refreshTouchedSites(progress)
+            throw error
+        } catch {
+            await refreshTouchedSites(progress)
+            throw error
         }
-        if skipped > 0 {
-            throw NetBoxSyncError.dataError("Changelog page skipped \(skipped) elements")
+    }
+
+    /// One changelog page. Throws `ChangelogYield` before stamping when a
+    /// writer is waiting, and throws without stamping when the page skipped
+    /// an element or an object apply failed. Unknown types are logged and
+    /// still advance the high water when their id is ahead of the cursor.
+    private func consumeChangelogPage(
+        _ rows: [NetBoxRecord.ObjectChange],
+        pageSkipped: Int,
+        yieldToWriters: Bool,
+        progress: ChangelogCursor
+    ) async throws {
+        if pageSkipped > 0 {
+            throw NetBoxSyncError.dataError("Changelog page skipped \(pageSkipped) elements")
         }
         let planned = NetBoxDelta.coalesce(rows)
         for unknown in rows where NetBoxChangeKind(objectType: unknown.changedObjectType) == nil {
@@ -1329,37 +1375,33 @@ actor NetBoxSyncEngine {
                 "Skipping unknown changelog type \(unknown.changedObjectType, privacy: .public) id \(unknown.changedObjectID)"
             )
         }
-        var applied = 0
-        var touchedDeviceSites = false
         for item in planned.items {
             if yieldToWriters, writeInProgress || inFlight != nil || userSyncWaiting {
-                logger.info("Idle changelog paused for a write or sync")
-                return applied
+                throw ChangelogYield()
             }
             try await applyDeltaItem(item)
-            applied += 1
+            progress.applied += 1
+            passAppliedCount = progress.applied
             if item.kind == .device {
                 passDeviceIDs.append(item.objectID)
-                touchedDeviceSites = true
+                progress.touchedDeviceSites = true
             }
         }
-        if let water = planned.highWater {
+        if let water = planned.highWater, water.id > progress.cursor {
             try await stampDeltaSuccess(
                 id: water.id,
                 time: water.time,
-                summary: "applied \(planned.items.count) objects"
+                summary: "applied \(progress.applied) objects"
             )
-        } else {
-            try await stampDeltaSuccess(
-                id: watermarkID,
-                time: nil,
-                summary: "no changes"
-            )
+            progress.cursor = water.id
+            progress.moved = true
         }
-        if touchedDeviceSites {
-            await SiteDataService(modelContainer: modelContainer).refreshSeverities()
-        }
-        return applied
+    }
+
+    private func refreshTouchedSites(_ progress: ChangelogCursor) async {
+        guard progress.touchedDeviceSites else { return }
+        progress.touchedDeviceSites = false
+        await SiteDataService(modelContainer: modelContainer).refreshSeverities()
     }
 
     private func applyDeltaItem(_ item: NetBoxDeltaItem) async throws {
@@ -1632,12 +1674,20 @@ actor NetBoxSyncEngine {
 
     private func beginSeatPass(wholeStore: Bool) {
         passDeviceIDs.removeAll(keepingCapacity: true)
+        passAppliedCount = 0
         passSeatsWholeStore = wholeStore
     }
 
-    /// Grants after the pass has saved. A user sync seats the whole store
-    /// and skips rows whose stamp is already right. Idle seats only the
-    /// device ids that pass applied.
+    /// Seats devices a delta already saved when a later page fails.
+    /// A full-mirror pass seats from `sync()` / `fullSync()` instead.
+    private func postPartialDelta() async {
+        guard passAppliedCount > 0, !passSeatsWholeStore else { return }
+        await postApply(await makeSeatNotice())
+    }
+
+    /// Grants after the pass has saved. A full mirror seats the whole
+    /// store and skips rows whose stamp is already right. A delta seats
+    /// the device ids that pass applied.
     private func makeSeatNotice() async -> NetBoxApplyInfo {
         let whole = passSeatsWholeStore
         let ids = passDeviceIDs
@@ -1706,17 +1756,21 @@ actor NetBoxSyncEngine {
     }
 }
 
-/// Stops an idle changelog download before the next page. Not a NetBox
-/// error: the watermark stays, and the pages already fetched are dropped.
+/// Stops an idle changelog before the next page, or between objects on
+/// the page being applied. Not a NetBox error. Pages already applied
+/// keep their watermark. The page that stopped is not stamped.
 private struct ChangelogYield: Error {}
 
-private actor ChangelogPageBuffer {
-    private(set) var rows: [NetBoxRecord.ObjectChange] = []
-    private(set) var skipped = 0
+/// High water for the changelog pass currently being applied.
+/// Mutated only on `NetBoxSyncEngine`.
+private final class ChangelogCursor: @unchecked Sendable {
+    var applied = 0
+    var cursor: Int64
+    var touchedDeviceSites = false
+    var moved = false
 
-    func add(_ page: [NetBoxRecord.ObjectChange], skipped pageSkipped: Int) {
-        rows.append(contentsOf: page)
-        skipped += pageSkipped
+    init(cursor: Int64) {
+        self.cursor = cursor
     }
 }
 

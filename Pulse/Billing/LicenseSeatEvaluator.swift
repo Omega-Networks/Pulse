@@ -27,8 +27,8 @@ import Foundation
 import SwiftData
 
 /// What one seat pass changed. A full mirror sets `replaceSeated` /
-/// `replaceUnbilled` and the UI replaces its sets. A delta only lists
-/// the ids that moved, so an idle pass does not read the device table.
+/// `replaceUnbilled` and the UI replaces its sets. A delta lists only
+/// the ids that moved.
 struct SyncSeatUpdate: Sendable, Equatable {
     var granted: Set<Int64> = []
     var revoked: Set<Int64> = []
@@ -269,9 +269,9 @@ enum LicenseSeatEvaluator {
         return update
     }
 
-    /// Boot, Apply changes, Full Resync, and a failed boot. Seats every
-    /// eligible device that lacks a grant and clears hardware grants.
-    /// Rows that already hold the right stamp are not written back.
+    /// Full mirror and a failed boot. Seats every eligible device that
+    /// lacks a grant and clears hardware grants. Rows that already hold
+    /// the right stamp are not written back. A delta uses `grantArrivals`.
     static func grantMirroredStore(
         in context: ModelContext,
         defaults: UserDefaults = .standard,

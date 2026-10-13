@@ -4,9 +4,9 @@ Pulse mirrors a subset of NetBox into local SwiftData. The **first** launch (and
 
 A watermark older than NetBox’s retained changelog (default 90 days - `CHANGELOG_RETENTION` must exceed the longest expected offline gap) or a wiped store with a leftover watermark forces a full mirror. A weekly safety mirror covers edits made without request context (shell, migrations).
 
-After a failed delta, the watermark does not move; the next run retries from the same id.
+Each changelog page is stored before the next page is requested. If a page fails, the watermark stays at the last page that applied, and the next run retries that failed page. The watermark does not move backward.
 
-While Pulse is open it also applies the changelog about every two minutes, including after a launch sync error, and again shortly after you save. That pass is a delta only. A full mirror still waits for the next launch or **Apply changes** when the weekly safety interval is due, or for **Full Resync** when you ask for one. Edits made outside a request (shell, migrations) still need that safety mirror. Devices that arrive on a sync are seated as part of that pass. A changelog page that only touches ports does not rescan devices. If the unsynced changelog is too large for one idle pass, the NetBox status line says so and the two-minute loop waits. The next launch or **Apply changes** clears that wait and, past the page cap, runs a full mirror.
+While Pulse is open it also applies the changelog about every two minutes, including after a launch sync error, and again shortly after you save. That pass is a delta only. A full mirror still waits for the next launch or **Apply changes** when the weekly safety interval is due, or for **Full Resync** when you ask for one. Edits made outside a request (shell, migrations) still need that safety mirror. Devices that changed are seated as part of that pass. A full mirror, including one caused by the page cap, and a failed launch still seat every stored device. A changelog page that only touches ports does not rescan devices. If the unsynced changelog is too large for one idle pass, pages that finished stay applied, the NetBox status line says the rest is waiting, and the two-minute loop does not download that window again. The next launch or **Apply changes** clears that wait and, past the page cap, runs a full mirror.
 
 ## Token
 

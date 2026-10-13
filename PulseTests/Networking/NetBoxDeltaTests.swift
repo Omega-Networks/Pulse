@@ -410,6 +410,229 @@ final class NetBoxDeltaTests: XCTestCase {
         )
     }
 
+    func testIdleKeepsAnAppliedPageWhenTheNextPageYields() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/dcim/devices/21/"] = deviceBody(id: 21, name: "kept")
+        fetcher.bodies["/api/dcim/devices/22/"] = deviceBody(id: 22, name: "dropped")
+        fetcher.armHold = true
+        fetcher.holdListCall = 2
+        fetcher.idGtQueue = [
+            changelogPage(id: 11, objectID: 21, hasNext: true),
+            changelogPage(id: 12, objectID: 22, hasNext: false),
+        ]
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        async let idle: Void = engine.runIdleCatchUp()
+        await fetcher.waitUntilListBlocked()
+        let write = Task {
+            try? await engine.patchInterface(id: 1, description: "held")
+        }
+        while await !engine.operatorWriteIsActive() {
+            await Task.yield()
+        }
+        fetcher.releaseList()
+        await idle
+        _ = await write.value
+
+        XCTAssertEqual(fetcher.idGtListCalls, 2)
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/22/"))
+        let devices = try ModelContext(container).fetch(FetchDescriptor<Device>())
+        XCTAssertTrue(devices.contains { $0.id == 21 })
+        XCTAssertFalse(devices.contains { $0.id == 22 })
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            11
+        )
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/dcim/devices/21/" }.count, 1)
+    }
+
+    func testAppliedChangelogPageStaysStampedWhenTheNextPageFails() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/core/object-changes/11/"] = Data(#"{"id":11}"#.utf8)
+        fetcher.bodies["/api/dcim/devices/21/"] = deviceBody(id: 21, name: "kept")
+        fetcher.bodies["/api/dcim/devices/22/"] = deviceBody(id: 22, name: "later")
+        fetcher.transportOn.insert("/api/dcim/devices/22/")
+        fetcher.idGtQueue = [
+            changelogPage(id: 11, objectID: 21, hasNext: true),
+            changelogPage(id: 12, objectID: 22, hasNext: false),
+            changelogPage(id: 12, objectID: 22, hasNext: false),
+        ]
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.sync()
+            XCTFail("expected the second page to fail")
+        } catch {
+            // The first page is already stamped.
+        }
+        var devices = try ModelContext(container).fetch(FetchDescriptor<Device>())
+        XCTAssertTrue(devices.contains { $0.id == 21 })
+        XCTAssertFalse(devices.contains { $0.id == 22 })
+        XCTAssertNotNil(devices.first { $0.id == 21 }?.seatGrantedAt)
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            11
+        )
+
+        fetcher.transportOn.remove("/api/dcim/devices/22/")
+        try await engine.sync()
+        devices = try ModelContext(container).fetch(FetchDescriptor<Device>())
+        XCTAssertTrue(devices.contains { $0.id == 22 })
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/dcim/devices/21/" }.count, 1)
+        XCTAssertEqual(fetcher.idGtValues, ["10", "10", "11"])
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            12
+        )
+    }
+
+    func testSkippedChangelogPageDoesNotStampOrApply() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/dcim/devices/21/"] = deviceBody(id: 21, name: "kept")
+        fetcher.idGtQueue = [
+            changelogPage(id: 11, objectID: 21, hasNext: true),
+            changelogPage(id: 12, objectID: 22, hasNext: false, poisoned: true),
+        ]
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.sync()
+            XCTFail("expected the skipped page to fail")
+        } catch {
+            // Page 1 stays stamped. Page 2 is not applied.
+        }
+        let devices = try ModelContext(container).fetch(FetchDescriptor<Device>())
+        XCTAssertTrue(devices.contains { $0.id == 21 })
+        XCTAssertFalse(devices.contains { $0.id == 22 })
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/22/"))
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            11
+        )
+    }
+
+    func testEmptyDeltaDoesNotSeatStoredDevices() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/core/object-changes/"] = Data(
+            #"{"count":0,"next":null,"results":[]}"#.utf8
+        )
+        let notices = NoticeBox()
+        let token = NotificationCenter.default.addObserver(
+            forName: .netBoxStoreDidApply,
+            object: nil,
+            queue: nil
+        ) { note in
+            notices.info = note.userInfo?[NetBoxApplyInfo.userInfoKey] as? NetBoxApplyInfo
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.sync()
+
+        XCTAssertNil(
+            try ModelContext(container).fetch(FetchDescriptor<Device>()).first { $0.id == 5 }?.seatGrantedAt
+        )
+        XCTAssertNil(notices.info?.seatUpdate.replaceSeated)
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastDeltaSummary,
+            "no changes"
+        )
+    }
+
+    func testDeltaSyncSeatsOnlyTheTouchedDevice() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/core/object-changes/"] = Data("""
+        {"count":1,"next":null,"results":[
+          {"id":11,"action":{"value":"create"},
+           "changed_object_type":"dcim.device","changed_object_id":20}
+        ]}
+        """.utf8)
+        fetcher.bodies["/api/dcim/devices/20/"] = deviceBody(id: 20, name: "edge")
+        let notices = NoticeBox()
+        let token = NotificationCenter.default.addObserver(
+            forName: .netBoxStoreDidApply,
+            object: nil,
+            queue: nil
+        ) { note in
+            notices.info = note.userInfo?[NetBoxApplyInfo.userInfoKey] as? NetBoxApplyInfo
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            subscriptionTier: { .unlimited }
+        )
+        try await engine.sync()
+
+        let devices = try ModelContext(container).fetch(FetchDescriptor<Device>())
+        XCTAssertNotNil(devices.first { $0.id == 20 }?.seatGrantedAt)
+        XCTAssertNil(devices.first { $0.id == 5 }?.seatGrantedAt)
+        XCTAssertNil(notices.info?.seatUpdate.replaceSeated)
+        XCTAssertTrue(notices.info?.seatUpdate.granted.contains(20) == true)
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/"))
+    }
+
+    func testFullSyncSeatsTheWholeStore() async throws {
+        let container = try makeContainer()
+        let fetcher = DeltaFetcher()
+        fetcher.emptySuccess = true
+        let notices = NoticeBox()
+        let token = NotificationCenter.default.addObserver(
+            forName: .netBoxStoreDidApply,
+            object: nil,
+            queue: nil
+        ) { note in
+            notices.info = note.userInfo?[NetBoxApplyInfo.userInfoKey] as? NetBoxApplyInfo
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.fullSync()
+        XCTAssertEqual(notices.info?.seatUpdate.replaceSeated, Set<Int64>())
+    }
+
+    func testBootPageCapStillFullMirrors() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.unlimitedNext = true
+        fetcher.emptySuccess = true
+        let notices = NoticeBox()
+        let token = NotificationCenter.default.addObserver(
+            forName: .netBoxStoreDidApply,
+            object: nil,
+            queue: nil
+        ) { note in
+            notices.info = note.userInfo?[NetBoxApplyInfo.userInfoKey] as? NetBoxApplyInfo
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.sync()
+
+        XCTAssertEqual(fetcher.idGtListCalls, NetBoxPageIterator.maxPages)
+        XCTAssertGreaterThan(fetcher.latestCursorCalls, 0)
+        XCTAssertTrue(fetcher.paths.contains("/api/dcim/devices/"))
+        XCTAssertNotNil(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastFullMirrorAt
+        )
+        XCTAssertEqual(notices.info?.seatUpdate.replaceSeated, Set<Int64>())
+    }
+
     func testChainedWriteHoldsOffUserSync() async throws {
         let container = try makeContainer()
         let fetcher = GateFetcher()
@@ -479,6 +702,8 @@ final class NetBoxDeltaTests: XCTestCase {
         XCTAssertEqual(fetcher.idGtListCalls, NetBoxPageIterator.maxPages)
         XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/"))
         XCTAssertEqual(fetcher.latestCursorCalls, 0)
+        // The repeated page is an unknown type whose change id is 1, behind
+        // the watermark, so those pages are not stamped.
         XCTAssertEqual(
             try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
             10
@@ -580,6 +805,30 @@ final class NetBoxDeltaTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(fetcher.idGtListCalls, 1)
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/devices/"))
+    }
+
+    private func changelogPage(
+        id: Int64,
+        objectID: Int64,
+        hasNext: Bool,
+        poisoned: Bool = false
+    ) -> Data {
+        let next = hasNext
+            ? "\"https://netbox.example/api/core/object-changes/?offset=1\""
+            : "null"
+        let poison = poisoned ? ",{\"changed_object_type\":\"dcim.device\"}" : ""
+        return Data("""
+        {"count":1,"next":\(next),"results":[
+          {"id":\(id),"action":{"value":"create"},
+           "changed_object_type":"dcim.device","changed_object_id":\(objectID)}\(poison)
+        ]}
+        """.utf8)
+    }
+
+    private func deviceBody(id: Int64, name: String) -> Data {
+        Data("""
+        {"id":\(id),"name":"\(name)","site":{"id":1},"role":{"id":2},"device_type":{"id":8}}
+        """.utf8)
     }
 
     private func seedWatermark(
@@ -790,8 +1039,11 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     var latestCursorCalls = 0
     var unlimitedNext = false
     var armHold = false
+    /// Which `id__gt` list blocks when `armHold` is set. 1 is the first page.
+    var holdListCall = 1
     var idGtQueue: [Data] = []
     private(set) var idGtListCalls = 0
+    private(set) var idGtValues: [String] = []
     private let lock = NSLock()
     private let hold = ListHold()
     private let emptyPage = Data(#"{"count":0,"next":null,"results":[]}"#.utf8)
@@ -810,6 +1062,10 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
         lock.lock()
         paths.append(path)
+        if path == "/api/core/object-changes/",
+           let gt = query.first(where: { $0.name == "id__gt" })?.value {
+            idGtValues.append(gt)
+        }
         lock.unlock()
         if transportOn.contains(path) {
             throw NetBoxSyncError.transport("killed")
@@ -829,7 +1085,7 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
            query.contains(where: { $0.name == "id__gt" }) {
             lock.lock()
             idGtListCalls += 1
-            let holdThis = armHold
+            let holdThis = armHold && idGtListCalls == holdListCall
             let queued = idGtQueue.isEmpty ? nil : idGtQueue.removeFirst()
             let repeatNext = unlimitedNext
             lock.unlock()
