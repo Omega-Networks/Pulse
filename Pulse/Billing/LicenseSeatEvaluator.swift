@@ -70,14 +70,8 @@ enum LicenseSeatEvaluator {
         // Unlimited: every eligible device may write. Do not fetch the
         // whole device table on each PATCH.
         guard let cap = tier.maxSeats else { return }
-        var grantedFetch = FetchDescriptor<Device>(
-            predicate: #Predicate<Device> { $0.seatGrantedAt != nil }
-        )
-        let granted = try context.fetch(grantedFetch)
-        let effective = LicenseSeatReconciler.effectiveIDs(
-            devices: granted.map { $0.seatSnapshot() },
-            presentation: presentation,
-            cap: cap
+        let effective = try effectiveGrantedIDs(
+            in: context, presentation: presentation, cap: cap
         )
         if effective.contains(deviceID) { return }
         let result = try reconcile(in: context, defaults: defaults, tier: tier)
@@ -112,6 +106,11 @@ enum LicenseSeatEvaluator {
             try requireSeated(deviceID: a, in: context, defaults: defaults, tier: tier)
             return
         }
+        guard let cap = tier.maxSeats else { return }
+        let effective = try effectiveGrantedIDs(
+            in: context, presentation: presentation, cap: cap
+        )
+        if effective.contains(a) && effective.contains(b) { return }
         let result = try reconcile(in: context, defaults: defaults, tier: tier)
         guard result.effectiveIDs.contains(a), result.effectiveIDs.contains(b) else {
             throw BillingError.linkRequiresBothSeats
@@ -127,11 +126,55 @@ enum LicenseSeatEvaluator {
     ) throws {
         let presentation = presentation(defaults: defaults)
         guard presentation.countsTowardLicense(roleID: roleID) else { return }
-        let result = try reconcile(in: context, defaults: defaults, tier: tier)
         guard let cap = tier.maxSeats else { return }
-        guard result.effectiveIDs.count + additional <= cap else {
+        let effective = try effectiveGrantedIDs(
+            in: context, presentation: presentation, cap: cap
+        )
+        guard effective.count + additional <= cap else {
             throw BillingError.tierCapReached(tier)
         }
+    }
+
+    /// Persist a grant on a just-created row so UI `refreshEffective`
+    /// sees it seated. One-id fetch. Does not rewrite the table.
+    static func grantNewDevice(
+        id: Int64,
+        in context: ModelContext,
+        defaults: UserDefaults = .standard,
+        tier: SubscriptionTier,
+        now: Date = Date()
+    ) throws {
+        let presentation = presentation(defaults: defaults)
+        let descriptor = FetchDescriptor<Device>(
+            predicate: #Predicate<Device> { $0.id == id }
+        )
+        guard let device = try context.fetch(descriptor).first else { return }
+        guard presentation.countsTowardLicense(roleID: device.deviceRole?.id) else { return }
+        if device.seatGrantedAt != nil { return }
+        if let cap = tier.maxSeats {
+            let effective = try effectiveGrantedIDs(
+                in: context, presentation: presentation, cap: cap
+            )
+            guard effective.count < cap else { return }
+        }
+        device.seatGrantedAt = now
+        try context.save()
+    }
+
+    private static func effectiveGrantedIDs(
+        in context: ModelContext,
+        presentation: RolePresentation,
+        cap: Int
+    ) throws -> Set<Int64> {
+        var grantedFetch = FetchDescriptor<Device>(
+            predicate: #Predicate<Device> { $0.seatGrantedAt != nil }
+        )
+        let granted = try context.fetch(grantedFetch)
+        return LicenseSeatReconciler.effectiveIDs(
+            devices: granted.map { $0.seatSnapshot() },
+            presentation: presentation,
+            cap: cap
+        )
     }
 
     static func deviceID(forInterface id: Int64, in context: ModelContext) throws -> Int64 {

@@ -53,7 +53,7 @@ struct SeatReconcilerHost: View {
             .onChange(of: entitlements.tier) { _, _ in reconcile() }
             .onChange(of: roles.presentation) { _, _ in reconcile() }
             .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
-                reconcile()
+                refreshEffective()
             }
             .task { reconcile() }
     }
@@ -61,6 +61,20 @@ struct SeatReconcilerHost: View {
     private func reconcile() {
         do {
             try seats.reconcile(
+                in: ModelContext(container),
+                presentation: roles.presentation,
+                tier: entitlements.tier
+            )
+        } catch {
+            // Keep the last effective set. The next apply retries.
+        }
+    }
+
+    /// Writes persist grants on the write context. Rebuild the in-memory
+    /// sets only; a second full-table save here races that context.
+    private func refreshEffective() {
+        do {
+            try seats.refreshEffective(
                 in: ModelContext(container),
                 presentation: roles.presentation,
                 tier: entitlements.tier

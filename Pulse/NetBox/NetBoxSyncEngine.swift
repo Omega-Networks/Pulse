@@ -454,6 +454,14 @@ actor NetBoxSyncEngine {
                     time: nil
                 )
             )
+            if self.writePolicy.deviceAndSiteWritesEnabled {
+                let tier = self.subscriptionTier()
+                try await self.applyOnStore { context in
+                    try LicenseSeatEvaluator.grantNewDevice(
+                        id: row.id, in: context, tier: tier
+                    )
+                }
+            }
             do {
                 try await self.refreshDeviceInterfaces(deviceID: row.id)
             } catch {
@@ -496,8 +504,13 @@ actor NetBoxSyncEngine {
         }
     }
 
+    /// Operator writes apply the object they touched. Changelog catch-up
+    /// (`performDelta` of every `id__gt` since the last sync) is `sync()`'s
+    /// job. Awaiting it here made Add Device wait on console-port noise
+    /// and a WAL checkpoint. `patchInterface` already passed `catchUp:
+    /// false`; that is now the default.
     private func performWrite(
-        catchUp: Bool = true,
+        catchUp: Bool = false,
         announce: Bool = true,
         waitForSync: Bool = true,
         _ work: @escaping @Sendable () async throws -> Void
