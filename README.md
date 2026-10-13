@@ -6,6 +6,7 @@
   <a href="https://github.com/omega-networks/pulse/stargazers"><img src="https://img.shields.io/github/stars/omega-networks/pulse?style=flat" alt="GitHub stars" /></a>
   <p>
     <strong><a href="https://omega.net.nz">Omega Networks</a></strong> |
+    <strong><a href="https://apps.apple.com/nz/app/pulse-by-omega-networks/id6807722984?mt=12">App Store</a></strong> |
     <strong><a href="https://github.com/omega-networks/pulse/wiki">Documentation</a></strong> |
     <strong><a href="mailto:innovate@omega.net.nz">Contact</a></strong>
   </p>
