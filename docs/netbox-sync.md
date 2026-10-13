@@ -23,6 +23,8 @@ Use a **dedicated service account**. Read-only tokens still work for sync. Write
 
 A token without write permission returns 403; Pulse shows NetBox's body and does not change local data.
 
+A token that can read sites and devices but not another model still finishes the sync. Pulse keeps the rows it already stored for the model it cannot read, shows a warning, and does not ask for that model again until the next launch or **Apply changes**. A token that cannot read sites or devices, or that NetBox rejects entirely (401), stops the sync. A token that cannot read the changelog does not start a full mirror from the two-minute loop. The warning stays up, and the next launch or **Apply changes** tries the changelog again.
+
 Pulse does **not** send `If-Match`. Concurrent edits last-write-wins. A 412 from the server is shown as a conflict, not applied.
 
 ## Filters

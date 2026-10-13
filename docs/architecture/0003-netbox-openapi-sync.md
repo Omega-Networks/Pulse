@@ -109,6 +109,7 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 - 2026-10-09 - A chained write keeps the engine until the chain drains, and the quiet delta waits with it. Idle stops before the next changelog page when a write or user sync is waiting, drops the pages it already fetched, and does not move the watermark. The idle loop still starts after a failed boot sync. That failed boot, a successful boot, Apply changes, and Full Resync seat the whole store off the main actor and skip rows whose grant is already right. Idle seats the device rows that pass applied. Under a cap it also fills an open slot from the oldest ungranted device. A front-port-only delta does not read the device table.
 - 2026-10-13 - An idle changelog that passes the page cap is reported once on the NetBox status line. Later idle ticks do not re-download that window. Launch and Apply changes clear that latch; those paths still full-mirror when the cap is hit. The capped seat fill matches a missing device role without force-unwrapping it. A launch seat read does not mark a device unbilled when a grant arrived while that read was in flight.
 - 2026-10-13 - Changelog pages apply and stamp one at a time. A delta seats the devices that page applied. A full mirror and a failed boot still seat the whole store. See *Changelog pages and seats*.
+- 2026-10-13 - A 403 on a model other than sites or devices skips that model, keeps its stored rows, and lets the rest of the mirror finish. The idle loop does not ask again until launch or Apply changes. A 403 on the changelog list is latched and does not full-mirror. See *Permission gaps*.
 
 ## Changelog pages and seats
 
@@ -117,6 +118,16 @@ A delta reads `/api/core/object-changes/?id__gt=&ordering=id` one page at a time
 A yield before the next page, or between objects, leaves earlier pages stamped and does not stamp the page that stopped. `skipped > 0` on a page throws and does not stamp or apply that page. Idle never full-mirrors. When the page cap is hit, idle reports it once and does not retry; pages already stamped stay applied. Launch and Apply changes clear that latch and, past the cap, full-mirror.
 
 A delta boot and Apply changes seat with `grantArrivals` on the device ids that page applied. Under a cap an open slot still goes to the oldest ungranted eligible device. Unlimited seats only those ids. A full mirror (empty store, missing or gone watermark, weekly safety, page-cap fallback, Full Resync) and a failed boot seat the whole store with `grantMirroredStore` and skip rows whose stamp is already right. Tier and role changes still reconcile. `deleteStale` and the severity walk are unchanged.
+
+## Permission gaps
+
+A 401, a missing token, or a transport failure fails the sync and does not stamp a full success. A 403 on sites or devices does the same. A 403 on any other mirrored model skips that model, leaves the rows already stored (the `fetchComplete` delete does not run), and continues. When sites and devices succeeded, the watermark still stamps. The refused list path is remembered for the session. Idle does not request it again. The next launch or Apply changes clears that set and tries the model again.
+
+A 403 while re-fetching one changelog object skips that object and does not delete the local row. The page's high water still stamps when it is ahead. The model's list path joins the same refused set.
+
+A 403 on `/api/core/object-changes/` is reported once and latched. Idle does not re-download it and does not full-mirror. Launch and Apply changes clear the latch and try the changelog again.
+
+Each refusal posts an `OperatorNotice` on `OperatorNoticeCenter` (in memory, replaced when the same id is posted again, cleared when that fetch later succeeds). Zabbix failures post there too, using the sentence already shown for that failure. The toolbar warning reads the list. A later event log is a view of the same list. Writes are unchanged: a 403 on a POST or PATCH still shows NetBox's message and does not change local data.
 
 ## Writes (P4 amendment)
 

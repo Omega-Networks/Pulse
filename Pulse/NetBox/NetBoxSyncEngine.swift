@@ -79,6 +79,12 @@ actor NetBoxSyncEngine {
     /// re-download that window. Launch and Apply changes clear it.
     /// Pages already applied stay stamped.
     private var idlePageCapLatched = false
+    /// The changelog list returned 403. Idle does not retry it. Launch
+    /// and Apply changes clear it and try once more. Not a full mirror.
+    private var idleChangelogPermissionLatched = false
+    /// List paths that returned 403 this session. Idle does not request
+    /// them again. Cleared when a user sync starts.
+    private var deniedListPaths: Set<String> = []
     /// Device rows the current delta created, updated, or deleted.
     private var passDeviceIDs: [Int64] = []
     /// Objects applied by the current delta. A later page can fail
@@ -120,6 +126,8 @@ actor NetBoxSyncEngine {
     func sync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         guard try await claimUserSync() else { return }
         idlePageCapLatched = false
+        idleChangelogPermissionLatched = false
+        deniedListPaths = []
         beginSeatPass(wholeStore: true)
         defer { userSyncWaiting = false }
         let task = Task(priority: .userInitiated) {
@@ -141,6 +149,8 @@ actor NetBoxSyncEngine {
     func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         guard try await claimUserSync() else { return }
         idlePageCapLatched = false
+        idleChangelogPermissionLatched = false
+        deniedListPaths = []
         beginSeatPass(wholeStore: true)
         defer { userSyncWaiting = false }
         let task = Task(priority: .userInitiated) {
@@ -187,11 +197,12 @@ actor NetBoxSyncEngine {
 
     /// Delta since the watermark. Does not start a full mirror. A second
     /// caller while one pass is running returns. A pass that already hit
-    /// the page cap returns until launch or Apply changes clears the latch.
+    /// the page cap, or a changelog the token cannot read, returns until
+    /// launch or Apply changes clears the latch.
     /// Boot and the dashboard keep using `sync()` / `fullSync()`.
     func runIdleCatchUp() async {
         guard inFlight == nil, !writeInProgress, !userSyncWaiting, !idleRunning else { return }
-        guard !idlePageCapLatched else { return }
+        guard !idlePageCapLatched, !idleChangelogPermissionLatched else { return }
         idleRunning = true
         let task = Task { await self.performIdleCatchUp() }
         idleTask = task
@@ -237,28 +248,176 @@ actor NetBoxSyncEngine {
         }
     }
 
+    /// One full-mirror model. Sites and devices are required: a 403 there
+    /// fails the sync. Every other model is skipped on 403 and its stored
+    /// rows stay. The sync call is separate from this metadata: a tuple
+    /// that also held the async closure was retained incorrectly.
+    private enum MirrorModel: CaseIterable {
+        case tenantGroups
+        case deviceRoles
+        case deviceTypes
+        case tenants
+        case regions
+        case siteGroups
+        case sites
+        case locations
+        case rackRoles
+        case racks
+        case devices
+        case deviceBays
+        case frontPorts
+        case services
+        case interfaces
+        case cables
+
+        var label: String {
+            switch self {
+            case .tenantGroups: return "Synchronising Tenant Groups..."
+            case .deviceRoles: return "Synchronising Device Roles..."
+            case .deviceTypes: return "Synchronising Device Types..."
+            case .tenants: return "Synchronising Tenants..."
+            case .regions: return "Synchronising Regions..."
+            case .siteGroups: return "Synchronising Site Groups..."
+            case .sites: return "Synchronising Sites..."
+            case .locations: return "Synchronising Locations..."
+            case .rackRoles: return "Synchronising Rack Roles..."
+            case .racks: return "Synchronising Racks..."
+            case .devices: return "Synchronising Devices..."
+            case .deviceBays: return "Synchronising Device Bays..."
+            case .frontPorts: return "Synchronising Front Ports..."
+            case .services: return "Synchronising Services..."
+            case .interfaces: return "Synchronising Interfaces..."
+            case .cables: return "Synchronising Cables..."
+            }
+        }
+
+        var path: String {
+            switch self {
+            case .tenantGroups: return "/api/tenancy/tenant-groups/"
+            case .deviceRoles: return "/api/dcim/device-roles/"
+            case .deviceTypes: return "/api/dcim/device-types/"
+            case .tenants: return "/api/tenancy/tenants/"
+            case .regions: return "/api/dcim/regions/"
+            case .siteGroups: return "/api/dcim/site-groups/"
+            case .sites: return "/api/dcim/sites/"
+            case .locations: return "/api/dcim/locations/"
+            case .rackRoles: return "/api/dcim/rack-roles/"
+            case .racks: return "/api/dcim/racks/"
+            case .devices: return "/api/dcim/devices/"
+            case .deviceBays: return "/api/dcim/device-bays/"
+            case .frontPorts: return "/api/dcim/front-ports/"
+            case .services: return "/api/ipam/services/"
+            case .interfaces: return "/api/dcim/interfaces/"
+            case .cables: return "/api/dcim/cables/"
+            }
+        }
+
+        var required: Bool {
+            switch self {
+            case .sites, .devices: return true
+            default: return false
+            }
+        }
+    }
+
     private func performFullSync(progress: (@Sendable (Int, String) -> Void)?) async throws {
-        let stages: [(String, () async throws -> Void)] = [
-            ("Synchronising Tenant Groups...", { try await self.syncTenantGroups() }),
-            ("Synchronising Device Roles...", { try await self.syncDeviceRoles() }),
-            ("Synchronising Device Types...", { try await self.syncDeviceTypes() }),
-            ("Synchronising Tenants...", { try await self.syncTenants() }),
-            ("Synchronising Regions...", { try await self.syncRegions() }),
-            ("Synchronising Site Groups...", { try await self.syncSiteGroups() }),
-            ("Synchronising Sites...", { try await self.syncSites() }),
-            ("Synchronising Locations...", { try await self.syncLocations() }),
-            ("Synchronising Rack Roles...", { try await self.syncRackRoles() }),
-            ("Synchronising Racks...", { try await self.syncRacks() }),
-            ("Synchronising Devices...", { try await self.syncDevices() }),
-            ("Synchronising Device Bays...", { try await self.syncDeviceBays() }),
-            ("Synchronising Front Ports...", { try await self.syncFrontPorts() }),
-            ("Synchronising Services...", { try await self.syncServices() }),
-            ("Synchronising Interfaces...", { try await self.syncInterfaces() }),
-            ("Synchronising Cables...", { try await self.syncCables() }),
-        ]
-        for (index, stage) in stages.enumerated() {
-            progress?(index, stage.0)
-            try await stage.1()
+        for (index, model) in MirrorModel.allCases.enumerated() {
+            progress?(index, model.label)
+            try await runMirrorStage(path: model.path, required: model.required) {
+                try await self.syncMirror(model)
+            }
+        }
+    }
+
+    private func syncMirror(_ model: MirrorModel) async throws {
+        switch model {
+        case .tenantGroups: try await syncTenantGroups()
+        case .deviceRoles: try await syncDeviceRoles()
+        case .deviceTypes: try await syncDeviceTypes()
+        case .tenants: try await syncTenants()
+        case .regions: try await syncRegions()
+        case .siteGroups: try await syncSiteGroups()
+        case .sites: try await syncSites()
+        case .locations: try await syncLocations()
+        case .rackRoles: try await syncRackRoles()
+        case .racks: try await syncRacks()
+        case .devices: try await syncDevices()
+        case .deviceBays: try await syncDeviceBays()
+        case .frontPorts: try await syncFrontPorts()
+        case .services: try await syncServices()
+        case .interfaces: try await syncInterfaces()
+        case .cables: try await syncCables()
+        }
+    }
+
+    private static let changelogListPath = "/api/core/object-changes/"
+
+    private static func isForbidden(_ error: Error) -> Bool {
+        guard let sync = error as? NetBoxSyncError,
+              case .httpStatus(let code, _) = sync else {
+            return false
+        }
+        return code == 403
+    }
+
+    private static func permissionID(for path: String) -> String {
+        "netbox.permission.\(path)"
+    }
+
+    private static func modelName(for path: String) -> String {
+        let leaf = path.split(separator: "/").last.map(String.init) ?? "that model"
+        return leaf.replacingOccurrences(of: "-", with: " ")
+    }
+
+    /// Optional model the token cannot read. The completion apply is not
+    /// run, so stored rows for that model stay. Idle will not request the
+    /// path again until a user sync clears `deniedListPaths`.
+    private func noteOptionalForbidden(path: String) async {
+        deniedListPaths.insert(path)
+        let notice = OperatorNotice(
+            id: Self.permissionID(for: path),
+            source: .netbox,
+            severity: .warning,
+            message: "NetBox token cannot read \(Self.modelName(for: path)). Pulse kept syncing the rest.",
+            occurredAt: Date()
+        )
+        await OperatorNoticeCenter.shared.post(notice)
+        logger.error("NetBox refused \(path, privacy: .public); continuing without it")
+    }
+
+    private func noteChangelogForbidden() async {
+        idleChangelogPermissionLatched = true
+        let notice = OperatorNotice(
+            id: Self.permissionID(for: Self.changelogListPath),
+            source: .netbox,
+            severity: .warning,
+            message: "NetBox token cannot read the changelog. Pulse will try again on the next launch or Apply changes.",
+            occurredAt: Date()
+        )
+        await OperatorNoticeCenter.shared.post(notice)
+        logger.error("NetBox refused the changelog; waiting for Apply changes or launch")
+    }
+
+    private func clearPermission(path: String) async {
+        deniedListPaths.remove(path)
+        await OperatorNoticeCenter.shared.clear(id: Self.permissionID(for: path))
+    }
+
+    /// Sites and devices are the mirror: a 403 there fails the sync.
+    /// Any other model's 403 is remembered, its local rows are left as
+    /// they were, and the rest of the mirror continues. A 401 or a
+    /// transport error still fails the sync.
+    private func runMirrorStage(
+        path: String,
+        required: Bool,
+        _ work: () async throws -> Void
+    ) async throws {
+        do {
+            try await work()
+            await clearPermission(path: path)
+        } catch {
+            guard Self.isForbidden(error), !required else { throw error }
+            await noteOptionalForbidden(path: path)
         }
     }
 
@@ -1263,6 +1422,9 @@ actor NetBoxSyncEngine {
                     NetBoxSyncError.pageLimitExceeded.publish()
                 }
                 await postPartialDelta()
+            } catch let error where Self.isForbidden(error) {
+                logger.error("Idle changelog was refused; waiting for Apply changes or launch")
+                await postPartialDelta()
             } catch {
                 logger.error("Idle changelog failed: \(error.localizedDescription)")
                 await postPartialDelta()
@@ -1326,10 +1488,12 @@ actor NetBoxSyncEngine {
                     summary: "no changes"
                 )
             }
+            await clearPermission(path: Self.changelogListPath)
             await refreshTouchedSites(progress)
             return progress.applied
         } catch is ChangelogYield {
             logger.info("Idle changelog paused for a write or sync")
+            await clearPermission(path: Self.changelogListPath)
             await refreshTouchedSites(progress)
             return progress.applied
         } catch let error as NetBoxSyncError where error == .pageLimitExceeded {
@@ -1348,9 +1512,13 @@ actor NetBoxSyncEngine {
                 return 0
             }
             logger.error("Changelog exceeded the page cap; applied pages stay stamped")
+            await clearPermission(path: Self.changelogListPath)
             await refreshTouchedSites(progress)
             throw error
         } catch {
+            if Self.isForbidden(error) {
+                await noteChangelogForbidden()
+            }
             await refreshTouchedSites(progress)
             throw error
         }
@@ -1379,7 +1547,8 @@ actor NetBoxSyncEngine {
             if yieldToWriters, writeInProgress || inFlight != nil || userSyncWaiting {
                 throw ChangelogYield()
             }
-            try await applyDeltaItem(item)
+            let applied = try await applyDeltaItem(item)
+            guard applied else { continue }
             progress.applied += 1
             passAppliedCount = progress.applied
             if item.kind == .device {
@@ -1404,18 +1573,23 @@ actor NetBoxSyncEngine {
         await SiteDataService(modelContainer: modelContainer).refreshSeverities()
     }
 
-    private func applyDeltaItem(_ item: NetBoxDeltaItem) async throws {
+    /// False when the token cannot read this model. The local row stays,
+    /// and the page may still stamp. A 404 still deletes the local row.
+    @discardableResult
+    private func applyDeltaItem(_ item: NetBoxDeltaItem) async throws -> Bool {
+        if deniedListPaths.contains(item.kind.retrievePath) {
+            return false
+        }
         if item.kind == .cable {
             if item.action == "delete" {
                 try await deleteLocalCableAndRefreshEnds(id: item.objectID)
-            } else {
-                try await applyCableAndEnds(id: item.objectID)
+                return true
             }
-            return
+            return try await applyCableAndEnds(id: item.objectID)
         }
         if item.action == "delete" {
             try await deleteObject(kind: item.kind, id: item.objectID)
-            return
+            return true
         }
         do {
             let data = try await fetcher.get(
@@ -1423,19 +1597,31 @@ actor NetBoxSyncEngine {
                 query: []
             )
             try await upsertRetrieved(kind: item.kind, data: data)
+            await clearPermission(path: item.kind.retrievePath)
+            return true
         } catch NetBoxSyncError.httpStatus(let code, _) where code == 404 {
             try await deleteObject(kind: item.kind, id: item.objectID)
+            return true
+        } catch {
+            guard Self.isForbidden(error) else { throw error }
+            await noteOptionalForbidden(path: item.kind.retrievePath)
+            return false
         }
     }
 
     /// Persist the cable row and re-fetch both interface ends.
-    private func applyCableAndEnds(id: Int64) async throws {
+    /// False when the token cannot read cables. The local cable stays.
+    private func applyCableAndEnds(id: Int64) async throws -> Bool {
         let data: Data
         do {
             data = try await fetcher.get(path: "/api/dcim/cables/\(id)/", query: [])
         } catch NetBoxSyncError.httpStatus(let code, _) where code == 404 {
             try await deleteLocalCableAndRefreshEnds(id: id)
-            return
+            return true
+        } catch {
+            guard Self.isForbidden(error) else { throw error }
+            await noteOptionalForbidden(path: NetBoxChangeKind.cable.retrievePath)
+            return false
         }
         let cable = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: data)
         _ = try await applyOnStore {
@@ -1465,6 +1651,8 @@ actor NetBoxSyncEngine {
                 )
             )
         }
+        await clearPermission(path: NetBoxChangeKind.cable.retrievePath)
+        return true
     }
 
     private func deleteLocalCableAndRefreshEnds(

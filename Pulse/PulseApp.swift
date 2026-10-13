@@ -578,7 +578,7 @@ struct PulseStatusMenuLabel: View {
 struct PulseStatusMenu: View {
     let modelContainer: ModelContainer
     @Environment(\.openWindow) private var openWindow
-    private var statusManager = RequestStatusManager.shared
+    private var noticeCenter = OperatorNoticeCenter.shared
     @State private var isRetryingZabbix = false
 
     init(modelContainer: ModelContainer) {
@@ -589,30 +589,23 @@ struct PulseStatusMenu: View {
         Button("Open Pulse") {
             PulseMenuBarActivation.revealMainWindow(openWindow: openWindow)
         }
-        if let zabbixWarning {
+        if !noticeCenter.notices.isEmpty {
             Divider()
-            Section(zabbixWarning) {
-                Button(isRetryingZabbix ? "Checking…" : "Retry Zabbix") {
-                    retryZabbix()
+            Section {
+                ForEach(noticeCenter.notices) { notice in
+                    Text(notice.message)
                 }
-                .disabled(isRetryingZabbix)
+                if noticeCenter.notices.contains(where: { $0.source == .zabbix }) {
+                    Button(isRetryingZabbix ? "Checking…" : "Retry Zabbix") {
+                        retryZabbix()
+                    }
+                    .disabled(isRetryingZabbix)
+                }
             }
         }
         Divider()
         Button("Quit Pulse") {
             NSApplication.shared.terminate(nil)
-        }
-    }
-
-    private var zabbixWarning: String? {
-        switch statusManager.currentStatus[.zabbix] {
-        case .connectionError(let text),
-             .authenticationFailure(_, let text),
-             .dataError(_, let text),
-             .unknownError(let text):
-            return text
-        default:
-            return nil
         }
     }
 

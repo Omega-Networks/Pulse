@@ -229,6 +229,156 @@ final class NetBoxSyncEngineTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<SyncProvider>()).isEmpty)
         XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).map(\.id), [1])
     }
+
+    func testOptionalForbiddenModelKeepsRowsStampsAndSkipsIdleRetry() async throws {
+        await clearNotices()
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        let kept = Interface(id: 5)
+        kept.name = "eth0"
+        seed.insert(kept)
+        try seed.save()
+
+        let fetcher = MockNetBoxFetcher()
+        fetcher.emptySuccess = true
+        fetcher.statusByPath["/api/dcim/interfaces/"] = 403
+        fetcher.bodies["/api/dcim/sites/"] = Data("""
+        {"count":1,"next":null,"results":[{"id":1,"name":"Lab","display":"Lab"}]}
+        """.utf8)
+        fetcher.bodies["/api/dcim/devices/"] = Data("""
+        {"count":1,"next":null,"results":[
+          {"id":10,"name":"core","site":{"id":1},"role":{"id":2},"device_type":{"id":8}}
+        ]}
+        """.utf8)
+        fetcher.bodies["/api/core/object-changes/"] = Data("""
+        {"count":1,"next":null,"results":[
+          {"id":11,"action":{"value":"update"},
+           "changed_object_type":"dcim.interface","changed_object_id":5}
+        ]}
+        """.utf8)
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.fullSync()
+
+        let context = ModelContext(container)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Device>()).map(\.id), [10])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).map(\.id), [5])
+        let provider = try XCTUnwrap(try context.fetch(FetchDescriptor<SyncProvider>()).first)
+        XCTAssertEqual(provider.lastDeltaSummary, "full mirror")
+        XCTAssertEqual(provider.lastObjectChangeId, 11)
+        let notices = await MainActor.run { OperatorNoticeCenter.shared.notices }
+        XCTAssertEqual(notices.map(\.id), ["netbox.permission./api/dcim/interfaces/"])
+        XCTAssertTrue(notices[0].message.contains("interfaces"))
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/dcim/interfaces/" }.count, 1)
+
+        await engine.runIdleCatchUp()
+        await engine.runIdleCatchUp()
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/dcim/interfaces/" }.count, 1)
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/interfaces/5/"))
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Interface>()).map(\.id), [5])
+    }
+
+    func testDeviceListForbiddenFailsWithoutASkipNotice() async throws {
+        await clearNotices()
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        let device = Device(id: 3)
+        device.name = "keep"
+        seed.insert(device)
+        let original = Date(timeIntervalSince1970: 1_700_000_000)
+        seed.insert(SyncProvider(lastNetBoxUpdate: original, lastZabbixUpdate: original))
+        try seed.save()
+
+        let fetcher = MockNetBoxFetcher()
+        fetcher.emptySuccess = true
+        fetcher.statusByPath["/api/dcim/devices/"] = 403
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.fullSync()
+            XCTFail("expected 403")
+        } catch let error as NetBoxSyncError {
+            XCTAssertEqual(error, .httpStatus(code: 403, body: "denied"))
+        }
+
+        let context = ModelContext(container)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Device>()).map(\.id), [3])
+        let stamped = try context.fetch(FetchDescriptor<SyncProvider>()).first?.lastNetBoxUpdate
+        XCTAssertEqual(stamped?.timeIntervalSince1970, original.timeIntervalSince1970)
+        let notices = await MainActor.run { OperatorNoticeCenter.shared.notices }
+        XCTAssertFalse(notices.contains { $0.message.contains("kept syncing") })
+    }
+
+    func testUnauthorizedStageDoesNotStamp() async throws {
+        await clearNotices()
+        let container = try makeContainer()
+        let fetcher = MockNetBoxFetcher()
+        fetcher.emptySuccess = true
+        fetcher.statusByPath["/api/tenancy/tenant-groups/"] = 401
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        do {
+            try await engine.fullSync()
+            XCTFail("expected 401")
+        } catch let error as NetBoxSyncError {
+            XCTAssertEqual(error, .httpStatus(code: 401, body: "denied"))
+        }
+        XCTAssertTrue(try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).isEmpty)
+        let notices = await MainActor.run { OperatorNoticeCenter.shared.notices }
+        XCTAssertTrue(notices.isEmpty)
+    }
+
+    func testNoticeCenterReplacesByIDAndClearsBySource() async {
+        await clearNotices()
+        let first = OperatorNotice(
+            id: "netbox.permission./api/dcim/interfaces/",
+            source: .netbox,
+            severity: .warning,
+            message: "NetBox token cannot read interfaces. Pulse kept syncing the rest.",
+            occurredAt: Date(timeIntervalSince1970: 1)
+        )
+        let replacement = OperatorNotice(
+            id: first.id,
+            source: .netbox,
+            severity: .warning,
+            message: first.message,
+            occurredAt: Date(timeIntervalSince1970: 2)
+        )
+        let zabbix = OperatorNotice.fromZabbix(
+            .authenticationFailure(
+                code: 401,
+                message: ZabbixError.authenticationFailed.localizedDescription
+            )
+        )
+        await MainActor.run {
+            let center = OperatorNoticeCenter.shared
+            center.post(first)
+            center.post(replacement)
+            if let zabbix {
+                center.post(zabbix)
+            }
+        }
+        let notices = await MainActor.run { OperatorNoticeCenter.shared.notices }
+        XCTAssertEqual(notices.count, 2)
+        XCTAssertEqual(notices[0].occurredAt, Date(timeIntervalSince1970: 2))
+        XCTAssertEqual(
+            notices[1].message,
+            "Zabbix authentication failed. Check the API user and token in Settings."
+        )
+        await MainActor.run { OperatorNoticeCenter.shared.clear(source: .zabbix) }
+        let remaining = await MainActor.run { OperatorNoticeCenter.shared.notices }
+        XCTAssertEqual(remaining.map(\.source), [.netbox])
+        await MainActor.run {
+            OperatorNoticeCenter.shared.clear(id: "netbox.permission./api/dcim/interfaces/")
+        }
+        let empty = await MainActor.run { OperatorNoticeCenter.shared.notices }
+        XCTAssertTrue(empty.isEmpty)
+    }
+
+    private func clearNotices() async {
+        await MainActor.run {
+            OperatorNoticeCenter.shared.clear(source: .netbox)
+            OperatorNoticeCenter.shared.clear(source: .zabbix)
+            OperatorNoticeCenter.shared.clear(source: .powersense)
+        }
+    }
 }
 
 private final class MockNetBoxFetcher: NetBoxFetching, @unchecked Sendable {
@@ -240,6 +390,7 @@ private final class MockNetBoxFetcher: NetBoxFetching, @unchecked Sendable {
     var sequentialIndex: [String: Int] = [:]
     var failAfterSequential = false
     var failPath: String?
+    var statusByPath: [String: Int] = [:]
     var emptySuccess = false
     var delayNanoseconds: UInt64 = 0
 
@@ -252,6 +403,9 @@ private final class MockNetBoxFetcher: NetBoxFetching, @unchecked Sendable {
         paths.append(path)
         queries[path] = query
         queryLog.append((path, query))
+        if let code = statusByPath[path] {
+            throw NetBoxSyncError.httpStatus(code: code, body: "denied")
+        }
         if path == failPath {
             throw NetBoxSyncError.httpStatus(code: 500, body: "boom")
         }

@@ -79,3 +79,77 @@ import SwiftData
         currentStatus[source] = nil
     }
 }
+
+/// One operator-visible condition. A later log is a view of these values.
+/// `id` is stable for the condition, so a repeat replaces the previous line.
+struct OperatorNotice: Identifiable, Sendable, Equatable {
+    enum Source: String, Sendable, Equatable {
+        case netbox
+        case zabbix
+        case powersense
+    }
+
+    enum Severity: Sendable, Equatable {
+        case warning
+        case failure
+    }
+
+    var id: String
+    var source: Source
+    var severity: Severity
+    var message: String
+    var occurredAt: Date
+
+    /// The same sentence the Zabbix toolbar already shows. Success and
+    /// the in-flight marker are not notices.
+    static func fromZabbix(_ status: RequestStatusManager.RequestStatus) -> OperatorNotice? {
+        let message: String
+        let severity: Severity
+        switch status {
+        case .connectionError(let text):
+            message = text
+            severity = .warning
+        case .authenticationFailure(_, let text),
+             .dataError(_, let text),
+             .unknownError(let text):
+            message = text
+            severity = .failure
+        case .success, .syncing:
+            return nil
+        }
+        return OperatorNotice(
+            id: "zabbix.status",
+            source: .zabbix,
+            severity: severity,
+            message: message,
+            occurredAt: Date()
+        )
+    }
+}
+
+/// In-memory notices. Producers post and clear. Views read `notices`.
+@MainActor
+@Observable
+final class OperatorNoticeCenter {
+    static let shared = OperatorNoticeCenter()
+
+    private(set) var notices: [OperatorNotice] = []
+
+    private init() {}
+
+    func post(_ notice: OperatorNotice) {
+        if let index = notices.firstIndex(where: { $0.id == notice.id }) {
+            notices[index] = notice
+        } else {
+            notices.append(notice)
+        }
+    }
+
+    func clear(id: String) {
+        notices.removeAll { $0.id == id }
+    }
+
+    func clear(source: OperatorNotice.Source) {
+        notices.removeAll { $0.source == source }
+    }
+}

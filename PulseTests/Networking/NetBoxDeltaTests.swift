@@ -807,6 +807,88 @@ final class NetBoxDeltaTests: XCTestCase {
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/devices/"))
     }
 
+    func testForbiddenInterfaceChangeStampsAndKeepsTheRow() async throws {
+        await clearNotices()
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let seed = ModelContext(container)
+        let row = Interface(id: 88)
+        row.name = "eth88"
+        row.deviceId = 5
+        seed.insert(row)
+        try seed.save()
+
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/core/object-changes/"] = Data("""
+        {"count":1,"next":null,"results":[
+          {"id":11,"action":{"value":"update"},
+           "changed_object_type":"dcim.interface","changed_object_id":88}
+        ]}
+        """.utf8)
+        fetcher.forbiddenPaths = ["/api/dcim/interfaces/88/"]
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+
+        try await engine.sync()
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<Interface>()).map(\.id), [88])
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            11
+        )
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/dcim/interfaces/88/" }.count, 1)
+        let notices = await MainActor.run { OperatorNoticeCenter.shared.notices }
+        XCTAssertTrue(notices.contains { $0.id == "netbox.permission./api/dcim/interfaces/" })
+
+        await engine.runIdleCatchUp()
+        await engine.runIdleCatchUp()
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/dcim/interfaces/88/" }.count, 1)
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<Interface>()).map(\.id), [88])
+    }
+
+    func testChangelogForbiddenLatchesUntilUserSync() async throws {
+        await clearNotices()
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.forbiddenPaths = ["/api/core/object-changes/"]
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+
+        await engine.runIdleCatchUp()
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/core/object-changes/" }.count, 1)
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/"))
+        let notices = await MainActor.run { OperatorNoticeCenter.shared.notices }
+        XCTAssertTrue(notices.contains { $0.message.contains("changelog") })
+
+        await engine.runIdleCatchUp()
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/core/object-changes/" }.count, 1)
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            10
+        )
+
+        do {
+            try await engine.sync()
+            XCTFail("expected 403")
+        } catch let error as NetBoxSyncError {
+            XCTAssertEqual(error, .httpStatus(code: 403, body: "denied"))
+        }
+        XCTAssertEqual(fetcher.paths.filter { $0 == "/api/core/object-changes/" }.count, 2)
+        XCTAssertFalse(fetcher.paths.contains("/api/dcim/devices/"))
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            10
+        )
+    }
+
+    private func clearNotices() async {
+        await MainActor.run {
+            OperatorNoticeCenter.shared.clear(source: .netbox)
+            OperatorNoticeCenter.shared.clear(source: .zabbix)
+            OperatorNoticeCenter.shared.clear(source: .powersense)
+        }
+    }
+
     private func changelogPage(
         id: Int64,
         objectID: Int64,
@@ -1033,6 +1115,7 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     var paths: [String] = []
     var bodies: [String: Data] = [:]
     var fail404: Set<String> = []
+    var forbiddenPaths: Set<String> = []
     var transportOn: Set<String> = []
     var emptySuccess = false
     var latestCursorQueue: [Data] = []
@@ -1062,11 +1145,15 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
         lock.lock()
         paths.append(path)
+        let refused = forbiddenPaths.contains(path)
         if path == "/api/core/object-changes/",
            let gt = query.first(where: { $0.name == "id__gt" })?.value {
             idGtValues.append(gt)
         }
         lock.unlock()
+        if refused {
+            throw NetBoxSyncError.httpStatus(code: 403, body: "denied")
+        }
         if transportOn.contains(path) {
             throw NetBoxSyncError.transport("killed")
         }
