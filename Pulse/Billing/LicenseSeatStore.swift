@@ -70,29 +70,80 @@ final class LicenseSeatStore: @unchecked Sendable {
             cap: tier.maxSeats,
             now: now
         )
+        var changed = false
         for device in devices {
-            if let boxed = result.grants[device.id] {
-                device.seatGrantedAt = boxed
+            guard let stamped = result.grants[device.id] else { continue }
+            if device.seatGrantedAt != stamped {
+                device.seatGrantedAt = stamped
+                changed = true
             }
         }
-        try context.save()
+        if changed {
+            try context.save()
+        }
         seatedIDs = result.effectiveIDs
         unbilledIDs = Self.unbilledIDs(in: snapshots, presentation: presentation)
         return result
     }
 
-    func refreshEffective(
+    /// Replace or merge the in-memory sets from a sync notice. Does not
+    /// fetch or save. The engine already wrote the grants.
+    func apply(_ update: SyncSeatUpdate) {
+        if let seated = update.replaceSeated, let unbilled = update.replaceUnbilled {
+            seatedIDs = seated
+            unbilledIDs = unbilled
+            return
+        }
+        seatedIDs.subtract(update.removed)
+        seatedIDs.subtract(update.revoked)
+        seatedIDs.subtract(update.unbilled)
+        unbilledIDs.subtract(update.removed)
+        unbilledIDs.subtract(update.granted)
+        unbilledIDs.formUnion(update.unbilled)
+        seatedIDs.formUnion(update.granted)
+    }
+
+    /// Launch read finished. Keep ids a sync notice already added, and
+    /// do not resurrect ids that notice removed.
+    func mergeLoaded(seated: Set<Int64>, unbilled: Set<Int64>) {
+        seatedIDs.formUnion(seated)
+        unbilledIDs.formUnion(unbilled)
+        seatedIDs.subtract(unbilled)
+    }
+
+    /// Seated and unbilled ids already stored. Does not grant and does
+    /// not fetch devices that count toward the license and have no seat.
+    static func readEffectiveSets(
         in context: ModelContext,
         presentation: RolePresentation,
         tier: SubscriptionTier
-    ) throws {
-        let snapshots = try context.fetch(FetchDescriptor<Device>()).map { $0.seatSnapshot() }
-        seatedIDs = LicenseSeatReconciler.effectiveIDs(
-            devices: snapshots,
+    ) throws -> (seated: Set<Int64>, unbilled: Set<Int64>) {
+        let granted = try context.fetch(
+            FetchDescriptor<Device>(
+                predicate: #Predicate<Device> { $0.seatGrantedAt != nil }
+            )
+        )
+        let seated = LicenseSeatReconciler.effectiveIDs(
+            devices: granted.map { $0.seatSnapshot() },
             presentation: presentation,
             cap: tier.maxSeats
         )
-        unbilledIDs = Self.unbilledIDs(in: snapshots, presentation: presentation)
+        var unbilled: Set<Int64> = []
+        let hardwareRoles = presentation.policies.compactMap { id, policy -> Int64? in
+            policy.countsTowardLicense ? nil : id
+        }
+        for roleID in hardwareRoles {
+            let match = roleID
+            let rows = try context.fetch(
+                FetchDescriptor<Device>(
+                    predicate: #Predicate<Device> { $0.deviceRole?.id == match }
+                )
+            )
+            for row in rows {
+                unbilled.insert(row.id)
+            }
+        }
+        return (seated, unbilled)
     }
 
     private static func unbilledIDs(

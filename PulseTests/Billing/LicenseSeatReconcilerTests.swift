@@ -20,6 +20,7 @@
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
+import SwiftData
 import XCTest
 @testable import Pulse
 
@@ -364,5 +365,157 @@ final class LicenseSeatReconcilerTests: XCTestCase {
         XCTAssertTrue(LicenseSeatReconciler.canAdmitEligible(
             additional: 0, devices: devices, presentation: presentation, cap: 2
         ))
+    }
+
+    func testGrantArrivalsFillsOldestOpenSlotWithoutMovingAnExistingStamp() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let role = DeviceRole(id: 1)
+        context.insert(role)
+        let kept = Date(timeIntervalSince1970: 1_500_000_000)
+        let seated = Device(id: 1)
+        seated.deviceRole = role
+        seated.created = older
+        seated.seatGrantedAt = kept
+        let waiter = Device(id: 2)
+        waiter.deviceRole = role
+        waiter.created = older
+        let newest = Device(id: 3)
+        newest.deviceRole = role
+        newest.created = self.newest
+        context.insert(seated)
+        context.insert(waiter)
+        context.insert(newest)
+        // Free is 50 seats. 49 grants leave one open slot.
+        for id in 10...57 {
+            let row = Device(id: Int64(id))
+            row.deviceRole = role
+            row.seatGrantedAt = kept
+            context.insert(row)
+        }
+        try context.save()
+
+        let update = try LicenseSeatEvaluator.grantArrivals(
+            deviceIDs: [3],
+            in: context,
+            defaults: isolatedDefaults(),
+            tier: .free,
+            now: now
+        )
+        let rows = try context.fetch(FetchDescriptor<Device>())
+        XCTAssertEqual(rows.first { $0.id == 1 }?.seatGrantedAt, kept)
+        XCTAssertEqual(rows.first { $0.id == 2 }?.seatGrantedAt, now)
+        XCTAssertNil(rows.first { $0.id == 3 }?.seatGrantedAt)
+        XCTAssertEqual(update.granted, [2])
+    }
+
+    func testUnlimitedArrivalSeatsOnlyTheTouchedDevice() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let role = DeviceRole(id: 1)
+        context.insert(role)
+        let olderRow = Device(id: 2)
+        olderRow.deviceRole = role
+        olderRow.created = older
+        let touched = Device(id: 3)
+        touched.deviceRole = role
+        touched.created = newest
+        context.insert(olderRow)
+        context.insert(touched)
+        try context.save()
+
+        let update = try LicenseSeatEvaluator.grantArrivals(
+            deviceIDs: [3],
+            in: context,
+            defaults: isolatedDefaults(),
+            tier: .unlimited,
+            now: now
+        )
+        let rows = try context.fetch(FetchDescriptor<Device>())
+        XCTAssertNil(rows.first { $0.id == 2 }?.seatGrantedAt)
+        XCTAssertEqual(rows.first { $0.id == 3 }?.seatGrantedAt, now)
+        XCTAssertEqual(update.granted, [3])
+    }
+
+    func testHardwareArrivalClearsItsGrantAndFillsTheOldestWaiter() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let billable = DeviceRole(id: 1)
+        let panel = DeviceRole(id: 6)
+        context.insert(billable)
+        context.insert(panel)
+        let hardware = Device(id: 1)
+        hardware.deviceRole = panel
+        hardware.seatGrantedAt = older
+        let waiter = Device(id: 2)
+        waiter.deviceRole = billable
+        waiter.created = older
+        context.insert(hardware)
+        context.insert(waiter)
+        try context.save()
+
+        let update = try LicenseSeatEvaluator.grantArrivals(
+            deviceIDs: [1],
+            in: context,
+            defaults: isolatedDefaults(),
+            tier: .free,
+            now: now
+        )
+        let rows = try context.fetch(FetchDescriptor<Device>())
+        XCTAssertNil(rows.first { $0.id == 1 }?.seatGrantedAt)
+        XCTAssertEqual(rows.first { $0.id == 2 }?.seatGrantedAt, now)
+        XCTAssertEqual(update.unbilled, [1])
+        XCTAssertEqual(update.revoked, [1])
+        XCTAssertEqual(update.granted, [2])
+    }
+
+    func testMirroredStoreKeepsAnExistingStamp() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let role = DeviceRole(id: 1)
+        context.insert(role)
+        let kept = Date(timeIntervalSince1970: 1_500_000_000)
+        let seated = Device(id: 1)
+        seated.deviceRole = role
+        seated.seatGrantedAt = kept
+        let fresh = Device(id: 2)
+        fresh.deviceRole = role
+        fresh.created = older
+        context.insert(seated)
+        context.insert(fresh)
+        try context.save()
+
+        let update = try LicenseSeatEvaluator.grantMirroredStore(
+            in: context,
+            defaults: isolatedDefaults(),
+            tier: .free,
+            now: now
+        )
+        let rows = try context.fetch(FetchDescriptor<Device>())
+        XCTAssertEqual(rows.first { $0.id == 1 }?.seatGrantedAt, kept)
+        XCTAssertEqual(rows.first { $0.id == 2 }?.seatGrantedAt, now)
+        XCTAssertEqual(update.replaceSeated, [1, 2])
+    }
+
+    private func isolatedDefaults() -> UserDefaults {
+        let name = "pulse.seat.tests"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    private func makeContainer() throws -> ModelContainer {
+        let schema = Schema([
+            TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
+            SiteLocation.self, RackRole.self,
+            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self,
+            DeviceBay.self, FrontPort.self, Service.self,
+            WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
+            PowerSenseEvent.self, SSHCredential.self, KnownHost.self
+        ])
+        return try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
     }
 }

@@ -6,7 +6,7 @@ A watermark older than NetBox’s retained changelog (default 90 days - `CHANGEL
 
 After a failed delta, the watermark does not move; the next run retries from the same id.
 
-While Pulse is open it also applies the changelog about every two minutes, and again shortly after you save. That pass is a delta only. A full mirror still waits for the next launch or **Apply changes** when the weekly safety interval is due, or for **Full Resync** when you ask for one. Edits made outside a request (shell, migrations) still need that safety mirror.
+While Pulse is open it also applies the changelog about every two minutes, including after a launch sync error, and again shortly after you save. That pass is a delta only. A full mirror still waits for the next launch or **Apply changes** when the weekly safety interval is due, or for **Full Resync** when you ask for one. Edits made outside a request (shell, migrations) still need that safety mirror. Devices that arrive on a sync are seated as part of that pass. A changelog page that only touches ports does not rescan devices.
 
 ## Token
 
@@ -76,7 +76,7 @@ From a device's Interfaces table or faceplate popover:
 - **Connect…** - pick a free interface at the site (filter by device or name), then POST `/api/dcim/cables/` with `a_terminations` / `b_terminations` `{"object_type":"dcim.interface","object_id":N}`. The open site graph reloads after the write.
 - **Disconnect** - asks first, then DELETE `/api/dcim/cables/{id}/`. If the local row has no cable id (interfaces synced before that field existed), Pulse reads the live interface first. Right-click a row if the button is hard to hit.
 
-Every successful write re-reads the object from NetBox. If the write never reaches NetBox (offline, 403, validation), Pulse discards the edit and shows the last stored value. Offline is **NetBox is unreachable. The change was not saved.** - the cable or description stays as it was. There is no queued retry; reconnect and submit again.
+A new device is stored from the POST response. Site, rack, and cable writes re-read the object from NetBox. If the write never reaches NetBox (offline, 403, validation), Pulse discards the edit and shows the last stored value. Offline is **NetBox is unreachable. The change was not saved.** - the cable or description stays as it was. There is no queued retry; reconnect and submit again.
 
 To see a **validation** body: **Connect…** on a free interface, pick a port under **Already connected**, and Connect. NetBox rejects a second cable (occupied termination / duplicate). Pulse shows that JSON and does not change the local row.
 
@@ -88,7 +88,7 @@ Validation errors (duplicate cable, missing field) show the server JSON.
 
 **New site** is the map window **+**. Tap the map first if you want coordinates and a reverse-geocoded address; then **+**. The form sends `name`, a slug derived from the name, `status`, and optional region/group/tenant. Address is the MapKit full line, clipped to 200 characters. Coordinates are rounded to 5 decimals. Region is preselected when a stored region name appears in that address. A failed POST leaves no local site.
 
-**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/`, then Pulse loads that device’s interfaces so template ports (FortiAP and similar) show immediately. A failed POST leaves no local device. Serial, primary IP, and other fields are not on this form yet.
+**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/` and stores that response, then loads that device's interfaces so template ports (FortiAP and similar) show immediately. A failed POST leaves no local device. Serial, primary IP, and other fields are not on this form yet.
 
 ## Rack edit
 

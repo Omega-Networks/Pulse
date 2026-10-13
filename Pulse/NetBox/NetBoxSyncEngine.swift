@@ -34,7 +34,9 @@ import SwiftUI
 /// is missing, gone, or older than the safety interval). Full Resync
 /// calls `fullSync()`. Overlapping user callers join that pass. While
 /// the app is open, `startIdleChangelog()` repeats the delta only.
-/// Writes re-fetch the object they changed and do not page the changelog.
+/// A device create stores the 201 body. Interface enable, description,
+/// and label apply locally. Site, rack, and cable writes re-read the
+/// object. No write pages the changelog.
 actor NetBoxSyncEngine {
     private let modelContainer: ModelContainer
     private let fetcher: any NetBoxFetching
@@ -46,11 +48,23 @@ actor NetBoxSyncEngine {
     private let subscriptionTier: @Sendable () -> SubscriptionTier
     private let logger = Logger(subsystem: "netbox", category: "sync")
     private var inFlight: Task<Void, Error>?
-    private var writes: Task<Void, Error>?
-    /// True from the moment a write asks for the engine until it returns.
-    /// An idle pass stops between objects instead of making Add Device
-    /// wait for the rest of the changelog window.
+    private var writes: Task<SyncSeatUpdate?, Error>?
+    /// Frames of `performWrite` that have entered and not yet left,
+    /// including a write queued behind another. Cleared only when the
+    /// chain drains, so the first write's return cannot overlap the next.
+    private var writeDepth = 0
+    /// True while `writeDepth > 0`. Idle stops at a page boundary, and
+    /// a user sync waits until the chain is idle.
     private var writeInProgress = false
+    /// Set when any write in the current chain succeeds. The quiet
+    /// delta is armed once, when the chain drains.
+    private var writeChainNeedsCatchUp = false
+    /// Seat result of the write task that is running. Read with no
+    /// await after `work()` returns, so the next write cannot clear it.
+    private var pendingSeatUpdate: SyncSeatUpdate?
+    /// Bumped each time `writes` is replaced. Only the tail frame nils it.
+    private var writeSerial: UInt64 = 0
+    private var writeTailSerial: UInt64 = 0
     /// True while boot, Apply changes, or Full Resync is waiting to start
     /// or running. Idle must not treat that wait as its own pass.
     private var userSyncWaiting = false
@@ -61,6 +75,11 @@ actor NetBoxSyncEngine {
     /// Last `.full` reason we logged from an idle skip, so a due safety
     /// mirror does not log on every tick.
     private var lastIdleSkipLog: String?
+    /// Device rows the current delta created, updated, or deleted.
+    private var passDeviceIDs: [Int64] = []
+    /// Boot, Apply changes, Full Resync, and a failed-boot heal seat
+    /// the whole store. Idle seats only `passDeviceIDs`.
+    private var passSeatsWholeStore = false
 
     init(
         modelContainer: ModelContainer,
@@ -93,6 +112,7 @@ actor NetBoxSyncEngine {
     /// Boot entry: delta when a watermark is usable, otherwise a full mirror.
     func sync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         guard try await claimUserSync() else { return }
+        beginSeatPass(wholeStore: true)
         defer { userSyncWaiting = false }
         let task = Task(priority: .userInitiated) {
             try await self.performBootSync(progress: progress)
@@ -101,7 +121,7 @@ actor NetBoxSyncEngine {
         defer { inFlight = nil }
         do {
             try await task.value
-            await announceStoreDidApply()
+            await postApply(await makeSeatNotice())
         } catch {
             logger.error("NetBox sync failed: \(error.localizedDescription)")
             throw error
@@ -111,6 +131,7 @@ actor NetBoxSyncEngine {
     /// Settings → Sync Data. Always a full mirror, then a fresh watermark.
     func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         guard try await claimUserSync() else { return }
+        beginSeatPass(wholeStore: true)
         defer { userSyncWaiting = false }
         let task = Task(priority: .userInitiated) {
             let cursor = try? await self.latestChangelogCursor()
@@ -121,11 +142,24 @@ actor NetBoxSyncEngine {
         defer { inFlight = nil }
         do {
             try await task.value
-            await announceStoreDidApply()
+            await postApply(await makeSeatNotice())
         } catch {
             logger.error("NetBox full sync failed: \(error.localizedDescription)")
             throw error
         }
+    }
+
+    /// Seat rows already in the store. Boot calls this when sync throws,
+    /// so a failed launch does not leave last session's devices unseated.
+    func seatLocalDevices() async {
+        beginSeatPass(wholeStore: true)
+        await postApply(await makeSeatNotice())
+    }
+
+    /// True while an operator write owns the engine, including one queued
+    /// behind another. Idle and tests use this to avoid overlapping saves.
+    func operatorWriteIsActive() -> Bool {
+        writeInProgress
     }
 
     /// One changelog loop for the process. The first tick waits out the
@@ -157,7 +191,7 @@ actor NetBoxSyncEngine {
     /// Wait out writes and any idle pass, then let the caller start a user
     /// sync. Returns false when this caller joined an in-flight user sync.
     private func claimUserSync() async throws -> Bool {
-        try? await writes?.value
+        await waitForWriteChain()
         if let inFlight {
             try await inFlight.value
             return false
@@ -166,16 +200,29 @@ actor NetBoxSyncEngine {
         if let idle = idleTask {
             await idle.value
         }
-        // A write may have taken the engine while this call waited for idle.
-        if writeInProgress {
-            try? await writes?.value
-        }
+        // A write may have replaced `writes` while this call waited.
+        await waitForWriteChain()
         if let inFlight {
             userSyncWaiting = false
             try await inFlight.value
             return false
         }
         return true
+    }
+
+    /// Waits until the write chain has drained. A second write replaces
+    /// `writes` while the first task is still the one we awaited, so this
+    /// loops until `writeInProgress` is false after the latest task.
+    private func waitForWriteChain() async {
+        while writeInProgress || writes != nil {
+            if let pending = writes {
+                try? await pending.value
+            }
+            if !writeInProgress {
+                return
+            }
+            await Task.yield()
+        }
     }
 
     private func performFullSync(progress: (@Sendable (Int, String) -> Void)?) async throws {
@@ -495,19 +542,29 @@ actor NetBoxSyncEngine {
                     time: nil
                 )
             )
+            await self.recordPatchedDeviceSeat(id)
         }
     }
 
     func createDevice(_ body: NetBoxWriteBody.DeviceCreate) async throws {
         try await performWrite {
+            #if DEBUG
+            let total = ContinuousClock.now
+            #endif
             if self.writePolicy.deviceAndSiteWritesEnabled {
                 let tier = self.subscriptionTier()
+                #if DEBUG
+                let admit = ContinuousClock.now
+                #endif
                 do {
                     try await self.applyOnStore { context in
                         try LicenseSeatEvaluator.requireAdmit(
                             roleID: body.role, in: context, tier: tier
                         )
                     }
+                    #if DEBUG
+                    self.logger.info("timing createDevice admit \(createDeviceMilliseconds(since: admit))ms")
+                    #endif
                 } catch {
                     self.logger.error(
                         "createDevice admit refused (tier \(tier.displayName, privacy: .public)): \(error.localizedDescription)"
@@ -515,32 +572,52 @@ actor NetBoxSyncEngine {
                     throw error
                 }
             }
+            #if DEBUG
+            let post = ContinuousClock.now
+            #endif
             let response = try await self.writer.createDevice(body)
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Device.self, from: response.body)
-            try await self.applyDeltaItem(
-                NetBoxDeltaItem(
-                    kind: .device,
-                    objectID: row.id,
-                    action: "create",
-                    changeID: 0,
-                    time: nil
-                )
+            #if DEBUG
+            self.logger.info(
+                "timing createDevice POST /api/dcim/devices/ \(response.body.count) bytes id \(row.id) \(createDeviceMilliseconds(since: post))ms"
             )
+            let stored = ContinuousClock.now
+            #endif
+            // The 201 is the device record. A follow-up GET repeats it,
+            // including config_context, which Pulse does not store.
+            try await self.upsertRetrieved(kind: .device, data: response.body)
+            #if DEBUG
+            self.logger.info(
+                "timing createDevice store POST body \(createDeviceMilliseconds(since: stored))ms"
+            )
+            #endif
             if self.writePolicy.deviceAndSiteWritesEnabled {
-                let tier = self.subscriptionTier()
-                try await self.applyOnStore { context in
-                    try LicenseSeatEvaluator.grantNewDevice(
-                        id: row.id, in: context, tier: tier
-                    )
-                }
+                #if DEBUG
+                let grant = ContinuousClock.now
+                #endif
+                await self.recordCreatedDeviceSeat(row.id)
+                #if DEBUG
+                self.logger.info("timing createDevice grant seat \(createDeviceMilliseconds(since: grant))ms")
+                #endif
             }
             do {
+                #if DEBUG
+                let interfaces = ContinuousClock.now
+                let count = try await self.refreshDeviceInterfaces(deviceID: row.id)
+                self.logger.info(
+                    "timing createDevice GET /api/dcim/interfaces/?device_id=\(row.id) \(count) rows \(createDeviceMilliseconds(since: interfaces))ms"
+                )
+                #else
                 try await self.refreshDeviceInterfaces(deviceID: row.id)
+                #endif
             } catch {
                 self.logger.error(
                     "Could not load interfaces for new device \(row.id): \(error.localizedDescription)"
                 )
             }
+            #if DEBUG
+            self.logger.info("timing createDevice total \(createDeviceMilliseconds(since: total))ms")
+            #endif
         }
     }
 
@@ -577,46 +654,81 @@ actor NetBoxSyncEngine {
     }
 
     /// Operator writes apply the object they touched. The changelog window
-    /// belongs to `sync()`, Full Resync, and the idle loop. Waiting for the
-    /// current idle object (not the rest of the window) keeps two store
-    /// applies from saving at once.
+    /// belongs to `sync()`, Full Resync, and the idle loop. The idle pass
+    /// stops before the next changelog page, and between objects, so this
+    /// waits out the current page rather than the rest of the window.
     private func performWrite(
         announce: Bool = true,
         waitForSync: Bool = true,
         _ work: @escaping @Sendable () async throws -> Void
     ) async throws {
-        if waitForSync, let inFlight {
-            try await inFlight.value
-        }
+        // A burst shares one quiet delta. Cancel the timer the previous
+        // success armed before this write's POST starts.
+        quietCatchUp?.cancel()
+        quietCatchUp = nil
+        writeDepth += 1
         writeInProgress = true
-        defer { writeInProgress = false }
+        var succeeded = false
+        var serial: UInt64 = 0
+        defer { finishWriteFrame(succeeded: succeeded, serial: serial) }
+
+        if waitForSync, let running = inFlight {
+            try await running.value
+        }
         let previous = writes
-        let task = Task {
+        let task = Task { () throws -> SyncSeatUpdate? in
             try? await previous?.value
             if let idle = await self.idleTask {
                 await idle.value
             }
             // A user sync may have claimed the engine while this write
-            // waited for the current idle object.
-            if waitForSync, let inFlight = await self.inFlight {
-                try await inFlight.value
+            // waited for the idle pass to stop.
+            if waitForSync, let running = await self.inFlight {
+                try await running.value
             }
-            try await work()
+            do {
+                try await work()
+            } catch {
+                self.pendingSeatUpdate = nil
+                throw error
+            }
+            let update = self.pendingSeatUpdate
+            self.pendingSeatUpdate = nil
+            return update
         }
+        writeSerial += 1
+        serial = writeSerial
+        writeTailSerial = serial
         writes = task
         do {
-            try await task.value
+            let update = try await task.value
+            succeeded = true
             if announce {
-                await MainActor.run {
-                    NotificationCenter.default.post(name: .netBoxStoreDidApply, object: nil)
-                }
+                await postApply(NetBoxApplyInfo(origin: .write, seatUpdate: update ?? .empty))
             }
-            scheduleQuietCatchUp()
         } catch {
             if let syncError = error as? NetBoxSyncError {
                 await syncError.publish()
             }
             throw error
+        }
+    }
+
+    /// Drops one `performWrite` frame. The quiet delta and the flag wait
+    /// until the last frame in the chain returns.
+    private func finishWriteFrame(succeeded: Bool, serial: UInt64) {
+        if succeeded {
+            writeChainNeedsCatchUp = true
+        }
+        writeDepth -= 1
+        guard writeDepth == 0 else { return }
+        if serial != 0, writeTailSerial == serial {
+            writes = nil
+        }
+        writeInProgress = false
+        if writeChainNeedsCatchUp {
+            writeChainNeedsCatchUp = false
+            scheduleQuietCatchUp()
         }
     }
 
@@ -1077,7 +1189,7 @@ actor NetBoxSyncEngine {
     // MARK: - Delta
 
     /// Template interfaces NetBox creates with the device. Never a delete pass.
-    private func refreshDeviceInterfaces(deviceID: Int64) async throws {
+    private func refreshDeviceInterfaces(deviceID: Int64) async throws -> Int {
         let extra = [URLQueryItem(name: "device_id", value: String(deviceID))]
         let (rows, _) = try await fetchAll(
             path: "/api/dcim/interfaces/",
@@ -1089,11 +1201,13 @@ actor NetBoxSyncEngine {
                 rows, fetchComplete: false, skipped: 0, keeping: [], in: $0
             )
         }
+        return rows.count
     }
 
     /// Changelog since the watermark, without a full mirror. Failure is
     /// logged. The watermark stays put so the next tick retries.
     private func performIdleCatchUp() async {
+        beginSeatPass(wholeStore: false)
         let plan: SyncPlan
         do {
             plan = try await applyOnStore { context in
@@ -1123,7 +1237,7 @@ actor NetBoxSyncEngine {
                     yieldToWriters: true
                 )
                 if applied > 0 {
-                    await announceStoreDidApply()
+                    await postApply(await makeSeatNotice())
                 }
             } catch {
                 logger.error("Idle changelog failed: \(error.localizedDescription)")
@@ -1145,8 +1259,9 @@ actor NetBoxSyncEngine {
     /// Applies the `id__gt` window. Returns how many objects were applied.
     /// `fallbackToFullMirror` is the boot / Apply changes page-cap path.
     /// The idle pass passes false and leaves the watermark. `yieldToWriters`
-    /// stops between objects when a write or a user sync is waiting, and
-    /// does not advance the watermark.
+    /// stops before the next changelog page, and between objects, when a
+    /// write or a user sync is waiting. Fetched pages that were not applied
+    /// stay unapplied, and the watermark does not move.
     @discardableResult
     private func performDelta(
         after watermarkID: Int64,
@@ -1157,14 +1272,28 @@ actor NetBoxSyncEngine {
             URLQueryItem(name: "id__gt", value: String(watermarkID)),
             URLQueryItem(name: "ordering", value: "id"),
         ]
+        let buffer = ChangelogPageBuffer()
         let rows: [NetBoxRecord.ObjectChange]
         let skipped: Int
         do {
-            (rows, skipped) = try await fetchAll(
+            _ = try await NetBoxPageIterator.streamDecoded(
                 path: "/api/core/object-changes/",
                 extraQuery: extra,
-                as: NetBoxRecord.ObjectChange.self
-            )
+                as: NetBoxRecord.ObjectChange.self,
+                using: fetcher,
+                beforePage: {
+                    if yieldToWriters {
+                        try await self.stopIfWriterWaiting()
+                    }
+                }
+            ) { page, pageSkipped in
+                await buffer.add(page, skipped: pageSkipped)
+            }
+            rows = await buffer.rows
+            skipped = await buffer.skipped
+        } catch is ChangelogYield {
+            logger.info("Idle changelog paused for a write or sync")
+            return 0
         } catch NetBoxSyncError.pageLimitExceeded {
             if fallbackToFullMirror {
                 logger.error("Changelog exceeded the page cap; falling back to a full mirror")
@@ -1194,7 +1323,10 @@ actor NetBoxSyncEngine {
             }
             try await applyDeltaItem(item)
             applied += 1
-            if item.kind == .device { touchedDeviceSites = true }
+            if item.kind == .device {
+                passDeviceIDs.append(item.objectID)
+                touchedDeviceSites = true
+            }
         }
         if let water = planned.highWater {
             try await stampDeltaSuccess(
@@ -1483,12 +1615,105 @@ actor NetBoxSyncEngine {
         return created
     }
 
-    private func announceStoreDidApply() async {
+    private func beginSeatPass(wholeStore: Bool) {
+        passDeviceIDs.removeAll(keepingCapacity: true)
+        passSeatsWholeStore = wholeStore
+    }
+
+    /// Grants after the pass has saved. A user sync seats the whole store
+    /// and skips rows whose stamp is already right. Idle seats only the
+    /// device ids that pass applied.
+    private func makeSeatNotice() async -> NetBoxApplyInfo {
+        let whole = passSeatsWholeStore
+        let ids = passDeviceIDs
+        let tier = subscriptionTier()
+        let update: SyncSeatUpdate
+        if whole || !ids.isEmpty {
+            do {
+                update = try await applyOnStore { context in
+                    if whole {
+                        return try LicenseSeatEvaluator.grantMirroredStore(
+                            in: context, tier: tier
+                        )
+                    }
+                    return try LicenseSeatEvaluator.grantArrivals(
+                        deviceIDs: ids, in: context, tier: tier
+                    )
+                }
+            } catch {
+                self.logger.error("Seat grant failed: \(error.localizedDescription)")
+                update = .empty
+            }
+        } else {
+            update = .empty
+        }
+        return NetBoxApplyInfo(origin: .sync, seatUpdate: update)
+    }
+
+    private func recordCreatedDeviceSeat(_ id: Int64) async {
+        let tier = subscriptionTier()
+        do {
+            pendingSeatUpdate = try await applyOnStore { context in
+                try LicenseSeatEvaluator.grantNewDevice(id: id, in: context, tier: tier)
+            }
+        } catch {
+            logger.error("createDevice seat grant failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func recordPatchedDeviceSeat(_ id: Int64) async {
+        let tier = subscriptionTier()
+        do {
+            pendingSeatUpdate = try await applyOnStore { context in
+                try LicenseSeatEvaluator.grantArrivals(
+                    deviceIDs: [id], in: context, tier: tier
+                )
+            }
+        } catch {
+            logger.error("patchDevice seat grant failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopIfWriterWaiting() throws {
+        if writeInProgress || inFlight != nil || userSyncWaiting {
+            throw ChangelogYield()
+        }
+    }
+
+    private func postApply(_ info: NetBoxApplyInfo) async {
         await MainActor.run {
-            NotificationCenter.default.post(name: .netBoxStoreDidApply, object: nil)
+            NotificationCenter.default.post(
+                name: .netBoxStoreDidApply,
+                object: nil,
+                userInfo: [NetBoxApplyInfo.userInfoKey: info]
+            )
         }
     }
 }
+
+/// Stops an idle changelog download before the next page. Not a NetBox
+/// error: the watermark stays, and the pages already fetched are dropped.
+private struct ChangelogYield: Error {}
+
+private actor ChangelogPageBuffer {
+    private(set) var rows: [NetBoxRecord.ObjectChange] = []
+    private(set) var skipped = 0
+
+    func add(_ page: [NetBoxRecord.ObjectChange], skipped pageSkipped: Int) {
+        rows.append(contentsOf: page)
+        skipped += pageSkipped
+    }
+}
+
+#if DEBUG
+/// Milliseconds since `start`. Debug Add Device timing only.
+private func createDeviceMilliseconds(since start: ContinuousClock.Instant) -> Int {
+    let duration = start.duration(to: .now)
+    let ms = Double(duration.components.seconds) * 1000
+        + Double(duration.components.attoseconds) / 1_000_000_000_000_000
+    return Int(ms.rounded())
+}
+#endif
 
 private extension NetBoxSyncError {
     static func dataError(_ message: String) -> NetBoxSyncError {
@@ -1507,8 +1732,20 @@ private actor AcceptedInterfaceIDs {
 
 extension Notification.Name {
     /// Posted on the main actor after a successful write, full mirror,
-    /// or delta apply has been re-fetched into SwiftData.
+    /// or delta apply has been saved. `userInfo` carries `NetBoxApplyInfo`.
     static let netBoxStoreDidApply = Notification.Name("netbox.storeDidApply")
+}
+
+struct NetBoxApplyInfo: Sendable {
+    static let userInfoKey = "netbox.apply"
+
+    enum Origin: Sendable, Equatable {
+        case write
+        case sync
+    }
+
+    var origin: Origin
+    var seatUpdate: SyncSeatUpdate
 }
 
 private struct NetBoxSyncEngineKey: EnvironmentKey {

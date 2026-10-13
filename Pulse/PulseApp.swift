@@ -334,8 +334,6 @@ struct PulseApp: App {
                     initState.updateProgress(step, label)
                 }
             }
-            await netBoxSyncEngine.startIdleChangelog()
-
             initState.updateProgress(16, "Setting up Tips...")
             tipManager.configure()
             await SiteDataService(modelContainer: modelContainer).refreshSeverities()
@@ -353,10 +351,15 @@ struct PulseApp: App {
                     )
                 }
             }
+            // The mirror did not finish. Seat whatever is already stored
+            // so the window is not waiting on a one-shot launch task.
+            await netBoxSyncEngine.seatLocalDevices()
             initState.currentStep = "Running in Offline Mode"
             initState.showWelcome = true
             try? await Task.sleep(for: .seconds(2))
         }
+
+        await netBoxSyncEngine.startIdleChangelog()
 
         try? await Task.sleep(for: .milliseconds(500))
         initState.showWelcome = true
