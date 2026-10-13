@@ -308,39 +308,61 @@ enum LicenseSeatEvaluator {
         )
     }
 
-    /// Oldest eligible devices that do not yet hold a seat. Hardware
-    /// roles are excluded in the predicate so a rack full of blanks
-    /// does not crowd the fetch limit.
+    /// Oldest eligible devices that do not yet hold a seat. Hardware is
+    /// dropped a page at a time so a rack of blanks cannot fill the
+    /// result. A missing role is read in Swift, not inside `#Predicate`:
+    /// the macro will not coalesce an optional relationship, and a
+    /// force-unwrap there crashes Release builds.
     private static func oldestEligibleUngranted(
         limit: Int,
         presentation: RolePresentation,
         in context: ModelContext
     ) throws -> [Device] {
         guard limit > 0 else { return [] }
-        let hardware = presentation.policies.compactMap { id, policy -> Int64? in
-            policy.countsTowardLicense ? nil : id
-        }
+        let hardware = Set(
+            presentation.policies.compactMap { id, policy -> Int64? in
+                policy.countsTowardLicense ? nil : id
+            }
+        )
         let sort = [
             SortDescriptor(\Device.created, order: .forward),
             SortDescriptor(\Device.id, order: .forward),
         ]
-        var descriptor: FetchDescriptor<Device>
         if hardware.isEmpty {
-            descriptor = FetchDescriptor<Device>(
+            var descriptor = FetchDescriptor<Device>(
                 predicate: #Predicate<Device> { $0.seatGrantedAt == nil },
                 sortBy: sort
             )
-        } else {
-            descriptor = FetchDescriptor<Device>(
-                predicate: #Predicate<Device> { device in
-                    device.seatGrantedAt == nil
-                        && (device.deviceRole == nil || !hardware.contains(device.deviceRole!.id))
-                },
+            descriptor.fetchLimit = limit
+            return try context.fetch(descriptor)
+        }
+        // A page of `limit` would be one fetch per blank when a single
+        // seat is open. A few hundred rows still stops at `limit`
+        // eligible devices and does not load the table.
+        let pageSize = max(limit, 500)
+        var matched: [Device] = []
+        matched.reserveCapacity(limit)
+        var offset = 0
+        while matched.count < limit {
+            var descriptor = FetchDescriptor<Device>(
+                predicate: #Predicate<Device> { $0.seatGrantedAt == nil },
                 sortBy: sort
             )
+            descriptor.fetchLimit = pageSize
+            descriptor.fetchOffset = offset
+            let page = try context.fetch(descriptor)
+            if page.isEmpty { break }
+            for device in page {
+                if let roleID = device.deviceRole?.id, hardware.contains(roleID) {
+                    continue
+                }
+                matched.append(device)
+                if matched.count == limit { break }
+            }
+            if page.count < pageSize { break }
+            offset += page.count
         }
-        descriptor.fetchLimit = limit
-        return try context.fetch(descriptor)
+        return matched
     }
 
     private static func effectiveGrantedIDs(

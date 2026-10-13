@@ -469,6 +469,58 @@ final class LicenseSeatReconcilerTests: XCTestCase {
         XCTAssertEqual(update.granted, [2])
     }
 
+    func testOpenSlotSkipsOlderHardwareAndSeatsANilRoleDevice() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let billable = DeviceRole(id: 1)
+        let panel = DeviceRole(id: 6)
+        context.insert(billable)
+        context.insert(panel)
+        let kept = Date(timeIntervalSince1970: 1_500_000_000)
+        for id in 1...49 {
+            let row = Device(id: Int64(id))
+            row.deviceRole = billable
+            row.seatGrantedAt = kept
+            row.created = older
+            context.insert(row)
+        }
+        for id in 100...119 {
+            let blank = Device(id: Int64(id))
+            blank.deviceRole = panel
+            blank.created = older
+            context.insert(blank)
+        }
+        let bare = Device(id: 200)
+        bare.created = newest
+        context.insert(bare)
+        try context.save()
+
+        let update = try LicenseSeatEvaluator.grantArrivals(
+            deviceIDs: [100],
+            in: context,
+            defaults: isolatedDefaults(),
+            tier: .free,
+            now: now
+        )
+        let rows = try context.fetch(FetchDescriptor<Device>())
+        XCTAssertEqual(rows.first { $0.id == 200 }?.seatGrantedAt, now)
+        XCTAssertNil(rows.first { $0.id == 100 }?.seatGrantedAt)
+        XCTAssertFalse(rows.contains { $0.deviceRole?.id == 6 && $0.seatGrantedAt != nil })
+        XCTAssertEqual(update.granted, [200])
+        XCTAssertEqual(update.unbilled, [100])
+    }
+
+    func testMergeLoadedKeepsAGrantThatLandedDuringTheRead() {
+        let seats = LicenseSeatStore()
+        seats.apply(SyncSeatUpdate(granted: [5]))
+        seats.mergeLoaded(seated: [], unbilled: [5, 6])
+        XCTAssertTrue(seats.seatedIDs.contains(5))
+        XCTAssertFalse(seats.unbilledIDs.contains(5))
+        XCTAssertTrue(seats.unbilledIDs.contains(6))
+        XCTAssertTrue(seats.allowsActions(deviceID: 5))
+        XCTAssertTrue(seats.allowsActions(deviceID: 6))
+    }
+
     func testMirroredStoreKeepsAnExistingStamp() throws {
         let container = try makeContainer()
         let context = ModelContext(container)

@@ -104,11 +104,14 @@ final class LicenseSeatStore: @unchecked Sendable {
     }
 
     /// Launch read finished. Keep ids a sync notice already added, and
-    /// do not resurrect ids that notice removed.
+    /// do not resurrect ids that notice removed. A grant that landed
+    /// while the read was in flight stays seated: the snapshot may still
+    /// list that device as hardware.
     func mergeLoaded(seated: Set<Int64>, unbilled: Set<Int64>) {
         seatedIDs.formUnion(seated)
-        unbilledIDs.formUnion(unbilled)
-        seatedIDs.subtract(unbilled)
+        let staleUnbilled = unbilled.subtracting(seatedIDs)
+        unbilledIDs.formUnion(staleUnbilled)
+        seatedIDs.subtract(staleUnbilled)
     }
 
     /// Seated and unbilled ids already stored. Does not grant and does

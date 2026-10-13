@@ -75,6 +75,9 @@ actor NetBoxSyncEngine {
     /// Last `.full` reason we logged from an idle skip, so a due safety
     /// mirror does not log on every tick.
     private var lastIdleSkipLog: String?
+    /// The idle changelog hit the page cap. Further idle ticks must not
+    /// re-download that window. Launch and Apply changes clear it.
+    private var idlePageCapLatched = false
     /// Device rows the current delta created, updated, or deleted.
     private var passDeviceIDs: [Int64] = []
     /// Boot, Apply changes, Full Resync, and a failed-boot heal seat
@@ -112,6 +115,7 @@ actor NetBoxSyncEngine {
     /// Boot entry: delta when a watermark is usable, otherwise a full mirror.
     func sync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         guard try await claimUserSync() else { return }
+        idlePageCapLatched = false
         beginSeatPass(wholeStore: true)
         defer { userSyncWaiting = false }
         let task = Task(priority: .userInitiated) {
@@ -131,6 +135,7 @@ actor NetBoxSyncEngine {
     /// Settings → Sync Data. Always a full mirror, then a fresh watermark.
     func fullSync(progress: (@Sendable (Int, String) -> Void)? = nil) async throws {
         guard try await claimUserSync() else { return }
+        idlePageCapLatched = false
         beginSeatPass(wholeStore: true)
         defer { userSyncWaiting = false }
         let task = Task(priority: .userInitiated) {
@@ -176,10 +181,12 @@ actor NetBoxSyncEngine {
     }
 
     /// Delta since the watermark. Does not start a full mirror. A second
-    /// caller while one pass is running returns. Boot and the dashboard
-    /// keep using `sync()` / `fullSync()`.
+    /// caller while one pass is running returns. A pass that already hit
+    /// the page cap returns until launch or Apply changes clears the latch.
+    /// Boot and the dashboard keep using `sync()` / `fullSync()`.
     func runIdleCatchUp() async {
         guard inFlight == nil, !writeInProgress, !userSyncWaiting, !idleRunning else { return }
+        guard !idlePageCapLatched else { return }
         idleRunning = true
         let task = Task { await self.performIdleCatchUp() }
         idleTask = task
@@ -1204,8 +1211,10 @@ actor NetBoxSyncEngine {
         return rows.count
     }
 
-    /// Changelog since the watermark, without a full mirror. Failure is
-    /// logged. The watermark stays put so the next tick retries.
+    /// Changelog since the watermark, without a full mirror. A transport
+    /// or decode failure is logged and the next tick retries. A page cap
+    /// is reported once and latched so the window is not downloaded again
+    /// until a user sync starts. The watermark stays put either way.
     private func performIdleCatchUp() async {
         beginSeatPass(wholeStore: false)
         let plan: SyncPlan
@@ -1238,6 +1247,12 @@ actor NetBoxSyncEngine {
                 )
                 if applied > 0 {
                     await postApply(await makeSeatNotice())
+                }
+            } catch let error as NetBoxSyncError where error == .pageLimitExceeded {
+                idlePageCapLatched = true
+                logger.error("Idle changelog exceeded the page cap; waiting for Apply changes or launch")
+                await MainActor.run {
+                    NetBoxSyncError.pageLimitExceeded.publish()
                 }
             } catch {
                 logger.error("Idle changelog failed: \(error.localizedDescription)")

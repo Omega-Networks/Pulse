@@ -6,7 +6,7 @@ A watermark older than NetBox’s retained changelog (default 90 days - `CHANGEL
 
 After a failed delta, the watermark does not move; the next run retries from the same id.
 
-While Pulse is open it also applies the changelog about every two minutes, including after a launch sync error, and again shortly after you save. That pass is a delta only. A full mirror still waits for the next launch or **Apply changes** when the weekly safety interval is due, or for **Full Resync** when you ask for one. Edits made outside a request (shell, migrations) still need that safety mirror. Devices that arrive on a sync are seated as part of that pass. A changelog page that only touches ports does not rescan devices.
+While Pulse is open it also applies the changelog about every two minutes, including after a launch sync error, and again shortly after you save. That pass is a delta only. A full mirror still waits for the next launch or **Apply changes** when the weekly safety interval is due, or for **Full Resync** when you ask for one. Edits made outside a request (shell, migrations) still need that safety mirror. Devices that arrive on a sync are seated as part of that pass. A changelog page that only touches ports does not rescan devices. If the unsynced changelog is too large for one idle pass, the NetBox status line says so and the two-minute loop waits. The next launch or **Apply changes** clears that wait and, past the page cap, runs a full mirror.
 
 ## Token
 

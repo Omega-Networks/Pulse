@@ -483,6 +483,27 @@ final class NetBoxDeltaTests: XCTestCase {
             try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
             10
         )
+        let status = await MainActor.run {
+            RequestStatusManager.shared.currentStatus[.netbox]
+        }
+        XCTAssertEqual(
+            status,
+            .dataError(code: 0, message: "NetBox pagination exceeded the page safety limit")
+        )
+
+        await engine.runIdleCatchUp()
+        XCTAssertEqual(fetcher.idGtListCalls, NetBoxPageIterator.maxPages)
+
+        fetcher.unlimitedNext = false
+        fetcher.bodies["/api/core/object-changes/"] = Data(
+            #"{"count":0,"next":null,"results":[]}"#.utf8
+        )
+        try await engine.sync()
+        XCTAssertEqual(fetcher.idGtListCalls, NetBoxPageIterator.maxPages + 1)
+        XCTAssertEqual(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
+            10
+        )
     }
 
     func testSecondIdleCatchUpDoesNotListTwice() async throws {
