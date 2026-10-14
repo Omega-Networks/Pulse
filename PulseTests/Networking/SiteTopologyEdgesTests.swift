@@ -229,4 +229,33 @@ final class SiteTopologyEdgesTests: XCTestCase {
         )
         XCTAssertEqual(Set(candidates.map(\.id)), [2, 3])
     }
+
+    func testFreeInterfacesDropsCabledPortsAndSortsNaturally() {
+        var ge2 = InterfaceVO(id: 2)
+        ge2.name = "ge-0/0/2"
+        var ge10 = InterfaceVO(id: 10)
+        ge10.name = "ge-0/0/10"
+        var ge1 = InterfaceVO(id: 1)
+        ge1.name = "ge-0/0/1"
+        var cabled = InterfaceVO(id: 3)
+        cabled.name = "ge-0/0/0"
+        cabled.cableId = 9
+        var linked = InterfaceVO(id: 4)
+        linked.name = "ge-0/0/3"
+        linked.connectedEndpointId = 8
+        var virtual = InterfaceVO(id: 5)
+        virtual.name = "vlan.10"
+        virtual.type = "virtual"
+        var disabled = InterfaceVO(id: 6)
+        disabled.name = "ge-0/0/4"
+        disabled.enabled = false
+
+        let free = SiteTopologyEdges.freeInterfaces([
+            ge10, cabled, ge2, linked, virtual, disabled, ge1
+        ])
+        XCTAssertEqual(
+            free.map(\.name),
+            ["ge-0/0/1", "ge-0/0/2", "ge-0/0/4", "ge-0/0/10", "vlan.10"]
+        )
+    }
 }

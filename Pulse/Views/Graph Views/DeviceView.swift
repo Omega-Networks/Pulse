@@ -66,16 +66,22 @@ struct DeviceView: View {
     }
     
     @State private var hoverTimer: Timer?
+    @State private var plusHeld = false
+    @State private var plusReturn: Task<Void, Never>?
     
     // Toggle from SiteView for setting labels visable
     @Binding var labelsEnabled: Bool
     
-    /**
-     The action to perform when the device is tapped.
-     This closure is invoked when the user taps the device icon.
-     */
+    /// Build mode: the plus starts a cable. A tap on the icon selects the device.
     var action: () -> Void
-    
+
+    /// A cable tether is in progress. The plus stays hidden.
+    var drawingCable: Bool
+
+    /// This node is being repositioned. The plus stays hidden through the
+    /// drag and a short pause after the pointer is released.
+    var dragging: Bool = false
+
     /// Controls visibility of device labels
     @Binding var enableGestures: Bool
     
@@ -111,7 +117,7 @@ struct DeviceView: View {
      - enableGestures: Binding controlling whether gestures are enabled
      - action: Closure to execute when the device is tapped
      */
-    init(device: Device, selectedDevice: Binding<Device?>, position: Binding<CGPoint>, labelsEnabled: Binding<Bool>, enableGestures: Binding<Bool>, action: @escaping () -> Void) {
+    init(device: Device, selectedDevice: Binding<Device?>, position: Binding<CGPoint>, labelsEnabled: Binding<Bool>, enableGestures: Binding<Bool>, action: @escaping () -> Void, drawingCable: Bool = false, dragging: Bool = false) {
         self.device = device
         _locationState = GestureState(initialValue: CGPoint(x: device.x ?? 69, y: device.y ?? 69))
         _location = State(initialValue: CGPoint(x: device.x ?? 69, y: device.y ?? 69))
@@ -123,6 +129,8 @@ struct DeviceView: View {
         _isHoveringSub = State(initialValue: false)
         
         self.action = action
+        self.drawingCable = drawingCable
+        self.dragging = dragging
         self.isTapped = false
     }
     
@@ -164,16 +172,42 @@ struct DeviceView: View {
 
         return ("\(count).square.fill", false)
     }
+
+    /// Hover shows it, a press sinks it, and a drag keeps it away.
+    private var plusPresented: Bool {
+        enableGestures && isHovering && !drawingCable && !plusHeld && !dragging && seats.allowsActions(deviceID: device.id)
+    }
     
     var body: some View {
         VStack {
-            // First, the main device icon with severity
             ZStack(alignment: .bottomTrailing) {
                 deviceIcon
+                    .onTapGesture {
+                        self.selectedDevice = device
+                    }
                 eventIndicators
             }
-            .onHover { isHovering in
-                self.isHovering = isHovering
+            .overlay(alignment: .bottomTrailing) {
+                #if os(macOS)
+                if enableGestures && seats.allowsActions(deviceID: device.id) {
+                    CablePlusButton(presented: plusPresented, action: action)
+                }
+                #endif
+            }
+            .onChange(of: dragging) { _, dragging in
+                plusReturn?.cancel()
+                guard dragging else {
+                    plusReturn = Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(400))
+                        guard !Task.isCancelled else { return }
+                        plusHeld = false
+                    }
+                    return
+                }
+                plusHeld = true
+            }
+            .onHover { hovering in
+                isHovering = hovering
 
                 // Cancel any existing timer
                 hoverTimer?.invalidate()
@@ -190,9 +224,6 @@ struct DeviceView: View {
                     // Reset immediately when hover ends
                     shouldShowHover = false
                 }
-            }
-            .onTapGesture {
-                self.selectedDevice = device
             }
 
             // Device Labels
@@ -243,7 +274,7 @@ struct DeviceView: View {
     }
     
     // MARK: - View Components
-    
+
     /**
      Creates and returns the main device icon view.
      
@@ -264,10 +295,15 @@ struct DeviceView: View {
             .animation(.easeInOut(duration: 0.2), value: device.highestUnacknowledgedSeverityStored)
             .overlay( //MARK: This overlay enables us to compute the bounding rectangle of the Image struct.
                 GeometryReader { geometry in
-                    Color.clear.preference(
-                        key: ImageCentrePreferenceKey.self,
-                        value: CGPoint(x: geometry.frame(in: .local).midX - 30, y: geometry.frame(in: .local).midY - 45)
-                    )
+                    Color.clear
+                        .preference(
+                            key: ImageCentrePreferenceKey.self,
+                            value: CGPoint(x: geometry.frame(in: .local).midX - 30, y: geometry.frame(in: .local).midY - 45)
+                        )
+                        .preference(
+                            key: IconFramePreferenceKey.self,
+                            value: geometry.frame(in: .named(siteDiagramCoordinateSpace))
+                        )
                 }
             )
             .popover(isPresented: $showPopover) {
@@ -546,6 +582,59 @@ extension CGRect {
  image component back to its parent GraphLayerView, allowing proper edge centering
  around the image rather than the entire view.
  */
+#if os(macOS)
+/// Build-mode plus. Scale stays on the button's own centre; the offset is
+/// constant, so the pop does not travel.
+private struct CablePlusButton: View {
+    var presented: Bool
+    var action: () -> Void
+    @State private var pressed = false
+
+    var body: some View {
+        Image(systemName: "plus.circle.fill")
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(Color.primary, Color.accentColor)
+            .font(.system(size: 16.5))
+            .scaleEffect(presented ? (pressed ? 0.84 : 1) : 0.2, anchor: .center)
+            .opacity(presented ? 1 : 0)
+            .animation(.spring(duration: 0.22, bounce: 0.45), value: presented)
+            .offset(y: -34)
+            .allowsHitTesting(presented)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard presented, !pressed else { return }
+                        withAnimation(.spring(duration: 0.12, bounce: 0.15)) {
+                            pressed = true
+                        }
+                    }
+                    .onEnded { _ in
+                        let wasPressed = pressed
+                        withAnimation(.spring(duration: 0.12, bounce: 0.15)) {
+                            pressed = false
+                        }
+                        if wasPressed, presented { action() }
+                    }
+            )
+            .onChange(of: presented) { _, show in
+                if !show { pressed = false }
+            }
+    }
+}
+#endif
+
+/// Diagram coordinate space shared by the site graph and the cable pointer.
+let siteDiagramCoordinateSpace = "diagram"
+
+/// The device icon's frame in `siteDiagramCoordinateSpace`. The label is not included.
+struct IconFramePreferenceKey: PreferenceKey {
+    static let defaultValue: CGRect? = nil
+
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = value ?? nextValue()
+    }
+}
+
 struct ImageCentrePreferenceKey: PreferenceKey {
     static let defaultValue: CGPoint? = nil
     

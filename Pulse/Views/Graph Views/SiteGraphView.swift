@@ -25,8 +25,187 @@
 
 import SwiftUI
 import SwiftData
+import Observation
+#if os(macOS)
+import AppKit
+#endif
 
 typealias NodeID = Int64
+
+#if os(macOS)
+private enum CableTetherPhase {
+    case tracking
+    case locked
+    case retracting
+}
+
+/// `end` and `opacity` are what the stroke reads. A move does not redraw
+/// the nodes.
+@MainActor
+@Observable
+private final class CableTetherState {
+    var sourceID: Int64?
+    var end = CGPoint.zero
+    var opacity = 1.0
+
+    var phase: CableTetherPhase = .tracking
+    /// The pointer is on the device the cable started from, or on the X
+    /// that sits where that device's plus sits. Flips on enter and leave.
+    var overOrigin = false
+    @ObservationIgnored var generation = 0
+}
+
+/// Owns the pointer while a cable is being drawn. One rectangle, in the
+/// diagram's own space. The device nodes are not hit-tested for that time.
+/// This layer does not take key focus.
+private struct CablePointerOverlay: View {
+    var tracking: Bool
+    var onMove: (CGPoint) -> Void
+    var onLeave: () -> Void
+    var onLeftClick: (CGPoint) -> Void
+    var onRightClick: () -> Void
+
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onContinuousHover(coordinateSpace: .named(siteDiagramCoordinateSpace)) { phase in
+                switch phase {
+                case .active(let point):
+                    guard tracking else { return }
+                    onMove(point)
+                case .ended:
+                    onLeave()
+                }
+            }
+            .onTapGesture(coordinateSpace: .named(siteDiagramCoordinateSpace)) { point in
+                guard tracking else { return }
+                onLeftClick(point)
+            }
+            .gesture(CableRightClick(onEnded: onRightClick))
+    }
+}
+
+/// Secondary click. SwiftUI's tap gesture does not carry the mouse button.
+/// Attached with `.gesture`, so it is not a view and not an event monitor.
+private struct CableRightClick: NSGestureRecognizerRepresentable {
+    var onEnded: () -> Void
+
+    func makeNSGestureRecognizer(context: Context) -> NSClickGestureRecognizer {
+        let recognizer = NSClickGestureRecognizer()
+        recognizer.buttonMask = 0x2
+        return recognizer
+    }
+
+    func handleNSGestureRecognizerAction(
+        _ recognizer: NSClickGestureRecognizer,
+        context: Context
+    ) {
+        guard recognizer.state == .ended else { return }
+        onEnded()
+    }
+}
+
+/// The plus, drawn as an X, while the pointer is back on the start device.
+/// Clicks pass through; the pointer layer tests this control's rect.
+private struct CableOriginMark: View {
+    var tether: CableTetherState
+
+    var body: some View {
+        Image(systemName: "x.circle.fill")
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(Color.primary, Color.accentColor)
+            .font(.system(size: cableOriginSide))
+            .scaleEffect(tether.overOrigin ? 1 : 0.2, anchor: .center)
+            .opacity(tether.overOrigin ? 1 : 0)
+            .animation(.spring(duration: 0.22, bounce: 0.45), value: tether.overOrigin)
+            .allowsHitTesting(false)
+    }
+}
+
+/// Temporary cable, under the nodes. Tracking draws `end` with a plain
+/// path. Retract is a separate shape, so that spring cannot lag a move.
+private struct CableTetherLine: View {
+    var start: CGPoint
+    var tether: CableTetherState
+
+    var body: some View {
+        Group {
+            if tether.phase == .retracting {
+                RetractingCable(start: start, from: tether.end, to: start)
+            } else {
+                Path { path in
+                    path.move(to: start)
+                    path.addLine(to: tether.end)
+                }
+                .stroke(Color.accentColor, style: cableStroke)
+            }
+        }
+        .opacity(tether.opacity)
+        .allowsHitTesting(false)
+    }
+}
+
+private let cableStroke = StrokeStyle(lineWidth: 1.69, lineCap: .round)
+
+/// The plus is 16.5 points, lifted 34 above the icon's bottom-trailing
+/// corner. The X uses that same seat.
+private let cableOriginSide: CGFloat = 16.5
+private let cableOriginLift: CGFloat = 34
+
+/// Springs the free end back to the device the cable started on, then the
+/// caller fades the stroke. Tracking never uses this shape.
+private struct RetractingCable: View {
+    var start: CGPoint
+    var from: CGPoint
+    var to: CGPoint
+    @State private var end: CGPoint
+    @State private var started = false
+
+    init(start: CGPoint, from: CGPoint, to: CGPoint) {
+        self.start = start
+        self.from = from
+        self.to = to
+        _end = State(initialValue: from)
+    }
+
+    var body: some View {
+        CableRetractShape(start: start, end: end)
+            .stroke(Color.accentColor, style: cableStroke)
+            .onAppear {
+                guard !started else { return }
+                started = true
+                withAnimation(.spring(duration: 0.22, bounce: 0.2)) {
+                    end = to
+                }
+            }
+    }
+}
+
+private struct CableRetractShape: Shape {
+    var start: CGPoint
+    var end: CGPoint
+
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>> {
+        get {
+            AnimatablePair(
+                AnimatablePair(start.x, start.y),
+                AnimatablePair(end.x, end.y)
+            )
+        }
+        set {
+            start = CGPoint(x: newValue.first.first, y: newValue.first.second)
+            end = CGPoint(x: newValue.second.first, y: newValue.second.second)
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: start)
+        path.addLine(to: end)
+        return path
+    }
+}
+#endif
 
 struct Graph {
     var nodes: [NodeID: Device]
@@ -56,7 +235,6 @@ struct SiteGraphView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openWindow) var openWindow
     @Environment(RolePresentationStore.self) private var rolePresentation
-    @State private var isHovering: Bool = false
     var siteId: Int64
     var isInPopover: Bool
     
@@ -64,6 +242,8 @@ struct SiteGraphView: View {
     @Binding var selectedDevice: Device?
     
     @State private var imageCentres: [Int64: CGPoint] = [:]
+    @State private var iconFrames: [Int64: CGRect] = [:]
+    @State private var draggingNodeID: Int64?
     @State private var nodeToDrag: (device: Device, offset: CGSize)? = nil
     @State private var nodeBoundingRect: CGRect = .zero
     @State private var originalPositions: [Int64: CGPoint] = [:]
@@ -154,6 +334,12 @@ struct SiteGraphView: View {
     
     @State private var userDefinedPositions: [Int64: CGPoint] = [:]
 
+    #if os(macOS)
+    @Environment(LicenseSeatStore.self) private var seats
+    @State private var cableTether = CableTetherState()
+    @State private var cablePair: CableDevicePair?
+    #endif
+
     @State private var isCalculatingLayout: Bool = false
 #if os(iOS)
     init(site: Site,
@@ -235,6 +421,29 @@ struct SiteGraphView: View {
                         GridLayerView()
                         
                         EdgesLayer()
+
+                        #if os(macOS)
+                        if let sourceID = cableTether.sourceID {
+                            CableTetherLine(start: anchor(for: sourceID), tether: cableTether)
+                                .zIndex(1)
+                                .allowsHitTesting(false)
+                            CablePointerOverlay(
+                                tracking: cableTether.phase == .tracking,
+                                onMove: { moveCable($0) },
+                                onLeave: { cableTether.overOrigin = false },
+                                onLeftClick: { finishCable(at: $0) },
+                                onRightClick: { retractCable() }
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .zIndex(40)
+                            if cableTether.phase == .tracking, let icon = iconFrames[sourceID] {
+                                CableOriginMark(tether: cableTether)
+                                    .position(originMarkCentre(icon))
+                                    .allowsHitTesting(false)
+                                    .zIndex(50)
+                            }
+                        }
+                        #endif
                         
                         ForEach(devices.filter { !rolePresentation.policy(for: $0.deviceRole?.id).hideFromGraph }) { device in
                             let deviceId = device.id
@@ -244,33 +453,54 @@ struct SiteGraphView: View {
                                        position: positionBinding(for: deviceId),
                                        labelsEnabled: $labelsEnabled,
                                        enableGestures: $enableGestures,
-                                       action: {})
+                                       action: { cableAction(for: device)() },
+                                       drawingCable: drawingCable,
+                                       dragging: draggingNodeID == deviceId)
                             .position(positionBinding(for: deviceId).wrappedValue)
                             .zIndex(selectedDevice?.id == deviceId ? 20 : 5)
+                            .allowsHitTesting(!drawingCable)
                             .onPreferenceChange(ImageCentrePreferenceKey.self) { center in
-                                Task { @MainActor in
-                                    if let center = center {
-                                        imageCentres[deviceId] = center
-                                    }
-                                }
+                                guard let center, imageCentres[deviceId] != center else { return }
+                                imageCentres[deviceId] = center
+                            }
+                            .onPreferenceChange(IconFramePreferenceKey.self) { rect in
+                                guard let rect, rect.width > 1, rect.height > 1, rect.width < 400, rect.height < 400 else { return }
+                                guard iconFrames[deviceId] != rect else { return }
+                                iconFrames[deviceId] = rect
                             }
                             .id(deviceId)
                             #if os (macOS)
                             .highPriorityGesture(
                                 DragGesture(minimumDistance: 1)
                                     .onChanged { value in
-                                        guard enableGestures else { return }
-                                        let newPosition = CGPoint(x: value.location.x, y: value.location.y)
-                                        userDefinedPositions[deviceId] = newPosition
+                                        guard enableGestures, cableTether.sourceID == nil else {
+                                            if draggingNodeID == deviceId { draggingNodeID = nil }
+                                            return
+                                        }
+                                        if draggingNodeID != deviceId {
+                                            draggingNodeID = deviceId
+                                        }
+                                        userDefinedPositions[deviceId] = CGPoint(x: value.location.x, y: value.location.y)
+                                    }
+                                    .onEnded { _ in
+                                        if draggingNodeID == deviceId {
+                                            draggingNodeID = nil
+                                        }
                                     },
                                 including: enableGestures ? .all : .none
                             )
                             #endif
                         }
                     }
+                    .coordinateSpace(name: siteDiagramCoordinateSpace)
                     #if os(macOS)
                         .background()
                         .onTapGesture {
+                            #if os(macOS)
+                            if cableTether.sourceID != nil {
+                                return
+                            }
+                            #endif
                             if isInPopover {
                                 // Wrap the id in `SiteWindowTarget` so
                                 // this routes to the Site View scene by
@@ -281,14 +511,6 @@ struct SiteGraphView: View {
                                 openWindow(id: "site-view", value: SiteWindowTarget(siteID: siteId))
                             }
                             selectedDevice = nil
-                        }
-                        .onContinuousHover{ phase in
-                            switch phase {
-                            case .active:
-                                isHovering = true
-                            case .ended:
-                                isHovering = false
-                            }
                         }
                     #elseif os(iOS)
                         .offset(x: finalPosition.width + dragOffset.width, y: finalPosition.height + dragOffset.height)
@@ -342,8 +564,31 @@ struct SiteGraphView: View {
             Task { await computeEdges() }
         }
         .onChange(of: rolePresentation.presentation) {
+            iconFrames = [:]
             Task { await computeEdges() }
         }
+        #if os(macOS)
+        .onChange(of: enableGestures) { _, enabled in
+            if !enabled {
+                cablePair = nil
+                retractCable()
+            }
+        }
+        .onDisappear {
+            if cablePair == nil {
+                resetCableTether()
+            }
+        }
+        .sheet(item: $cablePair) { pair in
+            CablePairSheet(pair: pair, onCancel: {
+                cablePair = nil
+                retractCable()
+            }, onCreated: {
+                cablePair = nil
+                dissolveCable()
+            })
+        }
+        #endif
     }
 }
 
@@ -424,6 +669,188 @@ extension SiteGraphView {
             isCalculatingLayout = false
         }
     }
+
+    /// Image centre in the diagram, the same sum drawn edges use.
+    /// Falls back to the node origin until the preference key reports.
+    private func anchor(for deviceId: Int64) -> CGPoint {
+        let origin = positionBinding(for: deviceId).wrappedValue
+        guard let centre = imageCentres[deviceId] else { return origin }
+        return CGPoint(x: origin.x + centre.x, y: origin.y + centre.y)
+    }
+
+    private var drawingCable: Bool {
+        #if os(macOS)
+        cableTether.sourceID != nil
+        #else
+        false
+        #endif
+    }
+
+    private func cableAction(for device: Device) -> () -> Void {
+        #if os(macOS)
+        return { handleCableTap(device) }
+        #else
+        _ = device
+        return {}
+        #endif
+    }
+
+    #if os(macOS)
+    /// The icon under the pointer, ignoring the label. A move walks this
+    /// site's icon frames once, about 200.
+    private func iconHit(at point: CGPoint, excluding sourceID: Int64?) -> Int64? {
+        var best: (Int64, CGFloat)?
+        for (id, rect) in iconFrames {
+            guard id != sourceID, rect.contains(point), seats.allowsActions(deviceID: id) else { continue }
+            let centre = anchor(for: id)
+            let distance = hypot(centre.x - point.x, centre.y - point.y)
+            if let current = best {
+                if distance < current.1 { best = (id, distance) }
+            } else {
+                best = (id, distance)
+            }
+        }
+        return best?.0
+    }
+
+    private func snapAnchor(near point: CGPoint, excluding sourceID: Int64) -> CGPoint? {
+        guard let id = iconHit(at: point, excluding: sourceID) else { return nil }
+        return anchor(for: id)
+    }
+
+    private func device(near point: CGPoint, excluding sourceID: Int64? = nil) -> Device? {
+        guard let id = iconHit(at: point, excluding: sourceID) else { return nil }
+        return devices.first { $0.id == id }
+    }
+
+    private func finishCable(at point: CGPoint) {
+        if cableTether.overOrigin,
+           let sourceID = cableTether.sourceID,
+           let icon = iconFrames[sourceID],
+           originMarkRect(icon).contains(point) {
+            retractCable()
+            return
+        }
+        guard let device = device(near: point, excluding: cableTether.sourceID) else { return }
+        handleCableTap(device)
+    }
+
+    private func handleCableTap(_ device: Device) {
+        guard enableGestures else { return }
+        guard seats.allowsActions(deviceID: device.id) else { return }
+        if cableTether.sourceID == nil {
+            cableTether.generation += 1
+            cableTether.phase = .tracking
+            cableTether.opacity = 1
+            cableTether.sourceID = device.id
+            cableTether.end = anchor(for: device.id)
+            return
+        }
+        guard cableTether.phase == .tracking else { return }
+        guard let sourceID = cableTether.sourceID,
+              seats.allowsLink(a: sourceID, b: device.id) else {
+            return
+        }
+        lockCable(to: device)
+    }
+
+    /// The sheet is up, and the write that follows. The stroke stays on
+    /// the two devices. The pointer no longer moves it.
+    private func lockCable(to device: Device) {
+        guard let sourceID = cableTether.sourceID else { return }
+        cableTether.phase = .locked
+        cableTether.end = anchor(for: device.id)
+        cablePair = CableDevicePair(
+            sourceID: sourceID,
+            sourceName: devices.first { $0.id == sourceID }?.name ?? "Device",
+            targetID: device.id,
+            targetName: device.name ?? "Device"
+        )
+    }
+
+    /// Right-click, the X on the start device, a cancelled sheet, or leaving
+    /// build mode.
+    /// The end springs back to the start, then the stroke fades.
+    /// `end` stays put so the retract shape can leave from where the pointer
+    /// was. A sheet that is still up owns the stroke; its cancel clears the
+    /// pair first.
+    private func retractCable() {
+        guard cablePair == nil else { return }
+        guard cableTether.sourceID != nil else { return }
+        guard cableTether.phase == .tracking || cableTether.phase == .locked else { return }
+        cableTether.phase = .retracting
+        cableTether.generation += 1
+        let token = cableTether.generation
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(280))
+            guard cableTether.generation == token else { return }
+            withAnimation(.easeOut(duration: 0.28)) {
+                cableTether.opacity = 0
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard cableTether.generation == token else { return }
+            resetCableTether()
+        }
+    }
+
+    /// The write landed. The temporary stroke fades over the stored edge.
+    private func dissolveCable() {
+        guard cableTether.sourceID != nil else { return }
+        cableTether.phase = .locked
+        cableTether.generation += 1
+        let token = cableTether.generation
+        withAnimation(.easeOut(duration: 0.28)) {
+            cableTether.opacity = 0
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(320))
+            guard cableTether.generation == token else { return }
+            resetCableTether()
+        }
+    }
+
+    private func resetCableTether() {
+        cableTether.sourceID = nil
+        cableTether.phase = .tracking
+        cableTether.opacity = 1
+        cableTether.overOrigin = false
+    }
+
+    /// The overlay calls this on each move. The stroke reads `end`.
+    /// `overOrigin` flips only when the pointer enters or leaves the start device.
+    private func moveCable(_ location: CGPoint) {
+        guard cableTether.phase == .tracking, let sourceID = cableTether.sourceID else { return }
+        let over = iconFrames[sourceID].map { pointerOnOrigin($0, location) } ?? false
+        if cableTether.overOrigin != over {
+            cableTether.overOrigin = over
+        }
+        let point = snapAnchor(near: location, excluding: sourceID) ?? location
+        guard cableTether.end != point else { return }
+        cableTether.end = point
+    }
+
+    /// Same seat as the plus: bottom-trailing of the icon, lifted 34 points.
+    private func originMarkCentre(_ icon: CGRect) -> CGPoint {
+        CGPoint(
+            x: icon.maxX - cableOriginSide / 2,
+            y: icon.maxY - cableOriginSide / 2 - cableOriginLift
+        )
+    }
+
+    private func originMarkRect(_ icon: CGRect) -> CGRect {
+        let centre = originMarkCentre(icon)
+        return CGRect(
+            x: centre.x - cableOriginSide / 2,
+            y: centre.y - cableOriginSide / 2,
+            width: cableOriginSide,
+            height: cableOriginSide
+        )
+    }
+
+    private func pointerOnOrigin(_ icon: CGRect, _ point: CGPoint) -> Bool {
+        icon.contains(point) || originMarkRect(icon).contains(point)
+    }
+    #endif
 
     private func positionBinding(for deviceId: Int64) -> Binding<CGPoint> {
         Binding(

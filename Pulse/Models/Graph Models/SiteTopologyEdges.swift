@@ -162,6 +162,15 @@ enum SiteTopologyEdges {
         return try context.fetch(descriptor).map(InterfaceVO.init(model:))
     }
 
+    /// Ports a device-pair cable can offer. Same free rule as
+    /// `ConnectInterfaceSheet`: no cable and no connected end.
+    /// Disabled and virtual ports stay. Order is Finder order on the name.
+    static func freeInterfaces(_ interfaces: [InterfaceVO]) -> [InterfaceVO] {
+        interfaces
+            .filter { $0.cableId == nil && $0.connectedEndpointId == nil }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     static func fetchCables(siteId: Int64, in context: ModelContext) throws -> [CableVO] {
         let descriptor = FetchDescriptor<Cable>(
             predicate: #Predicate<Cable> { $0.siteId == siteId }

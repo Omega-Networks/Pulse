@@ -27,6 +27,7 @@ import SwiftUI
 import SwiftData
 import Charts
 import Foundation
+import os
 
 #if os (macOS)
 struct SiteView: View {
@@ -307,8 +308,11 @@ extension SiteView {
             Button {
                 enableGestures.toggle()
                 if !enableGestures {
-                    Task {
+                    do {
                         try modelContext.save()
+                    } catch {
+                        Logger(subsystem: "pulse", category: "site.graph")
+                            .error("Save after leaving build mode failed: \(error.localizedDescription, privacy: .public)")
                     }
                 }
             } label: {

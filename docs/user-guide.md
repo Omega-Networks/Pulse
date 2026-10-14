@@ -48,7 +48,7 @@ A Full Resync is required after upgrading to this unfiltered pull, so Generic ty
 Pulse presents your infrastructure at three zoom levels:
 
 - **Map view** shows sites geographically. Use it to gauge regional scope during an outage and to jump into a site.
-- **Site view** shows a single site's topology: devices, racks, and their connections, with live monitoring status.
+- **Site view** shows a single site's topology: devices, racks, and their connections, with live monitoring status. On macOS the hand button is build mode: drag a device to move it, or hover a seated device and click the plus to pull a cable. The plus hides while the line is out, and while a device is being dragged. Back on the device you started from, that plus is an X; click it to spring the line back and drop it. The line follows the pointer and sits on a device when the pointer is over that device's icon. Left-click the icon to choose the interfaces. Right-click to spring the line back and drop it. iOS uses the hand for pan and zoom; pull-a-cable is macOS only.
 - **Device view** shows one device in detail: interfaces, monitoring charts, events, and (where available) a live camera feed.
 
 Selecting a site on the map opens its Site view; selecting a device opens its Device view.

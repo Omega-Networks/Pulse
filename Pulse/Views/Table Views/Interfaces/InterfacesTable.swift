@@ -604,3 +604,139 @@ struct ConnectInterfaceSheet: View {
         }
     }
 }
+
+/// The two devices chosen by a cable tether on the site graph.
+struct CableDevicePair: Identifiable, Equatable, Sendable {
+    var sourceID: Int64
+    var sourceName: String
+    var targetID: Int64
+    var targetName: String
+
+    var id: String { "\(sourceID)-\(targetID)" }
+}
+
+/// Free-interface pickers for a device pair. Fetches each device's
+/// interfaces once, then filters in memory. Create uses the same
+/// `createCable(from:to:)` body as Connect….
+struct CablePairSheet: View {
+    let pair: CableDevicePair
+    var onCancel: () -> Void
+    var onCreated: () -> Void
+
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @State private var sourcePorts: [InterfaceVO] = []
+    @State private var targetPorts: [InterfaceVO] = []
+    @State private var selectedSource: Int64?
+    @State private var selectedTarget: Int64?
+    @State private var isWriting = false
+    @State private var loaded = false
+    @State private var writeError: String?
+
+    private var freeSource: [InterfaceVO] {
+        SiteTopologyEdges.freeInterfaces(sourcePorts)
+    }
+
+    private var freeTarget: [InterfaceVO] {
+        SiteTopologyEdges.freeInterfaces(targetPorts)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Link \(pair.sourceName) to \(pair.targetName)")
+                .font(.headline)
+            Text("Creates a cable in NetBox between one free interface on each device.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if loaded {
+                HStack(alignment: .top, spacing: 16) {
+                    portColumn(pair.sourceName, ports: freeSource, selection: $selectedSource)
+                    portColumn(pair.targetName, ports: freeTarget, selection: $selectedTarget)
+                }
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 80)
+            }
+            HStack {
+                if isWriting {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isWriting)
+                Button("Create") {
+                    Task { await create() }
+                }
+                .disabled(isWriting || selectedSource == nil || selectedTarget == nil)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(minWidth: 480, minHeight: 220)
+        .task { await load() }
+        .alert(
+            "NetBox write failed",
+            isPresented: Binding(
+                get: { writeError != nil },
+                set: { if !$0 { writeError = nil } }
+            ),
+            actions: { Button("OK", role: .cancel) { writeError = nil } },
+            message: { Text(writeError ?? "") }
+        )
+    }
+
+    @ViewBuilder
+    private func portColumn(_ title: String, ports: [InterfaceVO], selection: Binding<Int64?>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.headline)
+                .lineLimit(2)
+            if ports.isEmpty {
+                Text("No free interface")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            } else {
+                Picker(title, selection: selection) {
+                    ForEach(ports) { port in
+                        Text(port.name).tag(port.id as Int64?)
+                    }
+                }
+                .labelsHidden()
+                .disabled(isWriting)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func load() async {
+        do {
+            let source = try SiteTopologyEdges.fetchVOs(deviceId: pair.sourceID, in: modelContext)
+            let target = try SiteTopologyEdges.fetchVOs(deviceId: pair.targetID, in: modelContext)
+            sourcePorts = source
+            targetPorts = target
+            selectedSource = SiteTopologyEdges.freeInterfaces(source).first?.id
+            selectedTarget = SiteTopologyEdges.freeInterfaces(target).first?.id
+        } catch {
+            writeError = error.localizedDescription
+        }
+        loaded = true
+    }
+
+    private func create() async {
+        guard !isWriting, let source = selectedSource, let target = selectedTarget else { return }
+        guard let engine = netBoxSyncEngine else {
+            writeError = NetBoxSyncError.writesDisabled("NetBox sync engine is not available").localizedDescription
+            return
+        }
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            try await engine.createCable(from: source, to: target)
+            onCreated()
+        } catch {
+            writeError = error.localizedDescription
+        }
+    }
+}
