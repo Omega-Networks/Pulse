@@ -577,6 +577,8 @@ final class NetBoxWriteTests: XCTestCase {
         let ifaces = try ModelContext(container).fetch(FetchDescriptor<Interface>())
         XCTAssertEqual(ifaces.map(\.name), ["wifi0"])
         XCTAssertEqual(ifaces.first?.deviceId, 30)
+        XCTAssertFalse(fetcher.gets.contains("/api/dcim/devices/30/"))
+        XCTAssertTrue(fetcher.gets.contains("/api/dcim/interfaces/"))
     }
 
     func testRequireSeatedSkipsRackHardware() throws {

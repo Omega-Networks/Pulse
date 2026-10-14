@@ -65,16 +65,17 @@ struct NetBoxSyncIndicator: View {
     }
 }
 
-/// Toolbar warning. Hidden while Zabbix is healthy. Hover uses the
+/// Toolbar warning for operator notices (a NetBox model the token cannot
+/// read, a Zabbix failure). Hidden when the list is empty. Hover uses the
 /// same `.help` as the other toolbar buttons; click opens the detail.
 struct ZabbixToolbarWarning: View {
     @Environment(\.modelContext) private var modelContext
-    private var statusManager = RequestStatusManager.shared
+    private var noticeCenter = OperatorNoticeCenter.shared
     @State private var showingDetail = false
     @State private var isRetrying = false
 
     var body: some View {
-        if let message {
+        if !active.isEmpty {
             Button {
                 showingDetail = true
             } label: {
@@ -82,17 +83,21 @@ struct ZabbixToolbarWarning: View {
                     .foregroundStyle(.yellow)
             }
             .buttonStyle(.plain)
-            .help(message)
-            .accessibilityLabel(message)
+            .help(summary)
+            .accessibilityLabel(summary)
             .popover(isPresented: $showingDetail, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(message)
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button(isRetrying ? "Checking…" : "Retry") {
-                        retry()
+                    ForEach(active) { notice in
+                        Text(notice.message)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .disabled(isRetrying)
+                    if hasZabbixNotice {
+                        Button(isRetrying ? "Checking…" : "Retry") {
+                            retry()
+                        }
+                        .disabled(isRetrying)
+                    }
                 }
                 .padding(12)
                 .frame(width: 280, alignment: .leading)
@@ -100,16 +105,16 @@ struct ZabbixToolbarWarning: View {
         }
     }
 
-    private var message: String? {
-        switch statusManager.currentStatus[.zabbix] {
-        case .connectionError(let text),
-             .authenticationFailure(_, let text),
-             .dataError(_, let text),
-             .unknownError(let text):
-            return text
-        default:
-            return nil
-        }
+    private var active: [OperatorNotice] {
+        noticeCenter.notices
+    }
+
+    private var summary: String {
+        active.map(\.message).joined(separator: "\n")
+    }
+
+    private var hasZabbixNotice: Bool {
+        active.contains { $0.source == .zabbix }
     }
 
     private func retry() {
@@ -119,7 +124,7 @@ struct ZabbixToolbarWarning: View {
             await SiteDataService(modelContainer: container).getProblems()
             await MainActor.run {
                 isRetrying = false
-                if statusManager.currentStatus[.zabbix] == nil {
+                if !hasZabbixNotice {
                     showingDetail = false
                 }
             }

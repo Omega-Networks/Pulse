@@ -50,12 +50,17 @@ enum NetBoxPageIterator {
         as type: T.Type,
         using fetcher: any NetBoxFetching,
         maxPages: Int = NetBoxPageIterator.maxPages,
+        beforePage: @Sendable () async throws -> Void = {},
         body: @Sendable ([T], Int) async throws -> Void
     ) async throws -> (skipped: Int, pages: Int) {
         var skipped = 0
         var offset = 0
         var pages = 0
         while true {
+            // Checked before the GET so a waiting write does not pay for
+            // the rest of a changelog window. Already-fetched pages stay
+            // with the caller; this method does not apply them.
+            try await beforePage()
             pages += 1
             guard pages <= maxPages else { throw NetBoxSyncError.pageLimitExceeded }
             var query = extraQuery

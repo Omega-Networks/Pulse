@@ -39,12 +39,19 @@ struct PulseBillingEnvironment: ViewModifier {
     }
 }
 
-/// Reconciles seats when the cap, Roles checkboxes, or NetBox apply change.
+/// Reconciles seats when the cap or Roles checkboxes change. Sync and
+/// writes already persisted grants; this view only updates the in-memory
+/// sets, and reads the store once at launch.
 struct SeatReconcilerHost: View {
     var entitlements: EntitlementStore
     var seats: LicenseSeatStore
     var roles: RolePresentationStore
     let container: ModelContainer
+
+    /// A full replace (mirror, tier, roles) wins over an in-flight launch read.
+    @State private var replacedSeats = false
+    /// Ids a delta removed after the launch read started.
+    @State private var suppressedSeatIDs: Set<Int64> = []
 
     var body: some View {
         Color.clear
@@ -52,13 +59,15 @@ struct SeatReconcilerHost: View {
             .accessibilityHidden(true)
             .onChange(of: entitlements.tier) { _, _ in reconcile() }
             .onChange(of: roles.presentation) { _, _ in reconcile() }
-            .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { _ in
-                refreshEffective()
+            .onReceive(NotificationCenter.default.publisher(for: .netBoxStoreDidApply)) { note in
+                applyNotice(note)
             }
-            .task { reconcile() }
+            .task { await loadSeats() }
     }
 
     private func reconcile() {
+        replacedSeats = true
+        suppressedSeatIDs = []
         do {
             try seats.reconcile(
                 in: ModelContext(container),
@@ -70,18 +79,46 @@ struct SeatReconcilerHost: View {
         }
     }
 
-    /// Writes persist grants on the write context. Rebuild the in-memory
-    /// sets only; a second full-table save here races that context.
-    private func refreshEffective() {
-        do {
-            try seats.refreshEffective(
-                in: ModelContext(container),
-                presentation: roles.presentation,
-                tier: entitlements.tier
-            )
-        } catch {
-            // Keep the last effective set. The next apply retries.
+    private func applyNotice(_ note: Notification) {
+        guard let info = note.userInfo?[NetBoxApplyInfo.userInfoKey] as? NetBoxApplyInfo else {
+            return
         }
+        guard !info.seatUpdate.isEmpty else { return }
+        if info.seatUpdate.replacesMemory {
+            replacedSeats = true
+            suppressedSeatIDs = []
+            seats.apply(info.seatUpdate)
+            return
+        }
+        suppressedSeatIDs.formUnion(info.seatUpdate.removed)
+        suppressedSeatIDs.formUnion(info.seatUpdate.revoked)
+        suppressedSeatIDs.subtract(info.seatUpdate.granted)
+        seats.apply(info.seatUpdate)
+    }
+
+    /// One read of grants and hardware roles. Does not grant. A mirror
+    /// that finished while this was in flight already replaced the sets.
+    private func loadSeats() async {
+        let presentation = roles.presentation
+        let tier = entitlements.tier
+        let container = container
+        let loaded = await Task.detached(priority: .userInitiated) {
+            () -> (Set<Int64>, Set<Int64>)? in
+            do {
+                return try LicenseSeatStore.readEffectiveSets(
+                    in: ModelContext(container),
+                    presentation: presentation,
+                    tier: tier
+                )
+            } catch {
+                return nil
+            }
+        }.value
+        guard let loaded, !replacedSeats else { return }
+        seats.mergeLoaded(
+            seated: loaded.0.subtracting(suppressedSeatIDs),
+            unbilled: loaded.1.subtracting(suppressedSeatIDs)
+        )
     }
 }
 

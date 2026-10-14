@@ -4,7 +4,9 @@ Pulse mirrors a subset of NetBox into local SwiftData. The **first** launch (and
 
 A watermark older than NetBox’s retained changelog (default 90 days - `CHANGELOG_RETENTION` must exceed the longest expected offline gap) or a wiped store with a leftover watermark forces a full mirror. A weekly safety mirror covers edits made without request context (shell, migrations).
 
-After a failed delta, the watermark does not move; the next run retries from the same id.
+Each changelog page is stored before the next page is requested. If a page fails, the watermark stays at the last page that applied, and the next run retries that failed page. The watermark does not move backward.
+
+While Pulse is open it also applies the changelog about every two minutes, including after a launch sync error, and again shortly after you save. That pass is a delta only. A full mirror still waits for the next launch or **Apply changes** when the weekly safety interval is due, or for **Full Resync** when you ask for one. Edits made outside a request (shell, migrations) still need that safety mirror. Devices that changed are seated as part of that pass. A full mirror, including one caused by the page cap, and a failed launch still seat every stored device. A changelog page that only touches ports does not rescan devices. If the unsynced changelog is too large for one idle pass, pages that finished stay applied, the NetBox status line says the rest is waiting, and the two-minute loop does not download that window again. The next launch or **Apply changes** clears that wait and, past the page cap, runs a full mirror.
 
 ## Token
 
@@ -20,6 +22,8 @@ Use a **dedicated service account**. Read-only tokens still work for sync. Write
 - v1 `Token …` or v2 `Bearer nbt_…` (same as read)
 
 A token without write permission returns 403; Pulse shows NetBox's body and does not change local data.
+
+A token that can read sites and devices but not another model still finishes the sync. Pulse keeps the rows it already stored for the model it cannot read, shows a warning, and does not ask for that model again until the next launch or **Apply changes**. A token that cannot read sites or devices, or that NetBox rejects entirely (401), stops the sync. A token that cannot read the changelog does not start a full mirror from the two-minute loop. The warning stays up, and the next launch or **Apply changes** tries the changelog again.
 
 Pulse does **not** send `If-Match`. Concurrent edits last-write-wins. A 412 from the server is shown as a conflict, not applied.
 
@@ -74,7 +78,7 @@ From a device's Interfaces table or faceplate popover:
 - **Connect…** - pick a free interface at the site (filter by device or name), then POST `/api/dcim/cables/` with `a_terminations` / `b_terminations` `{"object_type":"dcim.interface","object_id":N}`. The open site graph reloads after the write.
 - **Disconnect** - asks first, then DELETE `/api/dcim/cables/{id}/`. If the local row has no cable id (interfaces synced before that field existed), Pulse reads the live interface first. Right-click a row if the button is hard to hit.
 
-Every successful write re-reads the object from NetBox. If the write never reaches NetBox (offline, 403, validation), Pulse discards the edit and shows the last stored value. Offline is **NetBox is unreachable. The change was not saved.** - the cable or description stays as it was. There is no queued retry; reconnect and submit again.
+A new device is stored from the POST response. Site, rack, and cable writes re-read the object from NetBox. If the write never reaches NetBox (offline, 403, validation), Pulse discards the edit and shows the last stored value. Offline is **NetBox is unreachable. The change was not saved.** - the cable or description stays as it was. There is no queued retry; reconnect and submit again.
 
 To see a **validation** body: **Connect…** on a free interface, pick a port under **Already connected**, and Connect. NetBox rejects a second cable (occupied termination / duplicate). Pulse shows that JSON and does not change the local row.
 
@@ -86,7 +90,7 @@ Validation errors (duplicate cable, missing field) show the server JSON.
 
 **New site** is the map window **+**. Tap the map first if you want coordinates and a reverse-geocoded address; then **+**. The form sends `name`, a slug derived from the name, `status`, and optional region/group/tenant. Address is the MapKit full line, clipped to 200 characters. Coordinates are rounded to 5 decimals. Region is preselected when a stored region name appears in that address. A failed POST leaves no local site.
 
-**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/`, then Pulse loads that device’s interfaces so template ports (FortiAP and similar) show immediately. A failed POST leaves no local device. Serial, primary IP, and other fields are not on this form yet.
+**New device** is Site View **+**. Name, role, type, status. Create POSTs `/api/dcim/devices/` and stores that response, then loads that device's interfaces so template ports (FortiAP and similar) show immediately. A failed POST leaves no local device. Serial, primary IP, and other fields are not on this form yet.
 
 ## Rack edit
 

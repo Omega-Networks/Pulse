@@ -50,6 +50,16 @@ actor SiteDataService {
         default:
             break
         }
+        OperatorNoticeCenter.shared.clear(source: .zabbix)
+    }
+
+    @MainActor
+    private static func publishZabbixFailure(_ error: Error) {
+        let status = ZabbixError.status(from: error)
+        RequestStatusManager.shared.updateStatus(.zabbix, status)
+        if let notice = OperatorNotice.fromZabbix(status) {
+            OperatorNoticeCenter.shared.post(notice)
+        }
     }
 
     /// Zabbix items for this site. Racks, fillers, bays, interfaces, and
@@ -59,12 +69,7 @@ actor SiteDataService {
             try await getItems(for: siteId)
             await MainActor.run { Self.dismissZabbixWarningIfNeeded() }
         } catch {
-            await MainActor.run {
-                RequestStatusManager.shared.updateStatus(
-                    .zabbix,
-                    ZabbixError.status(from: error)
-                )
-            }
+            await MainActor.run { Self.publishZabbixFailure(error) }
             throw error
         }
     }
@@ -247,10 +252,7 @@ actor SiteDataService {
 
         } catch {
             logger.error("Failed to get problems: \(error.localizedDescription)")
-            let status = ZabbixError.status(from: error)
-            await MainActor.run {
-                RequestStatusManager.shared.updateStatus(.zabbix, status)
-            }
+            await MainActor.run { Self.publishZabbixFailure(error) }
         }
     }
     
