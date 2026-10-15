@@ -90,7 +90,6 @@ struct DetailSheet: View {
                                     enableGestures: .constant(true),
                                     isInPopover: false,
                                     labelsEnabled: .constant(false),
-                                    saveCoordinates: .constant(false),
                                     isHorizontalLayout: .constant(true)
                                 )
                                 .tag(0)

@@ -32,10 +32,15 @@ import Foundation
  - The source is the Device the Interface is connecting from.
  - The destination is the Device of the Interface's connected endpoint.
  */
-struct Edge: Equatable, Identifiable, Hashable {
-    var id = UUID()
+struct Edge: Equatable, Identifiable, Hashable, Sendable {
     var start: InterfaceVO
     var end: InterfaceVO
+
+    /// Undirected interface pair. A later pass that describes the same
+    /// cable keeps the same view, so the stroke fades once, not on every save.
+    var id: String {
+        "\(min(start.id, end.id))-\(max(start.id, end.id))"
+    }
 
     static func == (lhs: Edge, rhs: Edge) -> Bool {
         return (lhs.start.id == rhs.start.id && lhs.end.id == rhs.end.id) ||
@@ -43,6 +48,7 @@ struct Edge: Equatable, Identifiable, Hashable {
     }
     
     func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
+        hasher.combine(min(start.id, end.id))
+        hasher.combine(max(start.id, end.id))
     }
 }

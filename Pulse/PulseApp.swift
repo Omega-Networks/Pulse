@@ -80,6 +80,7 @@ struct PulseApp: App {
     let notificationHandler = NotificationHandler()
     let modelContainer: ModelContainer
     let netBoxSyncEngine: NetBoxSyncEngine
+    let pendingWrites: PendingWrites
     let rolePresentationStore = RolePresentationStore()
     let entitlementStore: EntitlementStore
     let licenseSeatStore = LicenseSeatStore()
@@ -122,9 +123,12 @@ struct PulseApp: App {
             let entitlements = EntitlementStore()
             entitlements.startAtLaunch()
             entitlementStore = entitlements
+            let writes = PendingWrites()
+            pendingWrites = writes
             netBoxSyncEngine = NetBoxSyncEngine(
                 modelContainer: modelContainer,
-                subscriptionTier: { entitlements.tier }
+                subscriptionTier: { entitlements.tier },
+                pendingWrites: writes
             )
 
             // PowerSense services stay nil until Settings enables them.
@@ -158,6 +162,7 @@ struct PulseApp: App {
                         .environment(clusteringService)
                         .environment(monitorService)
                         .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                        .environment(pendingWrites)
                         .modelContainer(modelContainer)
                         .task {
                             await initializePowerSense()
@@ -213,6 +218,7 @@ struct PulseApp: App {
                 if let target {
                     SiteView(siteId: target.siteID)
                         .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                        .environment(pendingWrites)
                         .pulseBilling(
                             entitlements: entitlementStore,
                             seats: licenseSeatStore,
@@ -237,6 +243,7 @@ struct PulseApp: App {
         Settings {
             SettingsView()
                 .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                .environment(pendingWrites)
                 .environment(clusteringService)
                 .environment(monitorService)
                 .pulseBilling(
@@ -252,6 +259,7 @@ struct PulseApp: App {
                 AddSiteWindow()
                     .environment(sharedLocations)
                     .environment(\.netBoxSyncEngine, netBoxSyncEngine)
+                    .environment(pendingWrites)
                     .modelContainer(modelContainer)
             }
         }

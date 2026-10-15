@@ -24,22 +24,24 @@
 //
 
 import SwiftUI
+
+/// Width and cap shared with the site-graph tether, so a hand-off does not
+/// change the line's size.
+let edgeStroke = StrokeStyle(lineWidth: 1.69, lineCap: .round)
+
+/// Fade used when a cable stroke appears or leaves.
+let cableFade = Animation.easeInOut(duration: 0.35)
+
 /// New EdgeView conforming to Swift 6 standards
 struct EdgeView: View {
     var start: CGPoint
     var end: CGPoint
-    @State private var isVisible = false
-    
+
     var body: some View {
         Path { path in
             path.move(to: start)
             path.addLine(to: end)
         }
-        .stroke(Color.primary, lineWidth: 1.69)
-        .opacity(isVisible ? 1 : 0)
-//        .animation(.easeInOut(duration: 0.5), value: isVisible)
-        .onAppear {
-            isVisible = true
-        }
+        .stroke(Color.primary, style: edgeStroke)
     }
 }

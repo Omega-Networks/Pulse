@@ -185,9 +185,14 @@ final class Device {
         presentation.policy(for: deviceRole?.id).treatAsFiller
     }
 
-    /// Device symbol based on its role
+    /// Device symbol based on its role. An ask uses the same function,
+    /// so a camera ghost is the camera asset, not a placeholder.
     var symbolName: String {
-        switch deviceRole?.name {
+        Self.symbolName(forRoleName: deviceRole?.name)
+    }
+
+    static func symbolName(forRoleName roleName: String?) -> String {
+        switch roleName {
         case "Access Switch", "Distribution Switch", "Management Switch":
             return "custom.switch"
         case "Core Switch":
