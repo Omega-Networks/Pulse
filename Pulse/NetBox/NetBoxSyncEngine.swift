@@ -46,7 +46,14 @@ actor NetBoxSyncEngine {
     /// PulseApp must pass `{ entitlementStore.tier }` — tests that
     /// omit the argument are exercising Free, not production.
     private let subscriptionTier: @Sendable () -> SubscriptionTier
+    /// Asks recorded this session. Views read it on the main actor.
+    /// This actor is the only mutator.
+    private let pendingWrites: PendingWrites
     private let logger = Logger(subsystem: "netbox", category: "sync")
+    private let writeLogger = Logger(subsystem: "netbox", category: "write")
+    /// The latest `submit`. Each flight waits for the one before it,
+    /// then enters `performWrite`, so a test can await the chain.
+    private var submittedFlight: Task<Void, Never>?
     private var inFlight: Task<Void, Error>?
     private var writes: Task<SyncSeatUpdate?, Error>?
     /// Frames of `performWrite` that have entered and not yet left,
@@ -98,12 +105,14 @@ actor NetBoxSyncEngine {
         modelContainer: ModelContainer,
         fetcher: any NetBoxFetching = NetBoxLiveFetcher(),
         writePolicy: NetBoxWritePolicy = .shipped,
-        subscriptionTier: @escaping @Sendable () -> SubscriptionTier = { .free }
+        subscriptionTier: @escaping @Sendable () -> SubscriptionTier = { .free },
+        pendingWrites: PendingWrites = PendingWrites()
     ) {
         self.modelContainer = modelContainer
         self.fetcher = fetcher
         self.writePolicy = writePolicy
         self.subscriptionTier = subscriptionTier
+        self.pendingWrites = pendingWrites
     }
 
     private var writer: NetBoxWriteService {
@@ -514,15 +523,13 @@ actor NetBoxSyncEngine {
     }
 
     func createCable(from a: Int64, to b: Int64) async throws {
+        let intent = CableCreateIntent(
+            body: .connecting(a, to: b),
+            siteId: 0,
+            ends: Edge(start: InterfaceVO(id: a), end: InterfaceVO(id: b))
+        )
         try await performWrite {
-            let tier = self.subscriptionTier()
-            try await self.applyOnStore { context in
-                let left = try LicenseSeatEvaluator.deviceID(forInterface: a, in: context)
-                let right = try LicenseSeatEvaluator.deviceID(forInterface: b, in: context)
-                try LicenseSeatEvaluator.requireLink(a: left, b: right, in: context, tier: tier)
-            }
-            let created = try await self.writer.createCable(.connecting(a, to: b))
-            try await self.applyCableAndEnds(id: created.id)
+            try await self.runCableCreate(intent, token: nil)
         }
     }
 
@@ -540,7 +547,7 @@ actor NetBoxSyncEngine {
             let created = try await self.writer.createCable(
                 .connectingFrontPort(a, toInterface: b)
             )
-            try await self.applyCableAndEnds(id: created.id)
+            await self.storeCreatedCable(created.record)
         }
     }
 
@@ -558,7 +565,7 @@ actor NetBoxSyncEngine {
             let created = try await self.writer.createCable(
                 .connectingFrontPorts(a, to: b)
             )
-            try await self.applyCableAndEnds(id: created.id)
+            await self.storeCreatedCable(created.record)
         }
     }
 
@@ -718,78 +725,232 @@ actor NetBoxSyncEngine {
         }
     }
 
-    func createDevice(_ body: NetBoxWriteBody.DeviceCreate) async throws {
-        try await performWrite {
-            #if DEBUG
-            let total = ContinuousClock.now
-            #endif
-            if self.writePolicy.deviceAndSiteWritesEnabled {
-                let tier = self.subscriptionTier()
-                #if DEBUG
-                let admit = ContinuousClock.now
-                #endif
-                do {
-                    try await self.applyOnStore { context in
-                        try LicenseSeatEvaluator.requireAdmit(
-                            roleID: body.role, in: context, tier: tier
-                        )
-                    }
-                    #if DEBUG
-                    self.logger.info("timing createDevice admit \(createDeviceMilliseconds(since: admit))ms")
-                    #endif
-                } catch {
-                    self.logger.error(
-                        "createDevice admit refused (tier \(tier.displayName, privacy: .public)): \(error.localizedDescription)"
-                    )
-                    throw error
-                }
-            }
-            #if DEBUG
-            let post = ContinuousClock.now
-            #endif
-            let response = try await self.writer.createDevice(body)
-            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Device.self, from: response.body)
-            #if DEBUG
-            self.logger.info(
-                "timing createDevice POST /api/dcim/devices/ \(response.body.count) bytes id \(row.id) \(createDeviceMilliseconds(since: post))ms"
+    /// Records each ask, returns the tokens, then runs them. The await
+    /// is the hop that puts `.posting` on screen. It is not the POST.
+    /// One failure marks that ask and the rest continue. Kinds share
+    /// this method: the intent's `perform` does the store write.
+    func submit<I: NetBoxWriteIntent>(_ intents: [I]) async -> [WriteToken] {
+        guard !intents.isEmpty else { return [] }
+        let pairs = intents.map { (token: WriteToken(), intent: $0) }
+        let pending = pendingWrites
+        await MainActor.run {
+            pending.stage(pairs)
+        }
+        writeLogger.info(
+            "write staged \(pairs.count) \(I.kind.rawValue, privacy: .public)"
+        )
+        let previous = submittedFlight
+        let flight = Task { [pairs] in
+            await previous?.value
+            await self.runSubmitted(pairs)
+        }
+        submittedFlight = flight
+        return pairs.map(\.token)
+    }
+
+    /// Drops an ask and its notice. The sheet offers this only after
+    /// failure, so a POST that is still in flight is not discarded.
+    func discard(_ token: WriteToken) async {
+        let pending = pendingWrites
+        let removed = await MainActor.run {
+            pending.discard(token: token)
+        }
+        if removed {
+            writeLogger.info(
+                "write discarded token \(token.id.uuidString, privacy: .public)"
             )
-            let stored = ContinuousClock.now
-            #endif
-            // The 201 is the device record. A follow-up GET repeats it,
-            // including config_context, which Pulse does not store.
-            try await self.upsertRetrieved(kind: .device, data: response.body)
-            #if DEBUG
-            self.logger.info(
-                "timing createDevice store POST body \(createDeviceMilliseconds(since: stored))ms"
+        }
+    }
+
+    /// Awaits every `submit` that has been recorded, including earlier ones.
+    func waitForSubmittedWrites() async {
+        await submittedFlight?.value
+    }
+
+    func runCableCreate(_ intent: CableCreateIntent, token: WriteToken?) async throws {
+        guard
+            let a = intent.aInterfaceID,
+            let b = intent.bInterfaceID
+        else {
+            throw NetBoxSyncError.httpStatus(
+                code: 0,
+                body: "A cable needs an interface at each end."
             )
+        }
+        let tier = subscriptionTier()
+        try await applyOnStore { context in
+            let left = try LicenseSeatEvaluator.deviceID(forInterface: a, in: context)
+            let right = try LicenseSeatEvaluator.deviceID(forInterface: b, in: context)
+            try LicenseSeatEvaluator.requireLink(a: left, b: right, in: context, tier: tier)
+        }
+        let sent = try await intent.send(through: writer)
+        await markWriteCommitted(token, id: sent.record.id)
+        await storeCreatedCable(sent.record)
+    }
+
+    func runDeviceCreate(_ intent: DeviceCreateIntent, token: WriteToken) async throws {
+        #if DEBUG
+        let total = ContinuousClock.now
+        #endif
+        let body = intent.body
+        if writePolicy.deviceAndSiteWritesEnabled {
+            let tier = subscriptionTier()
+            #if DEBUG
+            let admit = ContinuousClock.now
             #endif
-            if self.writePolicy.deviceAndSiteWritesEnabled {
-                #if DEBUG
-                let grant = ContinuousClock.now
-                #endif
-                await self.recordCreatedDeviceSeat(row.id)
-                #if DEBUG
-                self.logger.info("timing createDevice grant seat \(createDeviceMilliseconds(since: grant))ms")
-                #endif
-            }
             do {
+                try await applyOnStore { context in
+                    try LicenseSeatEvaluator.requireAdmit(
+                        roleID: body.role, in: context, tier: tier
+                    )
+                }
                 #if DEBUG
-                let interfaces = ContinuousClock.now
-                let count = try await self.refreshDeviceInterfaces(deviceID: row.id)
-                self.logger.info(
-                    "timing createDevice GET /api/dcim/interfaces/?device_id=\(row.id) \(count) rows \(createDeviceMilliseconds(since: interfaces))ms"
-                )
-                #else
-                try await self.refreshDeviceInterfaces(deviceID: row.id)
+                logger.info("timing createDevice admit \(netBoxTimingMilliseconds(since: admit))ms")
                 #endif
             } catch {
-                self.logger.error(
-                    "Could not load interfaces for new device \(row.id): \(error.localizedDescription)"
+                logger.error(
+                    "createDevice admit refused (tier \(tier.displayName, privacy: .public)): \(error.localizedDescription)"
                 )
+                throw error
             }
+        }
+        #if DEBUG
+        let post = ContinuousClock.now
+        #endif
+        let sent = try await intent.send(through: writer)
+        let row = sent.record
+        #if DEBUG
+        logger.info(
+            "timing createDevice POST /api/dcim/devices/ \(sent.raw.count) bytes id \(row.id) \(netBoxTimingMilliseconds(since: post))ms"
+        )
+        let stored = ContinuousClock.now
+        #endif
+        // NetBox has the device. The ask stays until this frame posts its
+        // apply. A store failure is left to the quiet delta.
+        await markWriteCommitted(token, id: row.id)
+        // The 201 is the device record. A follow-up GET repeats it,
+        // including config_context, which Pulse does not store.
+        do {
+            try await upsertRetrieved(kind: .device, data: sent.raw)
+        } catch {
+            writeLogger.error(
+                "device \(row.id) is in NetBox; local store waits for the next delta: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        #if DEBUG
+        logger.info(
+            "timing createDevice store POST body \(netBoxTimingMilliseconds(since: stored))ms"
+        )
+        #endif
+        if writePolicy.deviceAndSiteWritesEnabled {
             #if DEBUG
-            self.logger.info("timing createDevice total \(createDeviceMilliseconds(since: total))ms")
+            let grant = ContinuousClock.now
             #endif
+            await recordCreatedDeviceSeat(row.id)
+            #if DEBUG
+            logger.info("timing createDevice grant seat \(netBoxTimingMilliseconds(since: grant))ms")
+            #endif
+        }
+        do {
+            #if DEBUG
+            let interfaces = ContinuousClock.now
+            let count = try await refreshDeviceInterfaces(deviceID: row.id)
+            logger.info(
+                "timing createDevice GET /api/dcim/interfaces/?device_id=\(row.id) \(count) rows \(netBoxTimingMilliseconds(since: interfaces))ms"
+            )
+            #else
+            try await refreshDeviceInterfaces(deviceID: row.id)
+            #endif
+        } catch {
+            logger.error(
+                "Could not load interfaces for new device \(row.id): \(error.localizedDescription)"
+            )
+        }
+        #if DEBUG
+        logger.info("timing createDevice total \(netBoxTimingMilliseconds(since: total))ms")
+        #endif
+    }
+
+    private func runSubmitted<I: NetBoxWriteIntent>(
+        _ pairs: [(token: WriteToken, intent: I)]
+    ) async {
+        do {
+            try await performWrite {
+                for pair in pairs {
+                    do {
+                        try await pair.intent.perform(on: self, token: pair.token)
+                    } catch {
+                        await self.failWrite(pair.token, error)
+                    }
+                }
+                let committed = await self.committedCount(among: pairs.map(\.token))
+                if committed == 0 {
+                    throw WriteIntentFrameFailed()
+                }
+            }
+        } catch is WriteIntentFrameFailed {
+            return
+        } catch {
+            await failStillPosting(pairs.map(\.token), error)
+        }
+    }
+
+    func markWriteCommitted(_ token: WriteToken?, id: Int64) async {
+        guard let token else { return }
+        let pending = pendingWrites
+        await MainActor.run {
+            pending.markCommitted(token: token, id: id)
+        }
+        writeLogger.info(
+            "write committed token \(token.id.uuidString, privacy: .public) netbox id \(id)"
+        )
+    }
+
+    private func failWrite(_ token: WriteToken, _ error: Error, publish: Bool = true) async {
+        let syncError: NetBoxSyncError
+        if let existing = error as? NetBoxSyncError {
+            syncError = existing
+            if publish {
+                await existing.publish()
+            }
+        } else {
+            syncError = .httpStatus(code: 0, body: error.localizedDescription)
+        }
+        let pending = pendingWrites
+        let stored = await MainActor.run {
+            pending.fail(token: token, error: syncError)
+        }
+        if stored {
+            writeLogger.error(
+                "write failed token \(token.id.uuidString, privacy: .public): \(syncError.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// The frame threw something other than its own failure, so no ask is
+    /// left posting. `performWrite` publishes a `NetBoxSyncError` before it
+    /// throws, so this does not publish again.
+    private func failStillPosting(_ tokens: [WriteToken], _ error: Error) async {
+        let pending = pendingWrites
+        let stillPosting = await MainActor.run {
+            tokens.filter { token in
+                if case .posting = pending.state(of: token) { return true }
+                return false
+            }
+        }
+        for token in stillPosting {
+            await failWrite(token, error, publish: false)
+        }
+    }
+
+    private func committedCount(among tokens: [WriteToken]) async -> Int {
+        let pending = pendingWrites
+        return await MainActor.run {
+            tokens.reduce(into: 0) { count, token in
+                if case .committed = pending.state(of: token) {
+                    count += 1
+                }
+            }
         }
     }
 
@@ -836,6 +997,9 @@ actor NetBoxSyncEngine {
     ) async throws {
         // A burst shares one quiet delta. Cancel the timer the previous
         // success armed before this write's POST starts.
+        #if DEBUG
+        let waitStarted = ContinuousClock.now
+        #endif
         quietCatchUp?.cancel()
         quietCatchUp = nil
         writeDepth += 1
@@ -844,8 +1008,10 @@ actor NetBoxSyncEngine {
         var serial: UInt64 = 0
         defer { finishWriteFrame(succeeded: succeeded, serial: serial) }
 
+        // A failed sync has published its own error. The write still runs
+        // and reports its own outcome.
         if waitForSync, let running = inFlight {
-            try await running.value
+            _ = try? await running.value
         }
         let previous = writes
         let task = Task { () throws -> SyncSeatUpdate? in
@@ -856,8 +1022,13 @@ actor NetBoxSyncEngine {
             // A user sync may have claimed the engine while this write
             // waited for the idle pass to stop.
             if waitForSync, let running = await self.inFlight {
-                try await running.value
+                _ = try? await running.value
             }
+            #if DEBUG
+            self.logger.info(
+                "timing performWrite wait \(netBoxTimingMilliseconds(since: waitStarted))ms"
+            )
+            #endif
             do {
                 try await work()
             } catch {
@@ -1624,6 +1795,24 @@ actor NetBoxSyncEngine {
             return false
         }
         let cable = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: data)
+        try await applyCableAndEnds(cable)
+        await clearPermission(path: NetBoxChangeKind.cable.retrievePath)
+        return true
+    }
+
+    /// NetBox has the cable. A store failure is logged and left to the
+    /// quiet delta, so the operator is not told the cable was refused.
+    private func storeCreatedCable(_ cable: NetBoxRecord.Cable) async {
+        do {
+            try await applyCableAndEnds(cable)
+        } catch {
+            writeLogger.error(
+                "cable \(cable.id) is in NetBox; local store waits for the next delta: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    private func applyCableAndEnds(_ cable: NetBoxRecord.Cable) async throws {
         _ = try await applyOnStore {
             try NetBoxStore.applyCables(
                 [cable], fetchComplete: false, skipped: 0, keeping: [], in: $0
@@ -1651,8 +1840,6 @@ actor NetBoxSyncEngine {
                 )
             )
         }
-        await clearPermission(path: NetBoxChangeKind.cable.retrievePath)
-        return true
     }
 
     private func deleteLocalCableAndRefreshEnds(
@@ -1934,6 +2121,7 @@ actor NetBoxSyncEngine {
     }
 
     private func postApply(_ info: NetBoxApplyInfo) async {
+        let pending = pendingWrites
         await MainActor.run {
             NotificationCenter.default.post(
                 name: .netBoxStoreDidApply,
@@ -1941,8 +2129,19 @@ actor NetBoxSyncEngine {
                 userInfo: [NetBoxApplyInfo.userInfoKey: info]
             )
         }
+        // The next turn, so the view can start its edge pass while a
+        // committed ask is still up. That pass reads off the main actor,
+        // and a cable can still be missing until it assigns.
+        await MainActor.run {
+            pending.retireCommitted()
+        }
     }
 }
+
+/// Every ask in the frame failed. Not a NetBox error: `performWrite`
+/// must not publish it again, and must not post an apply for a frame
+/// that stored nothing.
+private struct WriteIntentFrameFailed: Error {}
 
 /// Stops an idle changelog before the next page, or between objects on
 /// the page being applied. Not a NetBox error. Pages already applied
@@ -1963,8 +2162,9 @@ private final class ChangelogCursor: @unchecked Sendable {
 }
 
 #if DEBUG
-/// Milliseconds since `start`. Debug Add Device timing only.
-private func createDeviceMilliseconds(since start: ContinuousClock.Instant) -> Int {
+/// Milliseconds since `start`. Debug timing for a NetBox write and for
+/// the site-graph edge pass.
+func netBoxTimingMilliseconds(since start: ContinuousClock.Instant) -> Int {
     let duration = start.duration(to: .now)
     let ms = Double(duration.components.seconds) * 1000
         + Double(duration.components.attoseconds) / 1_000_000_000_000_000

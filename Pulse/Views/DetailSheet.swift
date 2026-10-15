@@ -56,7 +56,7 @@ struct DetailSheet: View {
 //                Section (header: Text("Topology")) {
                     //TODO: "Solve view origin is invalid" error
                     //                    if let site = selectedSite {
-                    //                        SiteGraphView(site: site, selectedDevice: .constant(nil), enableGestures: .constant(false), isInPopover: true, labelsEnabled: .constant(false), saveCoordinates: .constant(false), isHorizontalLayout: .constant(true))
+                    //                        SiteGraphView(site: site, selectedDevice: .constant(nil), enableGestures: .constant(false), isInPopover: true, labelsEnabled: .constant(false), isHorizontalLayout: .constant(true))
                     //                            .frame(width: 300, height: 300)
                     
                     //TODO: Replace Text view with Button and Label views
@@ -78,7 +78,7 @@ struct DetailSheet: View {
                             NavigationStack {
                                 ZStack {
                                     //TODO: Re-introduce touch gestures for iOS, iPadOS
-                                    SiteGraphView(site: site, selectedDevice: .constant(nil), enableGestures: .constant(true), isInPopover: false, labelsEnabled: .constant(false), saveCoordinates: .constant(false), isHorizontalLayout: .constant(true))
+                                    SiteGraphView(site: site, selectedDevice: .constant(nil), enableGestures: .constant(true), isInPopover: false, labelsEnabled: .constant(false), isHorizontalLayout: .constant(true))
                                         .toolbar {
                                             //TODO: Add in the centre of the toolbar
                                             ToolbarItemGroup(placement: .principal) {

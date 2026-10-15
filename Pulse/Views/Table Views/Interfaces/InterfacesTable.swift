@@ -620,8 +620,9 @@ struct CableDevicePair: Identifiable, Equatable, Sendable {
 /// `createCable(from:to:)` body as Connect….
 struct CablePairSheet: View {
     let pair: CableDevicePair
+    var siteID: Int64
     var onCancel: () -> Void
-    var onCreated: () -> Void
+    var onCreated: (Edge) -> Void
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
@@ -667,6 +668,7 @@ struct CablePairSheet: View {
                     .keyboardShortcut(.cancelAction)
                     .disabled(isWriting)
                 Button("Create") {
+                    isWriting = true
                     Task { await create() }
                 }
                 .disabled(isWriting || selectedSource == nil || selectedTarget == nil)
@@ -725,18 +727,22 @@ struct CablePairSheet: View {
     }
 
     private func create() async {
-        guard !isWriting, let source = selectedSource, let target = selectedTarget else { return }
+        defer { isWriting = false }
+        guard let source = selectedSource, let target = selectedTarget else { return }
         guard let engine = netBoxSyncEngine else {
             writeError = NetBoxSyncError.writesDisabled("NetBox sync engine is not available").localizedDescription
             return
         }
-        isWriting = true
-        defer { isWriting = false }
-        do {
-            try await engine.createCable(from: source, to: target)
-            onCreated()
-        } catch {
-            writeError = error.localizedDescription
-        }
+        guard
+            let sourcePort = sourcePorts.first(where: { $0.id == source }),
+            let targetPort = targetPorts.first(where: { $0.id == target })
+        else { return }
+        let intent = CableCreateIntent(
+            body: .connecting(source, to: target),
+            siteId: siteID,
+            ends: Edge(start: sourcePort, end: targetPort)
+        )
+        _ = await engine.submit([intent])
+        onCreated(intent.ends)
     }
 }

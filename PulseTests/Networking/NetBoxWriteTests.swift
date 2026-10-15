@@ -526,15 +526,23 @@ final class NetBoxWriteTests: XCTestCase {
         fetcher.getBodies["/api/dcim/devices/30/"] = Data(
             #"{"id":30,"name":"core-1","site":{"id":4},"role":{"id":6},"device_type":{"id":8}}"#.utf8
         )
-        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        let pending = PendingWrites()
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            pendingWrites: pending
+        )
         try await engine.createSite(
             NetBoxWriteBody.SiteCreate(name: "Lab", slug: "lab", status: "active")
         )
-        try await engine.createDevice(
+        let state = await submitDevice(
             NetBoxWriteBody.DeviceCreate(
                 name: "core-1", deviceType: 8, role: 6, site: 4, status: "active"
-            )
+            ),
+            on: engine,
+            pending: pending
         )
+        XCTAssertNil(state)
         XCTAssertEqual(fetcher.sends.map(\.method), ["POST", "POST"])
         XCTAssertEqual(fetcher.sends.map(\.path), ["/api/dcim/sites/", "/api/dcim/devices/"])
         XCTAssertTrue(
@@ -568,12 +576,20 @@ final class NetBoxWriteTests: XCTestCase {
             "enabled": true }
         ] }
         """.utf8)
-        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
-        try await engine.createDevice(
+        let pending = PendingWrites()
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            pendingWrites: pending
+        )
+        let state = await submitDevice(
             NetBoxWriteBody.DeviceCreate(
                 name: "ap-1", deviceType: 8, role: 6, site: 4, status: "active"
-            )
+            ),
+            on: engine,
+            pending: pending
         )
+        XCTAssertNil(state)
         let ifaces = try ModelContext(container).fetch(FetchDescriptor<Interface>())
         XCTAssertEqual(ifaces.map(\.name), ["wifi0"])
         XCTAssertEqual(ifaces.first?.deviceId, 30)
@@ -750,17 +766,22 @@ final class NetBoxWriteTests: XCTestCase {
         try seed.save()
 
         let fetcher = WriteFetcher()
-        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
-        do {
-            try await engine.createDevice(
-                NetBoxWriteBody.DeviceCreate(
-                    name: "over-cap", deviceType: 8, role: 1, site: 4, status: "active"
-                )
-            )
-            XCTFail("billable create at cap must refuse")
-        } catch let error as BillingError {
-            XCTAssertEqual(error, .tierCapReached(.free))
-        }
+        let pending = PendingWrites()
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            pendingWrites: pending
+        )
+        let state = await submitDevice(
+            NetBoxWriteBody.DeviceCreate(
+                name: "over-cap", deviceType: 8, role: 1, site: 4, status: "active"
+            ),
+            on: engine,
+            pending: pending
+        )
+        let cap = BillingError.tierCapReached(.free).localizedDescription
+        XCTAssertEqual(state, .failed(.httpStatus(code: 0, body: cap)), "billable create at cap must refuse")
+        await MainActor.run { OperatorNoticeCenter.shared.clear(source: .netbox) }
         XCTAssertTrue(fetcher.sends.isEmpty)
     }
 
@@ -790,16 +811,21 @@ final class NetBoxWriteTests: XCTestCase {
             NetBoxHTTPResponse(status: 201, body: created, etag: nil),
         ]
         fetcher.getBodies["/api/dcim/devices/51/"] = created
+        let pending = PendingWrites()
         let engine = NetBoxSyncEngine(
             modelContainer: container,
             fetcher: fetcher,
-            subscriptionTier: { entitlements.tier }
+            subscriptionTier: { entitlements.tier },
+            pendingWrites: pending
         )
-        try await engine.createDevice(
+        let state = await submitDevice(
             NetBoxWriteBody.DeviceCreate(
                 name: "plus-1", deviceType: 8, role: 1, site: 4, status: "active"
-            )
+            ),
+            on: engine,
+            pending: pending
         )
+        XCTAssertNil(state)
         XCTAssertEqual(fetcher.sends.map(\.path), ["/api/dcim/devices/"])
         XCTAssertTrue(
             try ModelContext(container).fetch(FetchDescriptor<Device>()).contains { $0.id == 51 }
@@ -831,12 +857,20 @@ final class NetBoxWriteTests: XCTestCase {
         fetcher.getBodies["/api/dcim/interfaces/"] = Data(
             #"{"count":0,"next":null,"results":[]}"#.utf8
         )
-        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
-        try await engine.createDevice(
+        let pending = PendingWrites()
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            pendingWrites: pending
+        )
+        let state = await submitDevice(
             NetBoxWriteBody.DeviceCreate(
                 name: "core-1", deviceType: 8, role: 1, site: 4, status: "active"
-            )
+            ),
+            on: engine,
+            pending: pending
         )
+        XCTAssertNil(state)
         let row = try ModelContext(container).fetch(FetchDescriptor<Device>()).first { $0.id == 9 }
         XCTAssertNotNil(row?.seatGrantedAt)
         XCTAssertFalse(fetcher.gets.contains { $0.hasPrefix("/api/core/object-changes") })
@@ -867,16 +901,21 @@ final class NetBoxWriteTests: XCTestCase {
         fetcher.getBodies["/api/dcim/interfaces/"] = Data(
             #"{"count":0,"next":null,"results":[]}"#.utf8
         )
+        let pending = PendingWrites()
         let engine = NetBoxSyncEngine(
             modelContainer: container,
             fetcher: fetcher,
-            subscriptionTier: { .unlimited }
+            subscriptionTier: { .unlimited },
+            pendingWrites: pending
         )
-        try await engine.createDevice(
+        let state = await submitDevice(
             NetBoxWriteBody.DeviceCreate(
                 name: "plus-u", deviceType: 8, role: 1, site: 4, status: "active"
-            )
+            ),
+            on: engine,
+            pending: pending
         )
+        XCTAssertNil(state)
         XCTAssertEqual(fetcher.sends.map(\.path), ["/api/dcim/devices/"])
         XCTAssertNotNil(
             try ModelContext(container).fetch(FetchDescriptor<Device>()).first { $0.id == 81 }?.seatGrantedAt
@@ -906,17 +945,22 @@ final class NetBoxWriteTests: XCTestCase {
         try seed.save()
 
         let fetcher = WriteFetcher()
-        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
-        do {
-            try await engine.createDevice(
-                NetBoxWriteBody.DeviceCreate(
-                    name: "over-cap", deviceType: 8, role: 1, site: 4, status: "active"
-                )
-            )
-            XCTFail("spoofed defaults must not lift the engine cap")
-        } catch let error as BillingError {
-            XCTAssertEqual(error, .tierCapReached(.free))
-        }
+        let pending = PendingWrites()
+        let engine = NetBoxSyncEngine(
+            modelContainer: container,
+            fetcher: fetcher,
+            pendingWrites: pending
+        )
+        let state = await submitDevice(
+            NetBoxWriteBody.DeviceCreate(
+                name: "over-cap", deviceType: 8, role: 1, site: 4, status: "active"
+            ),
+            on: engine,
+            pending: pending
+        )
+        let cap = BillingError.tierCapReached(.free).localizedDescription
+        XCTAssertEqual(state, .failed(.httpStatus(code: 0, body: cap)), "spoofed defaults must not lift the engine cap")
+        await MainActor.run { OperatorNoticeCenter.shared.clear(source: .netbox) }
         XCTAssertTrue(fetcher.sends.isEmpty)
     }
 
@@ -1028,7 +1072,44 @@ final class NetBoxWriteTests: XCTestCase {
                 code: 400,
                 body: #"{"enabled":["This field is required."]}"#
             ),
-            #"{"enabled":["This field is required."]}"#
+            "Enabled: This field is required."
+        )
+    }
+
+    func testValidationBodiesReadAsSentences() {
+        let unique = #"{"__all__":["Device name must be unique per site and tenant."]}"#
+        XCTAssertEqual(
+            NetBoxSyncError.operatorMessage(code: 400, body: unique),
+            "Device name must be unique per site and tenant."
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.httpStatus(code: 400, body: unique).noticeMessage,
+            "Device name must be unique per site and tenant.",
+            "the failed ask shows NetBox's sentence without the status code"
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.httpStatus(code: 400, body: unique).localizedDescription,
+            "NetBox 400: Device name must be unique per site and tenant.",
+            "the log and sync status keep the code"
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.operatorMessage(
+                code: 400,
+                body: #"{"non_field_errors":["Cable already exists."],"device_type":["Invalid pk."],"name":["Required."]}"#
+            ),
+            "Cable already exists. Device type: Invalid pk. Name: Required."
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.operatorMessage(
+                code: 400,
+                body: #"[{"name":["Required."]},{},{"name":["Required."]}]"#
+            ),
+            "Name: Required.",
+            "a bulk answer repeats a message once"
+        )
+        XCTAssertEqual(
+            NetBoxSyncError.httpStatus(code: 0, body: "Subscribe to add more devices.").noticeMessage,
+            "Subscribe to add more devices."
         )
     }
 
@@ -1092,6 +1173,19 @@ final class NetBoxWriteTests: XCTestCase {
             context.insert(row)
         }
         try context.save()
+    }
+
+    /// Runs one device ask the way the New Device form does. A stored
+    /// device has left the queue, so success is nil.
+    private func submitDevice(
+        _ body: NetBoxWriteBody.DeviceCreate,
+        on engine: NetBoxSyncEngine,
+        pending: PendingWrites
+    ) async -> WriteState? {
+        let tokens = await engine.submit([DeviceCreateIntent(body: body, uHeight: 1)])
+        await engine.waitForSubmittedWrites()
+        guard let token = tokens.first else { return nil }
+        return await MainActor.run { pending.state(of: token) }
     }
 
     private func makeContainer() throws -> ModelContainer {
