@@ -780,7 +780,7 @@ final class NetBoxWriteTests: XCTestCase {
             pending: pending
         )
         let cap = BillingError.tierCapReached(.free).localizedDescription
-        XCTAssertEqual(state, .failed(.httpStatus(code: 0, body: cap)), "billable create at cap must refuse")
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .netbox, message: cap)), "billable create at cap must refuse")
         await MainActor.run { OperatorNoticeCenter.shared.clear(source: .netbox) }
         XCTAssertTrue(fetcher.sends.isEmpty)
     }
@@ -959,7 +959,7 @@ final class NetBoxWriteTests: XCTestCase {
             pending: pending
         )
         let cap = BillingError.tierCapReached(.free).localizedDescription
-        XCTAssertEqual(state, .failed(.httpStatus(code: 0, body: cap)), "spoofed defaults must not lift the engine cap")
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .netbox, message: cap)), "spoofed defaults must not lift the engine cap")
         await MainActor.run { OperatorNoticeCenter.shared.clear(source: .netbox) }
         XCTAssertTrue(fetcher.sends.isEmpty)
     }

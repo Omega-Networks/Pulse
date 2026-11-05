@@ -51,8 +51,8 @@ final class PendingWritesTests: XCTestCase {
         XCTAssertEqual(state, .posting)
         XCTAssertEqual(harness.fetcher.sends.map(\.path), ["/api/dcim/devices/"])
         XCTAssertFalse(try deviceIDs(harness.container).contains(30))
-        let here = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, at: 4) }
-        let elsewhere = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, at: 9) }
+        let here = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, in: .site(4)) }
+        let elsewhere = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, in: .site(9)) }
         XCTAssertEqual(here.map(\.token), [token])
         XCTAssertTrue(elsewhere.isEmpty)
     }
@@ -75,12 +75,12 @@ final class PendingWritesTests: XCTestCase {
         let state = await MainActor.run { harness.pending.state(of: token) }
         XCTAssertEqual(state, .committed(id: 30))
         XCTAssertTrue(try deviceIDs(harness.container).contains(30))
-        let ghosts = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, at: 4) }
+        let ghosts = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, in: .site(4)) }
         XCTAssertEqual(ghosts.map(\.token), [token])
 
         await gate.open()
         await harness.engine.waitForSubmittedWrites()
-        let after = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, at: 4) }
+        let after = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, in: .site(4)) }
         XCTAssertTrue(after.isEmpty)
         XCTAssertTrue(try deviceIDs(harness.container).contains(30))
     }
@@ -97,14 +97,14 @@ final class PendingWritesTests: XCTestCase {
         let token = try XCTUnwrap(tokens.first)
         let state = await MainActor.run { harness.pending.state(of: token) }
         let error = NetBoxSyncError.httpStatus(code: 400, body: "name already exists")
-        XCTAssertEqual(state, .failed(error))
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .netbox, message: error.noticeMessage)))
         let posted = await notice(token)
         XCTAssertEqual(posted?.message, error.noticeMessage)
         XCTAssertEqual(posted?.source, .netbox)
-        XCTAssertEqual(posted?.id, PendingWrites.noticeID(token))
+        XCTAssertEqual(posted?.id, PendingWrites.noticeID(.netbox, token))
         XCTAssertEqual(harness.fetcher.sends.count, 1)
         XCTAssertFalse(try deviceIDs(harness.container).contains(30))
-        let elsewhere = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, at: 9) }
+        let elsewhere = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, in: .site(9)) }
         XCTAssertTrue(elsewhere.isEmpty)
     }
 
@@ -118,7 +118,7 @@ final class PendingWritesTests: XCTestCase {
 
         let token = try XCTUnwrap(tokens.first)
         let state = await MainActor.run { harness.pending.state(of: token) }
-        XCTAssertEqual(state, .failed(.transport(sentence)))
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .netbox, message: sentence)))
         let posted = await notice(token)
         XCTAssertEqual(posted?.message, sentence)
         XCTAssertTrue(harness.fetcher.sends.isEmpty == false)
@@ -151,7 +151,7 @@ final class PendingWritesTests: XCTestCase {
         let token = try XCTUnwrap(tokens.first)
         let cap = BillingError.tierCapReached(.free).localizedDescription
         let state = await MainActor.run { harness.pending.state(of: token) }
-        XCTAssertEqual(state, .failed(.httpStatus(code: 0, body: cap)))
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .netbox, message: cap)))
         let posted = await notice(token)
         XCTAssertEqual(posted?.message, cap)
         XCTAssertTrue(harness.fetcher.sends.isEmpty)
@@ -174,8 +174,14 @@ final class PendingWritesTests: XCTestCase {
         let failed = try XCTUnwrap(tokens.first)
         let committed = try XCTUnwrap(tokens.last)
         let failedState = await MainActor.run { harness.pending.state(of: failed) }
-        XCTAssertEqual(failedState, .failed(.httpStatus(code: 400, body: "name already exists")))
-        let ghosts = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, at: 4) }
+        XCTAssertEqual(
+            failedState,
+            .failed(WriteFailure(
+                provider: .netbox,
+                message: NetBoxSyncError.httpStatus(code: 400, body: "name already exists").noticeMessage
+            ))
+        )
+        let ghosts = await MainActor.run { harness.pending.ghosts(of: DeviceCreateIntent.self, in: .site(4)) }
         XCTAssertEqual(ghosts.map(\.token), [failed])
         let committedState = await MainActor.run { harness.pending.state(of: committed) }
         XCTAssertNil(committedState)
@@ -193,7 +199,7 @@ final class PendingWritesTests: XCTestCase {
 
     private func notice(_ token: WriteToken) async -> OperatorNotice? {
         await MainActor.run {
-            OperatorNoticeCenter.shared.notices.first { $0.id == PendingWrites.noticeID(token) }
+            OperatorNoticeCenter.shared.notices.first { $0.id == PendingWrites.noticeID(.netbox, token) }
         }
     }
 
@@ -218,12 +224,12 @@ final class PendingWritesTests: XCTestCase {
         XCTAssertEqual(committed, .committed(id: 9))
         XCTAssertEqual(harness.fetcher.sends.map(\.path), ["/api/dcim/cables/"])
         XCTAssertTrue(try cableIDs(harness.container).contains(9))
-        let here = await MainActor.run { harness.pending.ghosts(of: CableCreateIntent.self, at: 4) }
+        let here = await MainActor.run { harness.pending.ghosts(of: CableCreateIntent.self, in: .site(4)) }
         XCTAssertEqual(here.map(\.token), [token])
 
         await gate.open()
         await harness.engine.waitForSubmittedWrites()
-        let after = await MainActor.run { harness.pending.ghosts(of: CableCreateIntent.self, at: 4) }
+        let after = await MainActor.run { harness.pending.ghosts(of: CableCreateIntent.self, in: .site(4)) }
         XCTAssertTrue(after.isEmpty)
         XCTAssertFalse(harness.fetcher.gets.contains("/api/dcim/cables/9/"))
     }
@@ -260,7 +266,7 @@ final class PendingWritesTests: XCTestCase {
         let token = try XCTUnwrap(tokens.first)
         let error = NetBoxSyncError.httpStatus(code: 400, body: "termination already cabled")
         let state = await MainActor.run { harness.pending.state(of: token) }
-        XCTAssertEqual(state, .failed(error))
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .netbox, message: error.noticeMessage)))
         let posted = await notice(token)
         XCTAssertEqual(posted?.message, error.noticeMessage)
         XCTAssertFalse(try cableIDs(harness.container).contains(9))
@@ -276,7 +282,7 @@ final class PendingWritesTests: XCTestCase {
         let token = try XCTUnwrap(tokens.first)
         let message = BillingError.linkRequiresBothSeats.localizedDescription
         let state = await MainActor.run { harness.pending.state(of: token) }
-        XCTAssertEqual(state, .failed(.httpStatus(code: 0, body: message)))
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .netbox, message: message)))
         let posted = await notice(token)
         XCTAssertEqual(posted?.message, message)
         XCTAssertTrue(harness.fetcher.sends.isEmpty)
@@ -291,7 +297,7 @@ final class PendingWritesTests: XCTestCase {
         harness.fetcher.getBodies["/api/dcim/interfaces/89/"] = cableEndJSON(id: 89, peer: 88)
         try await harness.engine.createCable(from: 88, to: 89)
 
-        let ghosts = await MainActor.run { harness.pending.ghosts(of: CableCreateIntent.self, at: 4) }
+        let ghosts = await MainActor.run { harness.pending.ghosts(of: CableCreateIntent.self, in: .site(4)) }
         XCTAssertTrue(ghosts.isEmpty)
         XCTAssertTrue(try cableIDs(harness.container).contains(9))
         XCTAssertEqual(harness.fetcher.sends.map(\.path), ["/api/dcim/cables/"])

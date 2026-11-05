@@ -174,7 +174,7 @@ struct SingleRackView: View {
     }
 
     private var rackGhosts: [PendingGhost<DeviceGhost>] {
-        pendingWrites.ghosts(of: DeviceCreateIntent.self, at: site.id).filter { item in
+        pendingWrites.ghosts(of: DeviceCreateIntent.self, in: .site(site.id)).filter { item in
             guard item.ghost.rackID == rack.id, item.ghost.position != nil else { return false }
             guard rolePresentation.policy(for: item.ghost.roleID).showInRack else { return false }
             return RackOccupancy.normalizedFace(item.ghost.face ?? "front") == visibleFace

@@ -25,27 +25,19 @@
 
 import SwiftUI
 import Charts
-import SwiftData
 
 struct DeviceUptimeChart: View {
-    @Environment(\.modelContext) private var modelContext
     let deviceId: Int64
-    
-    @State private var defaultPeriod: (Date, Date) = (Calendar.current.date(byAdding: .hour, value: -3, to: Date())!, Date())
+
     @State private var icmpPingHistoryData: [Date: String] = [:]
     @State private var icmpPingItem: Item?
-    @State private var isLoading = false
-    
-    var icmpPingFilteredHistory: [Date: String] {
-        let (startDate, _) = defaultPeriod
-        return icmpPingHistoryData.filter { $0.key >= startDate }
-    }
     
     var body: some View {
         VStack {
             Chart(icmpPingData, id: \.startDate) { dataItem in
                 BarMark(
-                    x: .value("Duration", dataItem.duration)
+                    xStart: .value("Start", dataItem.startDate),
+                    xEnd: .value("End", dataItem.endDate)
                 )
                 .foregroundStyle(dataItem.value == "0" ? Color.red : Color.green)
             }
@@ -62,13 +54,16 @@ struct DeviceUptimeChart: View {
             .presentationCornerRadius(20)
         }
         .drawingGroup()
-        .task(id: deviceId) {
+        .zabbixItemLoad(deviceId: deviceId) {
+            icmpPingHistoryData = [:]
+            icmpPingItem = nil
+        } load: {
             await loadICMPPingItem()
         }
     }
     
     var icmpPingData: [(startDate: Date, endDate: Date, value: String, duration: TimeInterval)] {
-        let sortedHistory = icmpPingFilteredHistory.sorted { $0.key > $1.key }
+        let sortedHistory = icmpPingHistoryData.sorted { $0.key < $1.key }
         var result: [(startDate: Date, endDate: Date, value: String, duration: TimeInterval)] = []
         var currentValue: String = ""
         var currentStartDate: Date = Date.distantPast
@@ -92,42 +87,25 @@ struct DeviceUptimeChart: View {
     }
     
     private func loadICMPPingItem() async {
-        isLoading = true
-        defer { isLoading = false }
-        
         let items = await ItemCache.shared.getItems(forDeviceId: deviceId)
-        if let icmpItem = items.first(where: { $0.name.localizedStandardContains("ICMP ping") }) {
-            self.icmpPingItem = icmpItem
-            await fetchIcmpPingHistoryData(for: icmpItem)
+        guard !Task.isCancelled else { return }
+        guard let icmpItem = items.first(where: { $0.name.localizedStandardContains("ICMP ping") }) else {
+            icmpPingItem = nil
+            icmpPingHistoryData = [:]
+            return
         }
+        icmpPingItem = icmpItem
+        await fetchIcmpPingHistoryData(for: icmpItem)
     }
     
     private func fetchIcmpPingHistoryData(for item: Item) async {
-        let historyFetcher = HistoryFetcher(modelContainer: modelContext.container)
-        let (fetchedData, isPartialData) = await historyFetcher.getHistories(
-            deviceId: deviceId,
+        let fetchedData = await HistoryFetcher().getHistories(
             itemId: item.itemId,
             selectedPeriod: "3H",
             valueType: item.valueType
         )
-        
-        await MainActor.run {
-            icmpPingHistoryData = fetchedData
-        }
-        
-        if isPartialData {
-            Task.detached(priority: .background) {
-                let (completeData, _) = await historyFetcher.getHistories(
-                    deviceId: deviceId,
-                    itemId: item.itemId,
-                    selectedPeriod: "3H",
-                    valueType: item.valueType
-                )
-                await MainActor.run {
-                    self.icmpPingHistoryData = completeData
-                }
-            }
-        }
+        guard !Task.isCancelled else { return }
+        icmpPingHistoryData = fetchedData
     }
 }
 

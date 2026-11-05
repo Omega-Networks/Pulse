@@ -34,6 +34,12 @@ import SwiftUI
 
 @Model
 final class Event {
+    /// One `#Index`. Each array is its own index: `siteId` for the
+    /// problems table, `rClock` for the active-event query, `hostId`
+    /// for the count predicates. All three are defaulted, so the index
+    /// does not add a column.
+    #Index<Event>([\.siteId], [\.rClock], [\.hostId])
+
     // TODO: Make into non-unique with error handling on import
     @Attribute(.unique) var eventId: String
     var acknowledged: String = ""
@@ -52,6 +58,7 @@ final class Event {
     /// Added for Preview, might move to prod
     /// Preview value (Int64) over String
     var hostId: Int64 = 0
+    var siteId: Int64 = 0
     
     init(eventId: String) {
         self.eventId = eventId
@@ -62,32 +69,60 @@ final class Event {
     /// `Device.events` / `@Query` after Delete All must skip these.
     var isStoreBacked: Bool { modelContext != nil }
     
-    func update(with properties: EventProperties, device: Device? = nil) {
-        // Always update these properties as they come from both problem.get and event.get
-        self.name = properties.name
-        self.source = properties.source
-        self.object = properties.object
-        self.objectId = properties.objectId
-        self.clock = properties.clock
-        self.acknowledged = properties.acknowledged
-        self.severity = properties.severity
-        self.opData = properties.opData
-        self.suppressed = properties.suppressed
-        
-        // Only update device if provided
-        if let device = device {
+    /// Writes the payload onto this row. An equal value is left alone, so a
+    /// quiet poll does not dirty the row. Returns whether anything changed.
+    /// The relationship is the link. `siteId` is stamped from the device's
+    /// resolved site when one is passed. A missing host id leaves `hostId` as it was.
+    @discardableResult
+    func update(with properties: EventProperties, device: Device? = nil) -> Bool {
+        var changed = false
+        changed = assign(\.name, properties.name) || changed
+        changed = assign(\.source, properties.source) || changed
+        changed = assign(\.object, properties.object) || changed
+        changed = assign(\.objectId, properties.objectId) || changed
+        changed = assign(\.clock, properties.clock) || changed
+        changed = assign(\.acknowledged, properties.acknowledged) || changed
+        changed = assign(\.severity, properties.severity) || changed
+        changed = assign(\.opData, properties.opData) || changed
+        changed = assign(\.suppressed, properties.suppressed) || changed
+        if let value = properties.value {
+            changed = assign(\.value, value) || changed
+        }
+        if let rClock = properties.rClock {
+            changed = assign(\.rClock, rClock) || changed
+        }
+        if let device, self.device?.id != device.id {
             self.device = device
+            changed = true
         }
-        
-        // Only update value if it exists in properties
-        if (properties.value != nil) {
-            self.value = properties.value ?? ""
+        if let device {
+            let resolved = device.resolvedSiteId
+            if resolved != 0, siteId != resolved {
+                siteId = resolved
+                changed = true
+            }
         }
-        
-        // Only update rClock if it exists in properties
-        if (properties.rClock != nil) {
-            self.rClock = properties.rClock ?? ""
+        if let rawHostId = properties.hostIds.first, let hostId = Int64(rawHostId), self.hostId != hostId {
+            self.hostId = hostId
+            changed = true
         }
+        return changed
+    }
+
+    /// `problem.get` does not return hosts, so a linked row can still have
+    /// `hostId == 0`. The device it is already on is the host. A set value
+    /// is left alone.
+    @discardableResult
+    func stampHostIdIfMissing(from device: Device) -> Bool {
+        guard hostId == 0, device.zabbixId != 0 else { return false }
+        hostId = device.zabbixId
+        return true
+    }
+
+    private func assign(_ keyPath: ReferenceWritableKeyPath<Event, String>, _ value: String) -> Bool {
+        guard self[keyPath: keyPath] != value else { return false }
+        self[keyPath: keyPath] = value
+        return true
     }
     
     var severityString: String {

@@ -917,8 +917,9 @@ actor NetBoxSyncEngine {
             syncError = .httpStatus(code: 0, body: error.localizedDescription)
         }
         let pending = pendingWrites
+        let failure = WriteFailure(provider: .netbox, message: syncError.noticeMessage)
         let stored = await MainActor.run {
-            pending.fail(token: token, error: syncError)
+            pending.fail(token: token, failure: failure)
         }
         if stored {
             writeLogger.error(
@@ -2133,7 +2134,7 @@ actor NetBoxSyncEngine {
         // committed ask is still up. That pass reads off the main actor,
         // and a cable can still be missing until it assigns.
         await MainActor.run {
-            pending.retireCommitted()
+            pending.retireCommitted(provider: .netbox)
         }
     }
 }

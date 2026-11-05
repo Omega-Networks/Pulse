@@ -81,6 +81,7 @@ struct PulseApp: App {
     let modelContainer: ModelContainer
     let netBoxSyncEngine: NetBoxSyncEngine
     let pendingWrites: PendingWrites
+    let zabbixWriteService: ZabbixWriteService
     let rolePresentationStore = RolePresentationStore()
     let entitlementStore: EntitlementStore
     let licenseSeatStore = LicenseSeatStore()
@@ -130,6 +131,14 @@ struct PulseApp: App {
                 subscriptionTier: { entitlements.tier },
                 pendingWrites: writes
             )
+            zabbixWriteService = ZabbixWriteService(
+                pendingWrites: writes,
+                problems: SiteDataService(modelContainer: modelContainer),
+                container: modelContainer,
+                seats: licenseSeatStore,
+                tier: { entitlements.tier },
+                transport: URLSessionZabbixTransport()
+            )
 
             // PowerSense services stay nil until Settings enables them.
             // ClusteringService used to prefetch every PowerSense device
@@ -163,6 +172,7 @@ struct PulseApp: App {
                         .environment(monitorService)
                         .environment(\.netBoxSyncEngine, netBoxSyncEngine)
                         .environment(pendingWrites)
+                        .environment(\.zabbixWriteService, zabbixWriteService)
                         .modelContainer(modelContainer)
                         .task {
                             await initializePowerSense()
@@ -219,6 +229,7 @@ struct PulseApp: App {
                     SiteView(siteId: target.siteID)
                         .environment(\.netBoxSyncEngine, netBoxSyncEngine)
                         .environment(pendingWrites)
+                        .environment(\.zabbixWriteService, zabbixWriteService)
                         .pulseBilling(
                             entitlements: entitlementStore,
                             seats: licenseSeatStore,
@@ -244,6 +255,7 @@ struct PulseApp: App {
             SettingsView()
                 .environment(\.netBoxSyncEngine, netBoxSyncEngine)
                 .environment(pendingWrites)
+                .environment(\.zabbixWriteService, zabbixWriteService)
                 .environment(clusteringService)
                 .environment(monitorService)
                 .pulseBilling(
@@ -260,6 +272,7 @@ struct PulseApp: App {
                     .environment(sharedLocations)
                     .environment(\.netBoxSyncEngine, netBoxSyncEngine)
                     .environment(pendingWrites)
+                    .environment(\.zabbixWriteService, zabbixWriteService)
                     .modelContainer(modelContainer)
             }
         }
@@ -361,7 +374,10 @@ struct PulseApp: App {
             }
             // The mirror did not finish. Seat whatever is already stored
             // so the window is not waiting on a one-shot launch task.
+            // The problems table reads siteId, which this walk fills from
+            // the devices already on disk.
             await netBoxSyncEngine.seatLocalDevices()
+            await SiteDataService(modelContainer: modelContainer).refreshSeverities()
             initState.currentStep = "Running in Offline Mode"
             initState.showWelcome = true
             try? await Task.sleep(for: .seconds(2))

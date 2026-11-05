@@ -100,6 +100,10 @@ struct OperatorNotice: Identifiable, Sendable, Equatable {
     var message: String
     var occurredAt: Date
 
+    /// Transport and status only. A refused write keeps its own id until
+    /// Discard or a successful commit of that token.
+    static let zabbixStatusID = "zabbix.status"
+
     /// The same sentence the Zabbix toolbar already shows. Success and
     /// the in-flight marker are not notices.
     static func fromZabbix(_ status: RequestStatusManager.RequestStatus) -> OperatorNotice? {
@@ -118,7 +122,7 @@ struct OperatorNotice: Identifiable, Sendable, Equatable {
             return nil
         }
         return OperatorNotice(
-            id: "zabbix.status",
+            id: zabbixStatusID,
             source: .zabbix,
             severity: severity,
             message: message,

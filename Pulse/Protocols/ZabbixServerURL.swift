@@ -27,9 +27,9 @@
 
 import Foundation
 
-/// Settings URL must be `https` with a host and no userinfo. The JSON-RPC
-/// script is appended to the path the operator typed. A host-only URL keeps
-/// the historical `/zabbix/api_jsonrpc.php` default so existing Settings work.
+/// Settings URL must be `https` with a host and no userinfo. Pulse appends
+/// `api_jsonrpc.php` to the path the operator typed. A host-only URL is the
+/// frontend origin. A subdirectory is included only when they typed it.
 enum ZabbixServerURL {
     static let timeout: TimeInterval = 30
     static let jsonRPCFile = "api_jsonrpc.php"
@@ -60,11 +60,11 @@ enum ZabbixServerURL {
             return base
         }
         if path.isEmpty || path == "/" {
-            path = "/zabbix/\(jsonRPCFile)"
-        } else {
-            if !path.hasSuffix("/") { path += "/" }
-            path += jsonRPCFile
+            path = "/"
+        } else if !path.hasSuffix("/") {
+            path += "/"
         }
+        path += jsonRPCFile
         guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             throw ZabbixError.invalidServerURL(raw)
         }

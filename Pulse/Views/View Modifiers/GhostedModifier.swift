@@ -26,18 +26,22 @@
 import SwiftUI
 
 /// Posting and committed asks are dim and shimmer. A failed ask is solid,
-/// shows NetBox's words, and offers Edit and Discard. Discard is not
-/// offered while the POST is in flight.
+/// shows the provider's sentence, and offers Edit and Discard. Discard is not
+/// offered while the POST is in flight. The problems table does not use
+/// this modifier: the column is too narrow for the caption, and inserting
+/// the modifier replaces the cell so the row cannot ease. The table eases
+/// the row in place and puts the sentence in help.
 struct GhostedModifier: ViewModifier {
     var state: WriteState
     var showsEdit: Bool
+    var showsFailureDetail: Bool = true
     var onEdit: () -> Void
     var onDiscard: () -> Void
 
     @State private var shimmer = false
 
     private var failedMessage: String? {
-        if case .failed(let error) = state { return error.noticeMessage }
+        if case .failed(let failure) = state { return failure.message }
         return nil
     }
 
@@ -45,7 +49,7 @@ struct GhostedModifier: ViewModifier {
         VStack(spacing: 6) {
             content
                 .opacity(failedMessage == nil ? (shimmer ? 0.75 : 0.4) : 1)
-            if let failedMessage {
+            if showsFailureDetail, let failedMessage {
                 Text(failedMessage)
                     .font(.caption)
                     .foregroundStyle(.red)

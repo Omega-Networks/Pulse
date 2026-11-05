@@ -331,7 +331,7 @@ Zabbix provides real-time monitoring metrics.
 
 1. In the Pulse app, go to **Pulse** then **Settings**
 2. Find the **Zabbix Settings** section
-3. Enter your Zabbix server URL under **API Server** (e.g., `https://zabbix.yourdomain.com`)
+3. Enter your Zabbix server URL under **API Server** (e.g., `https://zabbix.yourdomain.com`). Pulse calls `api_jsonrpc.php` on that URL. Include a path only when the frontend is served in a subdirectory.
 4. Enter a Zabbix **API Token** (Users → API tokens). Pulse uses `Authorization: Bearer` (required on Zabbix 7.2+)
 5. Only on Zabbix 6.0-6.2: enable **Legacy JSON-RPC authentication** and enter **API User**
 6. Click **Apply Settings**

@@ -383,6 +383,37 @@ struct RetrieveHistoryResource: ZabbixResource {
     var headers: [String: String]?
 }
 
+// Hourly averages. trend.get has no history table and rejects sortfield.
+struct RetrieveTrendResource: ZabbixResource {
+    typealias ModelType = TrendProperties
+
+    var methodPath: String
+    let method = "trend.get"
+
+    let itemId: String
+    let timeFrom: Date?
+    let timeTill: Date?
+
+    var params: [String: Any]? {
+        var parameters: [String: Any] = [
+            "output": ["itemid", "clock", "value_avg"],
+            "itemids": itemId
+        ]
+
+        if let timeFrom {
+            parameters["time_from"] = Int(timeFrom.timeIntervalSince1970)
+        }
+
+        if let timeTill {
+            parameters["time_till"] = Int(timeTill.timeIntervalSince1970)
+        }
+
+        return parameters
+    }
+
+    var headers: [String: String]?
+}
+
 //MARK: Retrieving Event data
 func fetchHostEvents(hostIds: [String]? = nil, eventIds: [String]? = nil) async throws -> ZabbixJSONRPC.DecodedList<EventProperties> {
     let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
@@ -437,35 +468,6 @@ func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) asyn
     return decoded
 }
 
-func updateHostEvents(params: UpdateParameters) async throws {
-    let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
-    
-    logger.debug("Updating events: \(params.eventIds)")
-    
-    let jsonBody: [String: Any] = [
-        "eventids": params.eventIds,
-        "action": params.action,
-        "message": params.message as Any,
-        "severity": params.severity as Any,
-        "suppress_until": params.suppressUntil as Any
-    ]
-    
-    let resource = EventAcknowledgeResource(params: jsonBody)
-    let request = try await resource.request
-    let data: Data
-    do {
-        (data, _) = try await URLSession.shared.data(for: request)
-    } catch {
-        throw ZabbixError.fromTransport(error)
-    }
-    let jsonObject = try zabbixJSONObject(from: data)
-    guard jsonObject["result"] != nil else {
-        throw ZabbixError.fromRPC(jsonObject)
-    }
-    logger.debug("event.acknowledge accepted for \(params.eventIds.count) events")
-}
-
-
 // Function to fetch Items
 func fetchItems(hostId: Int64) async throws -> [ItemProperties] {
     let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
@@ -513,6 +515,32 @@ func fetchHistories(itemId: String, timeFrom: Date? = nil, timeTill: Date? = nil
     let jsonObject = try zabbixJSONObject(from: data)
     let decoded = try ZabbixJSONRPC.decodeElements(HistoryProperties.self, from: jsonObject)
     logger.debug("Successfully fetched \(decoded.items.count) history entries skipped=\(decoded.skipped)")
+    return decoded.items
+}
+
+func fetchTrends(itemId: String, timeFrom: Date? = nil, timeTill: Date? = nil) async throws -> [TrendProperties] {
+    let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
+
+    logger.debug("""
+        Fetching trends:
+        - itemId: \(itemId)
+        - timeFrom: \(timeFrom?.description ?? "nil")
+        - timeTill: \(timeTill?.description ?? "nil")
+        """)
+
+    let resource = RetrieveTrendResource(
+        methodPath: "",
+        itemId: itemId,
+        timeFrom: timeFrom,
+        timeTill: timeTill
+    )
+
+    let request = try await resource.request
+    let (data, _) = try await URLSession.shared.data(for: request)
+
+    let jsonObject = try zabbixJSONObject(from: data)
+    let decoded = try ZabbixJSONRPC.decodeElements(TrendProperties.self, from: jsonObject)
+    logger.debug("Successfully fetched \(decoded.items.count) trend entries skipped=\(decoded.skipped)")
     return decoded.items
 }
 

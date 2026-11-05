@@ -27,13 +27,12 @@ import SwiftUI
 
 struct SyncButton: View {
     @Environment(\.modelContext) private var modelContext
-    
+
     var body: some View {
         Button {
-            // Capture the container before the task
             let container = modelContext.container
-            
-            Task.detached(priority: .background) {
+
+            Task {
                 let service = SiteDataService(modelContainer: container)
                 await service.getEvents()
             }

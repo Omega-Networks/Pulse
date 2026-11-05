@@ -76,40 +76,38 @@ final class Site {
         devices?.filter { $0.zabbixId != 0 } ?? []
     }
     
-    private var activeEvents: [Event] {
-        var result: [Event] = []
-        for device in monitoredDevices {
-            guard device.modelContext != nil, let events = device.events else { continue }
-            for event in events where event.isStoreBacked && event.rClock == "0" && event.suppressed == "0" {
-                result.append(event)
-            }
-        }
-        return result
-    }
-    
-    private var unacknowledgedActiveEvents: [Event] {
-        activeEvents.filter { $0.acknowledged == "0" }
-    }
-    
     // MARK: - Severity Properties
     
     /// Map pins and lists read these stored fields. Walking `Event.rClock`
     /// from a live `@Query` after Delete All traps in SwiftData (invalidated
-    /// backing data). Recompute from events at ingest, never in `body`.
+    /// backing data). Recompute from stored device ints at ingest, never in `body`.
     var highestSeverity: Int { highestSeverityStored }
 
     var highestUnacknowledgedSeverity: Int { highestUnacknowledgedSeverityStored }
 
-    func refreshSeverityFromEvents() {
-        if monitoredDevices.isEmpty {
-            highestSeverityStored = -2
-            highestUnacknowledgedSeverityStored = -1
-            return
+    /// Highest stored severities of monitored devices. Ignores -2.
+    /// Does not read events. No monitored devices stores -2 and -1.
+    /// Monitored devices with no problems stay -1.
+    func refreshSeverityFromDevices() {
+        let monitored = monitoredDevices
+        var nextSeverity = monitored.isEmpty ? -2 : -1
+        var nextUnacked = -1
+        for device in monitored {
+            let severity = device.highestSeverityStored
+            if severity != -2, severity > nextSeverity {
+                nextSeverity = severity
+            }
+            let unacked = device.highestUnacknowledgedSeverityStored
+            if unacked != -2, unacked > nextUnacked {
+                nextUnacked = unacked
+            }
         }
-        let active = activeEvents
-        highestSeverityStored = active.compactMap { Int($0.severity) }.max() ?? -1
-        highestUnacknowledgedSeverityStored =
-            unacknowledgedActiveEvents.compactMap { Int($0.severity) }.max() ?? -1
+        if highestSeverityStored != nextSeverity {
+            highestSeverityStored = nextSeverity
+        }
+        if highestUnacknowledgedSeverityStored != nextUnacked {
+            highestUnacknowledgedSeverityStored = nextUnacked
+        }
     }
     
     // MARK: - Visual Properties

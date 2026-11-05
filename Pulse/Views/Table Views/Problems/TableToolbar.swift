@@ -27,7 +27,6 @@ import SwiftUI
 
 struct TableToolbar: View {
     @State private var isShowingSheet: Bool = false
-    @State private var isHovering: Bool = false
     var selectedEvents: [Event]
     var events: [Event]
     
@@ -37,34 +36,18 @@ struct TableToolbar: View {
                 .padding(.leading, 10)
                 .padding(.bottom, 10)
             
-            /// Update
             Button {
                 isShowingSheet = true
             } label: {
                 Text("Update")
             }
             .disabled(selectedEvents.count == 0)
-            .onHover { isHovered in
-                if selectedEvents.count != 0 {
-                    self.isHovering = isHovered
-                    #if os(macOS)
-                    DispatchQueue.main.async {
-                        if (self.isHovering) {
-                            NSCursor.pointingHand.push()
-                        } else {
-                            NSCursor.pop()
-                        }
-                    }
-                    #endif
-                }
-            }
+            .pointingHand(when: !selectedEvents.isEmpty)
             .padding(.leading, 10)
             .padding(.bottom, 10)
-//            #if os(macOS)
             .sheet(isPresented: $isShowingSheet) {
-                UpdateModal(selectedEvents: selectedEvents)
+                UpdateModal(events: selectedEvents)
             }
-//            #endif
             
             Spacer()
             

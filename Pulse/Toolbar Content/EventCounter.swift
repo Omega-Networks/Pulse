@@ -26,50 +26,56 @@
 import SwiftUI
 import SwiftData
 
-//MARK: New Event Counter view
+/// Squares for active problems. Severity is the index, 0...5.
+/// The store answers: still open, and not suppressed.
 struct EventCounter: View {
-    @Query private var devices: [Device]
-    @Query private var events: [Event]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Query(filter: #Predicate<Event> { $0.rClock == "0" && $0.suppressed == "0" })
+    private var activeEvents: [Event]
     @State private var openDevicesPopover: Bool = false
-    
-    private var eventsCountBySeverity: [String: Int] {
-        events.reduce(into: [String: Int]()) { counts, event in
-            guard event.isStoreBacked else { return }
-            counts[event.severity, default: 0] += 1
+
+    /// Same spring as a device row. Reduce Motion holds the squares still.
+    private var squareMotion: Animation? {
+        reduceMotion ? nil : .spring(duration: 0.55, bounce: 0.32)
+    }
+
+    /// One square per severity that has an active problem.
+    /// Identity is the severity, so a count change keeps the same square.
+    private var squares: [Square] {
+        var counts = [0, 0, 0, 0, 0, 0]
+        for event in activeEvents where event.isStoreBacked {
+            guard let severity = Int(event.severity), (0...5).contains(severity) else { continue }
+            counts[severity] += 1
+        }
+        return (0..<6).compactMap { severity in
+            let count = counts[severity]
+            guard count > 0 else { return nil }
+            return Square(severity: severity, count: count)
         }
     }
-    
+
     var body: some View {
         HStack(spacing: 0) {
-            // Iterating over the sorted keys of the eventsCountBySeverity dictionary.
-            ForEach(Array(eventsCountBySeverity.keys).sorted(), id: \.self) { severity in
-                // Optional binding to check if there is a value associated with the key and the value is greater than 0.
-                if let count = eventsCountBySeverity[severity], count > 0 {
-                    let imageName = self.imageName(for: count)
-                    
-                    Image(systemName: imageName)
-                        .symbolRenderingMode(.palette)
-                    // Numberical count transition effect
-                        .contentTransition(.symbolEffect(.replace))
-                    // Appear and Disapper effect
-                        .transition(.symbolEffect(.automatic))
-                    // Set the font size for the image.
+            ForEach(squares) { square in
+                Image(systemName: square.symbol)
+                    .symbolRenderingMode(.palette)
 #if os(macOS)
-                        .font(.system(size: 26))
+                    .font(.system(size: 26))
 #else
-                        .font(.system(size: 20))
+                    .font(.system(size: 20))
 #endif
-                    // Apply the foreground color based on the severity.
-                        .foregroundStyle(Color.primary, severityColor(for: Int64(severity) ?? 0))
-                    // Explicitly set the frame size for the image.
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .transition(.scale(0.86).combined(with: .opacity))
+                    .foregroundStyle(Color.primary, severityColor(for: Int64(square.severity)))
 #if os(macOS)
-                        .frame(width: 23.5, height: 23.5)
+                    .frame(width: 23.5, height: 23.5)
 #else
-                        .frame(width: 17, height: 17)
+                    .frame(width: 17, height: 17)
 #endif
-                }
             }
         }
+        .animation(squareMotion, value: squares)
         .onTapGesture {
             openDevicesPopover = true
         }
@@ -79,11 +85,6 @@ struct EventCounter: View {
                 .frame(width: 300, height: 400)
             #endif
         }
-    }
-    
-    private func imageName(for count: Int) -> String {
-        // Replace with your logic to determine the image name based on count
-        return count > 50 ? "exclamationmark.square.fill" : "\(count).square.fill"
     }
     
     private func severityColor(for value: Int64?) -> Color {
@@ -112,18 +113,30 @@ struct EventCounter: View {
     }
 }
 
-// New view for the popover content
+/// One toolbar square. `id` is the severity, so the digit can change
+/// without the square being a new view.
+private struct Square: Equatable, Identifiable {
+    var severity: Int
+    var count: Int
+    var id: Int { severity }
+    var symbol: String {
+        count > 50 ? "exclamationmark.square.fill" : "\(count).square.fill"
+    }
+}
+
+/// Devices that currently have an active problem. Same rule as the toolbar
+/// squares, so a resolved row is not listed under that count.
 struct DevicePopoverView: View {
-    @Query private var devices: [Device]
-    
+    @Query(filter: #Predicate<Event> { $0.rClock == "0" && $0.suppressed == "0" })
+    private var activeEvents: [Event]
+
     var body: some View {
-        List(devices.filter { $0.events?.count ?? 0 > 0 }, id: \.id) { device in
+        List(openDevices) { row in
             VStack(alignment: .leading) {
-                Text(device.name ?? "Unknown Device")
+                Text(row.device.name ?? "Unknown Device")
                     .font(.headline)
                     .padding(.bottom, 2)
-                // Events are now presented in an animated List for better organization.
-                ForEach((device.events ?? []).filter(\.isStoreBacked), id: \.eventId) { event in
+                ForEach(row.events, id: \.eventId) { event in
                     HStack {
                         Text(event.name)
                             .foregroundColor(.primary)
@@ -135,15 +148,37 @@ struct DevicePopoverView: View {
                             .padding(.trailing, 8)
                     }
                     .padding(.vertical, 4)
-                    // Apply animations and transitions to this row.
-                    .animation(.easeInOut, value: event)
-                    .transition(.slide)
-                    .contentShape(Rectangle()) // Makes the entire row tappable.
+                    .contentShape(Rectangle())
                 }
             }
             .padding()
         }
     }
+
+    private var openDevices: [OpenDevice] {
+        var grouped: [PersistentIdentifier: OpenDevice] = [:]
+        var order: [PersistentIdentifier] = []
+        for event in activeEvents where event.isStoreBacked {
+            guard let device = event.device else { continue }
+            let id = device.persistentModelID
+            if var row = grouped[id] {
+                row.events.append(event)
+                grouped[id] = row
+            } else {
+                order.append(id)
+                grouped[id] = OpenDevice(device: device, events: [event])
+            }
+        }
+        return order.compactMap { grouped[$0] }.sorted {
+            ($0.device.name ?? "") < ($1.device.name ?? "")
+        }
+    }
+}
+
+private struct OpenDevice: Identifiable {
+    var device: Device
+    var events: [Event]
+    var id: PersistentIdentifier { device.persistentModelID }
 }
 
 #Preview {

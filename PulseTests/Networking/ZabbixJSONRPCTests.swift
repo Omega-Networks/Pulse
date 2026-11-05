@@ -143,14 +143,97 @@ final class ZabbixJSONRPCTests: XCTestCase {
         )
     }
 
-    func testHostOnlyURLUsesDefaultZabbixJsonRPCPath() throws {
+    func testHostOnlyURLUsesJsonRPCAtTheOrigin() throws {
         let url = try ZabbixServerURL.jsonRPCEndpoint("https://zabbix.example.com")
-        XCTAssertEqual(url.absoluteString, "https://zabbix.example.com/zabbix/api_jsonrpc.php")
+        XCTAssertEqual(url.absoluteString, "https://zabbix.example.com/api_jsonrpc.php")
     }
 
     func testZabbixPathAppendsJsonRPCFile() throws {
         let url = try ZabbixServerURL.jsonRPCEndpoint("https://zabbix.example.com/zabbix")
         XCTAssertEqual(url.absoluteString, "https://zabbix.example.com/zabbix/api_jsonrpc.php")
+    }
+
+    func testJsonRPCFileAlreadyInTheURLIsLeftAlone() throws {
+        let url = try ZabbixServerURL.jsonRPCEndpoint("https://zabbix.example.com/api_jsonrpc.php")
+        XCTAssertEqual(url.absoluteString, "https://zabbix.example.com/api_jsonrpc.php")
+    }
+
+    func testHistoryValueWiderThanInt64DoesNotTrap() throws {
+        let tooWide = Double(Int64.max)
+        let object: [String: Any] = [
+            "jsonrpc": "2.0",
+            "result": [[
+                "itemid": "1",
+                "clock": "1",
+                "value": tooWide
+            ]],
+            "id": 1
+        ]
+        let decoded = try ZabbixJSONRPC.decodeElements(HistoryProperties.self, from: object)
+        XCTAssertEqual(decoded.skipped, 0)
+        XCTAssertEqual(decoded.items.first?.value, String(tooWide))
+    }
+
+    func testHistoryKeepsStringAndNumericRows() throws {
+        let object: [String: Any] = [
+            "jsonrpc": "2.0",
+            "result": [
+                ["itemid": "1", "clock": "1351090996", "value": "0.085"],
+                ["itemid": 2, "clock": 1351090936, "value": 0.5]
+            ],
+            "id": 1
+        ]
+        let decoded = try ZabbixJSONRPC.decodeElements(HistoryProperties.self, from: object)
+        XCTAssertEqual(decoded.skipped, 0)
+        XCTAssertEqual(decoded.items.map(\.itemId), ["1", "2"])
+        XCTAssertEqual(decoded.items.map(\.clock), ["1351090996", "1351090936"])
+        XCTAssertEqual(decoded.items.map(\.value), ["0.085", "0.5"])
+    }
+
+    func testTrendKeepsTheHourlyAverage() throws {
+        let object: [String: Any] = [
+            "jsonrpc": "2.0",
+            "result": [
+                [
+                    "itemid": "23715",
+                    "clock": "1446199200",
+                    "num": "60",
+                    "value_min": "0.165",
+                    "value_avg": "0.2168",
+                    "value_max": "0.35"
+                ],
+                ["itemid": 133870, "clock": 1446199200, "value_avg": 1_250_000.5],
+                ["itemid": "1", "clock": "2"]
+            ],
+            "id": 1
+        ]
+        let decoded = try ZabbixJSONRPC.decodeElements(TrendProperties.self, from: object)
+        XCTAssertEqual(decoded.skipped, 1)
+        XCTAssertEqual(decoded.items.map(\.itemId), ["23715", "133870"])
+        XCTAssertEqual(decoded.items.map(\.clock), ["1446199200", "1446199200"])
+        XCTAssertEqual(decoded.items.map(\.valueAvg), ["0.2168", "1250000.5"])
+    }
+
+    func testItemKeepsANumericValueType() throws {
+        let object: [String: Any] = [
+            "jsonrpc": "2.0",
+            "result": [[
+                "itemid": "10",
+                "name": "ICMP ping",
+                "history": "7d",
+                "trends": "365d",
+                "status": 0,
+                "units": "",
+                "templateid": 0,
+                "value_type": 3,
+                "description": ""
+            ]],
+            "id": 1
+        ]
+        let decoded = try ZabbixJSONRPC.decodeElements(ItemProperties.self, from: object)
+        XCTAssertEqual(decoded.skipped, 0)
+        XCTAssertEqual(decoded.items.first?.valueType, "3")
+        XCTAssertEqual(decoded.items.first?.name, "ICMP ping")
     }
 
     func testHTTPServerURLIsRejected() {

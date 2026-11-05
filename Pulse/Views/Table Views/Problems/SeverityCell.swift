@@ -35,11 +35,14 @@ struct SeverityCell: View {
             Spacer()
             Text(severityString)
                 .foregroundColor(.primary)
+                .contentTransition(.opacity)
             Spacer()
         }
         .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(state == "RESOLVED" ? nil : state == "SUPPRESSED" ? nil : severityColor)
+        .animation(.easeInOut(duration: 0.35), value: severityString)
+        .animation(.easeInOut(duration: 0.35), value: severityColor)
         .cornerRadius(3)
         .contentShape(Rectangle())
     }

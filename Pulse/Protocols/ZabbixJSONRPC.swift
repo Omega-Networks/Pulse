@@ -85,6 +85,25 @@ enum ZabbixJSONRPC {
         return DecodedList(items: items, skipped: skipped)
     }
 
+    /// Zabbix documents ids and numbers as strings. A JSON number is the
+    /// same value. A float keeps its fraction; a whole number stays an integer string.
+    static func flexibleString<K: CodingKey>(
+        _ container: KeyedDecodingContainer<K>,
+        _ key: K
+    ) -> String? {
+        if (try? container.decodeNil(forKey: key)) == true { return nil }
+        if let value = try? container.decode(String.self, forKey: key) { return value }
+        if let value = try? container.decode(Int64.self, forKey: key) { return String(value) }
+        if let value = try? container.decode(Double.self, forKey: key) {
+            guard value.isFinite else { return nil }
+            if let exact = Int64(exactly: value) {
+                return String(exact)
+            }
+            return String(value)
+        }
+        return nil
+    }
+
     static func urlRequest(
         endpoint: URL,
         method: String,

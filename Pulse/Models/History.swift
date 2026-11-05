@@ -24,80 +24,7 @@
 //
 
 import OSLog
-import SwiftUI
 import Foundation
-
-/**
- A class that manages a cache of History data for Item objects from Zabbix.
- It uses NSCache for efficient memory management and provides methods to get, set, append, and remove history data.
- */
-actor HistoryCache {
-    static let shared = HistoryCache()
-    private var cache: [String: [Date: String]] = [:]
-    
-    private init() {}
-    
-    /**
-     Retrieves History data for a specific Item within a given date range.
-     
-     - Parameters:
-     - itemId: The unique identifier for the item.
-     - startDate: The start date of the range to retrieve.
-     - endDate: The end date of the range to retrieve.
-     
-     - Returns: A dictionary of dates and their corresponding values, or nil if no data is found.
-     */
-    func getHistory(for itemId: String, from startDate: Date, to endDate: Date) -> [Date: String]? {
-        if let historyData = cache[itemId] {
-            return historyData.filter { $0.key >= startDate && $0.key <= endDate }
-        }
-        return nil
-    }
-    
-    /**
-     Sets the entire History data for a specific Item.
-     
-     - Parameters:
-     - history: A dictionary of dates and their corresponding values.
-     - itemId: The unique identifier for the item.
-     */
-    func setHistory(_ history: [Date: String], for itemId: String) {
-        cache[itemId] = history
-    }
-    
-    /**
-     Appends new History data to an existing item's history, or creates a new entry if none exists.
-     
-     - Parameters:
-     - history: A dictionary of new dates and their corresponding values to append.
-     - itemId: The unique identifier for the item.
-     */
-    func appendHistory(_ history: [Date: String], for itemId: String) {
-        if var existingHistory = cache[itemId] {
-            existingHistory.merge(history) { (_, new) in new }
-            cache[itemId] = existingHistory
-        } else {
-            cache[itemId] = history
-        }
-    }
-    
-    func removeHistory(for itemId: String) {
-        cache.removeValue(forKey: itemId)
-    }
-    
-    func clearCache() {
-        cache.removeAll()
-    }
-}
-
-/**
- A class that holds an individual History record for an Item.
- 
- TODO: Refactor to be a struct
- */
-struct HistoryData {
-    let data: [Date: String]
-}
 
 /**
  A struct that represents the properties of a History record.
@@ -116,6 +43,12 @@ struct HistoryProperties: Decodable, Sendable {
     let itemId: String
     let clock: String
     let value: String
+
+    init(itemId: String, clock: String, value: String) {
+        self.itemId = itemId
+        self.clock = clock
+        self.value = value
+    }
     
     /**
      Initializes a new HistoryProperties instance from a decoder.
@@ -127,9 +60,9 @@ struct HistoryProperties: Decodable, Sendable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         
-        let rawItemId = try? values.decode(String.self, forKey: .itemId)
-        let rawClock = try? values.decode(String.self, forKey: .clock)
-        let rawValue = try? values.decode(String.self, forKey: .value)
+        let rawItemId = ZabbixJSONRPC.flexibleString(values, .itemId)
+        let rawClock = ZabbixJSONRPC.flexibleString(values, .clock)
+        let rawValue = ZabbixJSONRPC.flexibleString(values, .value)
         
         guard let itemId = rawItemId,
               let clock = rawClock,
@@ -161,6 +94,31 @@ struct HistoryProperties: Decodable, Sendable {
             "clock": clock,
             "value": value
         ]
+    }
+}
+
+/// One hour of a numeric item. Zabbix keeps this after the raw history rows are gone.
+struct TrendProperties: Decodable, Sendable {
+    let itemId: String
+    let clock: String
+    let valueAvg: String
+
+    private enum CodingKeys: String, CodingKey {
+        case itemId = "itemid"
+        case clock
+        case valueAvg = "value_avg"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        guard let itemId = ZabbixJSONRPC.flexibleString(values, .itemId),
+              let clock = ZabbixJSONRPC.flexibleString(values, .clock),
+              let valueAvg = ZabbixJSONRPC.flexibleString(values, .valueAvg) else {
+            throw SwiftDataError.missingData
+        }
+        self.itemId = itemId
+        self.clock = clock
+        self.valueAvg = valueAvg
     }
 }
 

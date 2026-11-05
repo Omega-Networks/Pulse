@@ -90,6 +90,7 @@ struct ContentView: View {
                     
                     //New subview for showing list of sites
                     SitesList(searchText: searchText, selectedSiteGroups: selectedSiteGroups, cameraPosition: $cameraPosition, selectedSite: $selectedSite)
+                        .id(sitesListIdentity)
                 }
             } detail: {
                 MapView(
@@ -152,9 +153,7 @@ struct ContentView: View {
             }
             
             if isEventMonitoringEnabled {
-                Task.detached(priority: .background) {
-                    await updateEventMonitoring()
-                }
+                await updateEventMonitoring()
             }
             
             // Check SyncProvider count and create if needed
@@ -195,32 +194,11 @@ struct ContentView: View {
     }
     
     func deleteEvents() {
-        Task { @MainActor in
-            do {
-                // 1. Fetch all events using existing modelContext
-                let fetchDescriptor = FetchDescriptor<Event>()
-                let events = try modelContext.fetch(fetchDescriptor)
-                
-                // 2. Track affected devices
-                var affectedDevices = Set<Device>()
-                
-                // 3. Collect affected devices and delete events
-                for event in events {
-                    if let device = event.device {
-                        affectedDevices.insert(device)
-                    }
-                    modelContext.delete(event)
-                }
-                
-                // 4. Save changes
-                try modelContext.save()
-                
-                // 5. Close the popover
-                openDeleteButtons = false
-                
-            } catch {
-                print("Failed to delete events: \(error)")
-            }
+        let container = modelContext.container
+        Task {
+            let service = SiteDataService(modelContainer: container)
+            guard await service.deleteAllEvents() else { return }
+            openDeleteButtons = false
         }
     }
     
@@ -231,23 +209,26 @@ struct ContentView: View {
 
         guard isEventMonitoringEnabled else { return }
 
-        // Store container reference
         let container = modelContext.container
-        
-        Task.detached(priority: .userInitiated) {
+
+        Task {
             let service = SiteDataService(modelContainer: container)
             await service.getProblems()
         }
-        
-        // Timer without transaction wrapping
-        await MainActor.run {
-            self.eventMonitoringTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { _ in
-                Task.detached(priority: .utility) {
-                    let service = SiteDataService(modelContainer: container)
-                    await service.getProblems()
-                }
+
+        eventMonitoringTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { _ in
+            Task {
+                let service = SiteDataService(modelContainer: container)
+                await service.getProblems()
             }
         }
+    }
+
+    /// `SitesList` captures its query in `init`. Identity is the filter,
+    /// so a search or a group change rebuilds that query.
+    private var sitesListIdentity: String {
+        let groups = selectedSiteGroups.sorted().map(String.init).joined(separator: ",")
+        return "\(searchText)\u{1e}\(groups)"
     }
 
     private func refreshPowerSenseReady() async {
