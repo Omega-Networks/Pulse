@@ -175,6 +175,7 @@ enum ZabbixError: Error, LocalizedError, Equatable {
     case sessionExpired
     case missingParameters(String)
     case unreachable
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -185,13 +186,17 @@ enum ZabbixError: Error, LocalizedError, Equatable {
         case .sessionExpired: return "The Zabbix session expired."
         case .missingParameters(let params): return "Missing required parameters: \(params)"
         case .unreachable: return "Zabbix is unreachable. Check that the server is up and reachable from this Mac."
+        case .timedOut: return "Zabbix timed out. Pulse did not see a response."
         }
     }
 
     static func fromTransport(_ error: Error) -> ZabbixError {
         if let zabbix = error as? ZabbixError { return zabbix }
         let ns = error as NSError
-        if ns.domain == NSURLErrorDomain { return .unreachable }
+        if ns.domain == NSURLErrorDomain {
+            if ns.code == NSURLErrorTimedOut { return .timedOut }
+            return .unreachable
+        }
         if ns.domain == NSCocoaErrorDomain && ns.code == 3840 { return .unreachable }
         return .invalidResponse(error.localizedDescription)
     }
@@ -199,7 +204,7 @@ enum ZabbixError: Error, LocalizedError, Equatable {
     static func status(from error: Error) -> RequestStatusManager.RequestStatus {
         let zabbix = fromTransport(error)
         switch zabbix {
-        case .unreachable, .invalidRequest, .invalidServerURL:
+        case .unreachable, .invalidRequest, .invalidServerURL, .timedOut:
             return .connectionError(zabbix.localizedDescription)
         case .authenticationFailed, .sessionExpired:
             return .authenticationFailure(code: 401, message: zabbix.localizedDescription)
@@ -346,6 +351,9 @@ struct RetrieveItemResource: ZabbixResource {
     var headers: [String : String]?
 }
 
+/// The most rows one `history.get` returns.
+let zabbixHistoryPageLimit = 100_000
+
 //MARK: Retrieving History data
 struct RetrieveHistoryResource: ZabbixResource {
     typealias ModelType = HistoryProperties
@@ -366,7 +374,7 @@ struct RetrieveHistoryResource: ZabbixResource {
             "itemids": itemId,
             "sortfield": ["clock"],
             "sortorder": "DESC",
-            "limit": 100000
+            "limit": zabbixHistoryPageLimit
         ]
         
         if let timeFrom = timeFrom {

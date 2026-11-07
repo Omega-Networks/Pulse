@@ -40,11 +40,9 @@ struct UpdateModal: View {
     @Environment(\.zabbixWriteService) private var zabbixWriteService
 
     private let subjects: [ProblemUpdateSubject]
-    private let prefill: ProblemUpdateGhost?
     @State private var draft: ProblemUpdateDraft
 
     init(events: [Event] = [], prefill: ProblemUpdateGhost? = nil) {
-        self.prefill = prefill
         if let prefill {
             subjects = []
             _draft = State(initialValue: ProblemUpdateDraft(prefill))
@@ -102,18 +100,21 @@ struct UpdateModal: View {
     /// this view's state.
     private func submit() {
         let snapshot = draft
-        let previous = prefill?.token
         guard let service = zabbixWriteService else {
             Logger(subsystem: "zabbix", category: "write")
                 .error("problem update has no write service")
+            OperatorNoticeCenter.shared.post(OperatorNotice(
+                id: "zabbix.write.unavailable",
+                source: .zabbix,
+                severity: .failure,
+                message: "Problem update is unavailable.",
+                occurredAt: Date()
+            ))
             dismiss()
             return
         }
         Task {
             _ = await service.submit([ProblemUpdateIntent(draft: snapshot)])
-            if let previous {
-                await service.discard(previous)
-            }
         }
         dismiss()
     }

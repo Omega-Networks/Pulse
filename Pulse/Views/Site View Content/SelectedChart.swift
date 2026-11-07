@@ -38,6 +38,7 @@ struct SelectedChart: View {
     #endif
 
     @Binding var selectedPeriod: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Float (0) and unsigned (3). The unit does not decide.
     private var canShowGraph: Bool {
@@ -59,20 +60,20 @@ struct SelectedChart: View {
             if canShowGraph {
                 periodPickerView(selectedPeriod: $selectedPeriod)
 
-                if isLoading {
-                    loadingView
-                } else {
-                    #if os(macOS)
-                    SeriesChart(revision: plotted.revision, lit: hover.visible, plotted: plotted, hover: hover)
-                        .equatable()
-                    #else
-                    SeriesChart(revision: plotted.revision, lit: false, plotted: plotted)
-                        .equatable()
-                    #endif
+                #if os(macOS)
+                SeriesChart(revision: plotted.revision, plotted: plotted, hover: hover)
+                    .equatable()
+                    .hueRotation(.degrees(hover.visible ? hoverTintDegrees : 0))
+                    .animation(nil, value: hover.visible)
+                    .animation(chartMotion, value: plotted.revision)
+                #else
+                SeriesChart(revision: plotted.revision, plotted: plotted)
+                    .equatable()
+                    .animation(chartMotion, value: plotted.revision)
+                #endif
 
-                    if let low = plotted.rawMin, let high = plotted.rawMax, let average = plotted.rawAverage {
-                        statisticsView(min: low, max: high, average: average, unit: plotted.unit)
-                    }
+                if let low = plotted.rawMin, let high = plotted.rawMax, let average = plotted.rawAverage {
+                    statisticsView(min: low, max: high, average: average, unit: plotted.unit, revision: plotted.revision)
                 }
             } else if isLoading {
                 loadingView
@@ -84,13 +85,11 @@ struct SelectedChart: View {
             }
         }
         .padding(.top, 30)
+        // The chart stays mounted. The next series replaces the window, the scale, and the samples together.
         .task(id: "\(itemId)|\(selectedPeriod)") {
             #if os(macOS)
             hover.end()
             #endif
-            isLoading = true
-            textValue = nil
-            plotted = PlottedSeries.empty(revision: plotted.revision + 1)
             await loadItem()
         }
     }
@@ -102,22 +101,45 @@ struct SelectedChart: View {
     }
 
     private func periodPickerView(selectedPeriod: Binding<String>) -> some View {
-        HStack(alignment: .center) {
-            #if os(macOS)
-            if hover.visible, let sampleDate = hover.sampleDate {
-                Spacer()
-                Text(sampleDate, format: .dateTime)
-                    .fontWeight(.medium)
-                Spacer()
-            } else {
+        #if os(macOS)
+        GeometryReader { geometry in
+            let inset = min(90, geometry.size.width / 2)
+            let labelX = min(max(hover.pointerX, inset), max(inset, geometry.size.width - inset))
+            ZStack {
                 periodPicker(selectedPeriod)
+                    .padding(.horizontal)
+                    .opacity(hover.visible ? 0 : 1)
+                    .scaleEffect(hover.visible ? 0.86 : 1)
+                    .animation(hoverMotion, value: hover.visible)
+                    .allowsHitTesting(!hover.visible)
+                    .accessibilityHidden(hover.visible)
+                VStack(spacing: 0) {
+                    if let date = hover.sampleDate {
+                        Text(date, format: .dateTime)
+                    }
+                    if !hover.valueLabel.isEmpty {
+                        Text(hover.valueLabel)
+                            .foregroundStyle(.green)
+                            .hueRotation(.degrees(hoverTintDegrees))
+                    }
+                }
+                .fontWeight(.medium)
+                .fixedSize()
+                .opacity(hover.visible ? 1 : 0)
+                .scaleEffect(hover.visible ? 1 : 0.86)
+                .animation(hoverMotion, value: hover.visible)
+                .position(x: labelX, y: geometry.size.height / 2)
+                .allowsHitTesting(false)
+                .accessibilityHidden(!hover.visible)
             }
-            #else
-            periodPicker(selectedPeriod)
-            #endif
         }
-        .frame(height: 32)
-        .padding(.horizontal)
+        .frame(height: 44)
+        .frame(maxWidth: .infinity)
+        #else
+        periodPicker(selectedPeriod)
+            .frame(height: 32)
+            .padding(.horizontal)
+        #endif
     }
 
     private func periodPicker(_ selectedPeriod: Binding<String>) -> some View {
@@ -131,100 +153,134 @@ struct SelectedChart: View {
         .pickerStyle(.segmented)
     }
 
-    private func statisticsView(min: Double, max: Double, average: Double, unit: String) -> some View {
+    #if os(macOS)
+    /// System green sits 58.4° from system cyan. Rotating the drawn plot tints it without rebuilding the line.
+    private let hoverTintDegrees = 58.4
+    #endif
+
+    private var chartMotion: Animation? {
+        reduceMotion ? nil : .spring(duration: 0.5, bounce: 0.22)
+    }
+
+    #if os(macOS)
+    private var hoverMotion: Animation? {
+        reduceMotion ? nil : chartHoverSpring
+    }
+    #endif
+
+    private func statisticsView(min: Double, max: Double, average: Double, unit: String, revision: Int) -> some View {
         HStack {
             VStack {
-                HStack {
-                    Text("High")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(statisticText(max, unit: unit))
-                        .fontWeight(.medium)
-                }
-                .frame(width: 200)
-
-                HStack {
-                    Text("Low")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(statisticText(min, unit: unit))
-                        .fontWeight(.medium)
-                }
-                .frame(width: 200)
-
-                HStack {
-                    Text("Avg.")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(statisticText(average, unit: unit))
-                        .fontWeight(.medium)
-                }
-                .frame(width: 200)
+                statisticRow("High", raw: max, unit: unit)
+                statisticRow("Low", raw: min, unit: unit)
+                statisticRow("Avg.", raw: average, unit: unit)
             }
         }
+        .animation(chartMotion, value: revision)
+    }
+
+    private func statisticRow(_ title: String, raw: Double, unit: String) -> some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(statisticText(raw, unit: unit))
+                .fontWeight(.medium)
+                .contentTransition(.numericText(value: shownStatistic(raw, unit: unit)))
+        }
+        .frame(width: 200)
     }
 
     private func loadItem() async {
-        isLoading = true
         defer { if !Task.isCancelled { isLoading = false } }
 
-        guard let cachedItem = await ItemCache.shared.getItemById(itemId) else { return }
+        guard let cachedItem = await ItemCache.shared.getItemById(itemId) else {
+            guard !Task.isCancelled else { return }
+            item = nil
+            textValue = nil
+            plotted = PlottedSeries.empty(revision: plotted.revision + 1)
+            return
+        }
         guard !Task.isCancelled else { return }
-        item = cachedItem
 
+        let graphs = cachedItem.valueType == "0" || cachedItem.valueType == "3"
+        item = cachedItem
+        if graphs, let valueType = Int(cachedItem.valueType) {
+            let bounds = chartTimeWindow(for: selectedPeriod)
+            let rows = await HistorySeriesStore.shared.catchingUp(
+                itemId: cachedItem.itemId,
+                valueType: valueType,
+                from: bounds.start.timeIntervalSince1970,
+                to: bounds.end.timeIntervalSince1970
+            )
+            if let rows {
+                guard !Task.isCancelled else { return }
+                showGraph(rows, unit: cachedItem.units)
+            }
+        }
         let fetched = await HistoryFetcher().getHistories(
             itemId: cachedItem.itemId,
-            selectedPeriod: canShowGraph ? selectedPeriod : "1H",
+            selectedPeriod: graphs ? selectedPeriod : "1H",
             valueType: cachedItem.valueType
         )
         guard !Task.isCancelled else { return }
 
-        if canShowGraph {
-            let series = PlottedSeries.adopt(
-                fetched: fetched,
-                unit: cachedItem.units,
-                period: selectedPeriod,
-                revision: plotted.revision + 1
-            )
-            plotted = series
-            #if os(macOS)
-            hover.adopt(series.samples, unit: series.unit)
-            #endif
+        if graphs {
+            showGraph(fetched, unit: cachedItem.units)
         } else if let mostRecent = fetched.max(by: { $0.key < $1.key }) {
             textValue = mostRecent.value
+        } else {
+            textValue = nil
         }
+    }
+
+    private func showGraph(_ fetched: [Date: String], unit: String) {
+        let series = PlottedSeries.adopt(
+            fetched: fetched,
+            unit: unit,
+            period: selectedPeriod,
+            revision: plotted.revision + 1
+        )
+        plotted = series
+        textValue = nil
+        #if os(macOS)
+        hover.adopt(series.samples, unit: series.unit)
+        #endif
     }
 }
 
-/// The fetched series. Equality is the revision and whether the line is lit, so the pointer does not rebuild the marks.
+/// The fetched series. Equality is the revision, so a hover tint does not rebuild the plot.
 private struct SeriesChart: View, Equatable {
     let revision: Int
-    let lit: Bool
     let plotted: PlottedSeries
     #if os(macOS)
     let hover: GraphHover
     #endif
 
     nonisolated static func == (lhs: SeriesChart, rhs: SeriesChart) -> Bool {
-        lhs.revision == rhs.revision && lhs.lit == rhs.lit
+        lhs.revision == rhs.revision
     }
 
     var body: some View {
-        let seriesColor: Color = lit ? .cyan : .green
+        let seriesColor = Color.green
         let gradient = LinearGradient(colors: [seriesColor, .clear], startPoint: .top, endPoint: .bottom)
         Chart {
-            ForEach(plotted.samples) { sample in
-                LineMark(
-                    x: .value("Date", sample.date),
-                    y: .value("Value", sample.display)
-                )
-                .foregroundStyle(seriesColor)
-
-                AreaMark(
-                    x: .value("Date", sample.date),
-                    y: .value("Value", sample.display)
+            if !plotted.samples.isEmpty {
+                AreaPlot(
+                    plotted.samples,
+                    x: .value("Date", \.date),
+                    yStart: .value("Baseline", \.baseline),
+                    yEnd: .value("Value", \.display)
                 )
                 .foregroundStyle(gradient)
+
+                LinePlot(
+                    plotted.samples,
+                    x: .value("Date", \.date),
+                    y: .value("Value", \.display)
+                )
+                .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .round))
+                .foregroundStyle(seriesColor)
             }
 
             if plotted.samples.count == 1, let sample = plotted.samples.first {
@@ -246,18 +302,7 @@ private struct SeriesChart: View, Equatable {
         .chartPlotStyle { plot in
             plot
                 .frame(height: 200)
-                .overlay {
-                    Rectangle()
-                        .foregroundStyle(.gray.opacity(0.5))
-                        .mask(ZStack {
-                            VStack {
-                                Rectangle().frame(height: 1)
-                            }
-                            HStack {
-                                Rectangle().frame(width: 0.3)
-                            }
-                        })
-                }
+                .clipped()
         }
         .chartYAxis {
             if plotted.emptyY != nil, plotted.unit != "%" {
@@ -274,16 +319,7 @@ private struct SeriesChart: View, Equatable {
                 }
             }
         }
-        .chartYScale(domain: .automatic(dataType: Double.self) { domain in
-            if plotted.unit == "%" {
-                domain = [0, 100]
-                return
-            }
-            guard let upper = domain.max(), let lower = domain.min() else { return }
-            let span = upper - lower
-            let headroom = span > 0 ? span * 0.1 : max(abs(upper) * 0.1, 1)
-            domain = [lower, upper + headroom]
-        })
+        .chartYScale(domain: plotted.yDomain)
         .overlay {
             if plotted.emptyY != nil {
                 Text("No samples in this period")
@@ -302,41 +338,44 @@ private struct SeriesChart: View, Equatable {
 }
 
 #if os(macOS)
+private let chartHoverSpring = Animation.spring(duration: 0.35, bounce: 0.22)
+
 /// Rule, dot, and value. Reads the hover model, so the series marks stay as they were.
 private struct HoverMarks: View {
     let proxy: ChartProxy
     var hover: GraphHover
     let frame: CGRect
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var hoverMotion: Animation? {
+        reduceMotion ? nil : chartHoverSpring
+    }
+
     var body: some View {
-        if hover.visible,
-           let date = hover.sampleDate,
+        let shown = hover.visible
+        let ruleX = hover.pointerX
+        Rectangle()
+            .fill(.green)
+            .frame(width: 1, height: frame.height)
+            .opacity(shown ? 1 : 0)
+            .animation(hoverMotion, value: shown)
+            .position(x: ruleX, y: frame.midY)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+
+        if let date = hover.sampleDate,
            let displayY = hover.displayY,
-           let pointX = proxy.position(forX: date) {
-            let ruleX = hover.pointerX
-            let labelX = min(max(ruleX, frame.minX + 36), frame.maxX - 36)
-            Rectangle()
-                .fill(.cyan)
-                .frame(width: 1, height: frame.height)
-                .position(x: ruleX, y: frame.midY)
+           let pointX = proxy.position(forX: date),
+           let pointY = proxy.position(forY: displayY) {
+            Circle()
+                .fill(.green)
+                .frame(width: 10, height: 10)
+                .opacity(shown ? 1 : 0)
+                .animation(hoverMotion, value: shown)
+                .position(x: pointX, y: pointY)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
-
-            if let pointY = proxy.position(forY: displayY) {
-                Circle()
-                    .fill(.cyan)
-                    .frame(width: 10, height: 10)
-                    .position(x: pointX, y: pointY)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-
-            Text(hover.valueLabel)
-                .fontWeight(.medium)
-                .foregroundStyle(.cyan)
-                .fixedSize()
-                .allowsHitTesting(false)
-                .position(x: labelX, y: frame.minY + 16)
         }
     }
 }
@@ -405,7 +444,7 @@ private final class GraphHover {
     func arm(chartX: CGFloat, date: Date?) {
         pointerX = chartX
         guard let date, let sample = nearest(to: date) else {
-            visible = false
+            end()
             return
         }
         guard !visible || sampleDate != sample.date else { return }
@@ -417,9 +456,6 @@ private final class GraphHover {
 
     func end() {
         visible = false
-        sampleDate = nil
-        displayY = nil
-        valueLabel = ""
     }
 
     private func nearest(to date: Date) -> PlotSample? {
@@ -448,6 +484,7 @@ private final class GraphHover {
 private struct PlotSample: Identifiable {
     let date: Date
     let display: Double
+    var baseline: Double
     var id: Date { date }
 }
 
@@ -460,6 +497,7 @@ private final class PlottedSeries {
     let rawAverage: Double?
     let window: ClosedRange<Date>?
     let emptyY: ClosedRange<Double>?
+    let yDomain: ClosedRange<Double>
     let revision: Int
 
     init(
@@ -470,6 +508,7 @@ private final class PlottedSeries {
         rawAverage: Double?,
         window: ClosedRange<Date>?,
         emptyY: ClosedRange<Double>?,
+        yDomain: ClosedRange<Double>,
         revision: Int
     ) {
         self.samples = samples
@@ -479,6 +518,7 @@ private final class PlottedSeries {
         self.rawAverage = rawAverage
         self.window = window
         self.emptyY = emptyY
+        self.yDomain = yDomain
         self.revision = revision
     }
 
@@ -491,6 +531,7 @@ private final class PlottedSeries {
             rawAverage: nil,
             window: nil,
             emptyY: nil,
+            yDomain: 0...1,
             revision: revision
         )
     }
@@ -500,15 +541,20 @@ private final class PlottedSeries {
         samples.reserveCapacity(fetched.count)
         var low = Double.greatestFiniteMagnitude
         var high = -Double.greatestFiniteMagnitude
+        var displayLow = Double.greatestFiniteMagnitude
+        var displayHigh = -Double.greatestFiniteMagnitude
         var sum = 0.0
         var count = 0
         for (date, raw) in fetched {
             guard let value = Double(raw) else { continue }
+            let shown = displayed(value, unit: unit)
             if value < low { low = value }
             if value > high { high = value }
+            if shown < displayLow { displayLow = shown }
+            if shown > displayHigh { displayHigh = shown }
             sum += value
             count += 1
-            samples.append(PlotSample(date: date, display: displayed(value, unit: unit)))
+            samples.append(PlotSample(date: date, display: shown, baseline: 0))
         }
         samples.sort { $0.date < $1.date }
 
@@ -517,6 +563,13 @@ private final class PlottedSeries {
         let emptyY: ClosedRange<Double>? = samples.isEmpty && window != nil
             ? (unit == "%" ? 0...100 : 0...1)
             : nil
+        let yDomain = valueScale(unit: unit, low: displayLow, high: displayHigh, hasSamples: count > 0)
+        let floor = areaFloor(of: yDomain)
+        if floor != 0 {
+            for index in samples.indices {
+                samples[index].baseline = floor
+            }
+        }
         return PlottedSeries(
             samples: samples,
             unit: unit,
@@ -525,6 +578,7 @@ private final class PlottedSeries {
             rawAverage: count > 0 ? sum / Double(count) : nil,
             window: window,
             emptyY: emptyY,
+            yDomain: yDomain,
             revision: revision
         )
     }
@@ -557,24 +611,62 @@ private func displayed(_ raw: Double, unit: String) -> Double {
     unit == "bps" ? raw / 1_000_000 : raw
 }
 
+/// Percent stays on 0...100. Any other unit keeps the data minimum and leaves 10% of the span above the peak.
+private func valueScale(unit: String, low: Double, high: Double, hasSamples: Bool) -> ClosedRange<Double> {
+    if unit == "%" { return 0...100 }
+    guard hasSamples else { return 0...1 }
+    let span = high - low
+    let headroom = span > 0 ? span * 0.1 : max(abs(high) * 0.1, 1)
+    return low...(high + headroom)
+}
+
+/// Zero, when it is on the scale. A tight scale stops at its near edge so the fill stays inside the plot.
+private func areaFloor(of domain: ClosedRange<Double>) -> Double {
+    if domain.contains(0) { return 0 }
+    return domain.lowerBound > 0 ? domain.lowerBound : domain.upperBound
+}
+
 private func hoverText(_ display: Double, unit: String) -> String {
     switch unit {
     case "%":
-        String(format: "%.2f%%", display)
+        percentText(display)
     case "bps":
-        String(format: "%.2f Mbps", display)
+        quantity(display) + " Mbps"
     default:
-        String(format: "%.2f", display)
+        quantity(display)
     }
 }
 
 private func statisticText(_ raw: Double, unit: String) -> String {
     switch unit {
     case "%":
-        String(format: "%.2f%%", raw)
+        percentText(raw)
     case "bps":
-        String(format: "%.2f Mbps", raw / 1_000_000)
+        quantity(raw / 1_000_000) + " Mbps"
+    case "":
+        quantity(raw)
     default:
-        String(format: "%.2f \(unit)", raw)
+        quantity(raw) + " " + unit
     }
+}
+
+private func shownStatistic(_ raw: Double, unit: String) -> Double {
+    unit == "bps" ? raw / 1_000_000 : raw
+}
+
+private func percentText(_ value: Double) -> String {
+    value.formatted(.number.precision(.fractionLength(2))) + "%"
+}
+
+/// Values below one keep enough digits that a few milliseconds do not become zero.
+private func quantity(_ value: Double) -> String {
+    let magnitude = abs(value)
+    if magnitude == 0 { return "0" }
+    if magnitude >= 1 {
+        return value.formatted(.number.precision(.fractionLength(0...2)))
+    }
+    if magnitude >= 0.001 {
+        return value.formatted(.number.precision(.fractionLength(0...4)))
+    }
+    return value.formatted(.number.precision(.significantDigits(1...3)))
 }

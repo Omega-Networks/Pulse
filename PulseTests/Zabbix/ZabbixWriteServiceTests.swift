@@ -268,6 +268,99 @@ final class ZabbixWriteServiceTests: XCTestCase {
         await gate.open()
     }
 
+    func testPostingAskSurvivesASecondSubmitAndStillFails() async throws {
+        let harness = try makeHarness()
+        let gate = PauseGate()
+        harness.transport.pause(on: gate)
+        harness.transport.results = [
+            .failure(URLError(.cannotConnectToHost)),
+            .success(accepted("739183001"))
+        ]
+        remember(harness, gate: gate)
+
+        let firstTokens = await harness.service.submit([intent("739183001")])
+        let first = try XCTUnwrap(firstTokens.first)
+        try await gate.waitForArrival()
+
+        let secondTokens = await harness.service.submit([intent("739183001")])
+        let second = try XCTUnwrap(secondTokens.first)
+
+        let firstState = await MainActor.run { harness.pending.state(of: first) }
+        XCTAssertEqual(firstState, .posting)
+        let ghosts = await MainActor.run {
+            harness.pending.ghosts(of: ProblemUpdateIntent.self, in: .events(["739183001"]))
+        }
+        XCTAssertEqual(ghosts.map(\.token), [first, second])
+
+        await gate.open()
+        await harness.service.waitForSubmittedWrites()
+
+        let failed = await MainActor.run { harness.pending.state(of: first) }
+        let expected = ZabbixError.unreachable.localizedDescription
+        XCTAssertEqual(failed, .failed(WriteFailure(provider: .zabbix, message: expected)))
+        let posted = await notice(first)
+        XCTAssertEqual(posted?.message, expected)
+        XCTAssertEqual(posted?.source, .zabbix)
+    }
+
+    func testCommittedAskIsNotReplacedByALaterSubmit() async throws {
+        let harness = try makeHarness()
+        let gate = PauseGate()
+        await harness.refresh.pause(on: gate)
+        harness.transport.results = [
+            .success(accepted("739183001")),
+            .success(accepted("739183001"))
+        ]
+        remember(harness, gate: gate)
+
+        let firstTokens = await harness.service.submit([intent("739183001")])
+        let first = try XCTUnwrap(firstTokens.first)
+        try await gate.waitForArrival()
+
+        let committed = await MainActor.run { harness.pending.state(of: first) }
+        XCTAssertEqual(committed, .committed(id: 739183001))
+
+        let secondTokens = await harness.service.submit([update("739183001") { $0.severity = 4 }])
+        let second = try XCTUnwrap(secondTokens.first)
+        let stillCommitted = await MainActor.run { harness.pending.state(of: first) }
+        XCTAssertEqual(stillCommitted, .committed(id: 739183001))
+        let posting = await MainActor.run { harness.pending.state(of: second) }
+        XCTAssertEqual(posting, .posting)
+
+        await gate.open()
+        await harness.service.waitForSubmittedWrites()
+    }
+
+    func testMissingEventDoesNotUseTheCapSentence() async throws {
+        let harness = try makeHarness()
+        remember(harness)
+
+        let tokens = await harness.service.submit([intent("missing-row")])
+        await harness.service.waitForSubmittedWrites()
+
+        let token = try XCTUnwrap(tokens.first)
+        let message = ZabbixWriteService.problemMissingMessage
+        let state = await MainActor.run { harness.pending.state(of: token) }
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .zabbix, message: message)))
+        XCTAssertNotEqual(message, SubscriptionTier.free.capReachedMessage())
+        XCTAssertEqual(harness.transport.sends, 0)
+    }
+
+    func testTransportTimeoutSaysPulseDidNotSeeAResponse() async throws {
+        let harness = try makeHarness()
+        remember(harness)
+        harness.transport.results = [.failure(URLError(.timedOut))]
+
+        let tokens = await harness.service.submit([intent("739183001")])
+        await harness.service.waitForSubmittedWrites()
+
+        let token = try XCTUnwrap(tokens.first)
+        let expected = ZabbixError.timedOut.localizedDescription
+        let state = await MainActor.run { harness.pending.state(of: token) }
+        XCTAssertEqual(state, .failed(WriteFailure(provider: .zabbix, message: expected)))
+        XCTAssertEqual(expected, "Zabbix timed out. Pulse did not see a response.")
+    }
+
     func testGhostsComeBackInStageOrder() async throws {
         let harness = try makeHarness()
         let gate = PauseGate()

@@ -56,6 +56,7 @@ Node reposition is off during `tethering` and `sheet`. Other pluses stay hidden 
 | Failure | Behaviour | Blast radius |
 |---|---|---|
 | NetBox unreachable | Failed cable with the offline sentence and Discard. No local cable. | One ask. |
+| Timeout | Pulse did not see a response. NetBox may have stored the cable. The ask fails, Edit can send it again, and the next sync shows the stored cable. | One ask. |
 | 4xx, including a port occupied concurrently | Failed cable with the server text and Discard. No local row. | One ask. |
 | NetBox stored the cable, the end GETs failed | The ask retires as stored. The quiet delta loads the ends. | The edge waits for that delta. |
 | Seat lost before POST | `requireLink` refuses. Failed cable with the seat message. | No cable. |

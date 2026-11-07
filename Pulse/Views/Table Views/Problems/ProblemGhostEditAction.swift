@@ -29,15 +29,13 @@ import SwiftUI
 /// The failed ask stays until that sheet submits. The default does
 /// nothing, so a surface without the sheet still compiles.
 struct ProblemGhostEditAction: Sendable {
-    var isInstalled: Bool
     var open: @MainActor @Sendable (ProblemUpdateGhost) -> Void
 
-    init(isInstalled: Bool = true, open: @escaping @MainActor @Sendable (ProblemUpdateGhost) -> Void) {
-        self.isInstalled = isInstalled
+    init(open: @escaping @MainActor @Sendable (ProblemUpdateGhost) -> Void) {
         self.open = open
     }
 
-    static let inactive = ProblemGhostEditAction(isInstalled: false) { _ in }
+    static let inactive = ProblemGhostEditAction { _ in }
 }
 
 private struct ProblemGhostEditActionKey: EnvironmentKey {

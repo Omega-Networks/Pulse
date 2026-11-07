@@ -116,6 +116,7 @@ struct ContentView: View {
             }
             .sheet(isPresented: $mainSheetOpen) { //Main sheet containing list of sites and search bar
                 MainSheet(searchText: $searchText, selectedSiteGroups: selectedSiteGroups, cameraPosition: $cameraPosition, selectedSite: $selectedSite)
+                    .id(sitesListIdentity)
                     .sheet(item: $selectedSite) { site in
                         DetailSheet(site: site)
                     }
@@ -197,7 +198,16 @@ struct ContentView: View {
         let container = modelContext.container
         Task {
             let service = SiteDataService(modelContainer: container)
-            guard await service.deleteAllEvents() else { return }
+            guard await service.deleteAllEvents() else {
+                OperatorNoticeCenter.shared.post(OperatorNotice(
+                    id: "zabbix.events.clear",
+                    source: .zabbix,
+                    severity: .failure,
+                    message: "Could not clear stored problems.",
+                    occurredAt: Date()
+                ))
+                return
+            }
             openDeleteButtons = false
         }
     }

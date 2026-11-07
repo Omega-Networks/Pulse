@@ -57,6 +57,9 @@ struct LiveZabbixAcknowledgeRequest: ZabbixAcknowledgeRequesting {
 /// Sends problem updates and owns their asks. Views call this through
 /// `@Environment(\.zabbixWriteService)`. Nothing else calls `event.acknowledge`.
 actor ZabbixWriteService {
+    static let problemUnreadableMessage = "Could not read this problem to check its seat."
+    static let problemMissingMessage = "This problem is not on this Mac."
+
     private let pendingWrites: PendingWrites
     private let problems: any ZabbixProblemRefreshing
     private let container: ModelContainer
@@ -99,7 +102,10 @@ actor ZabbixWriteService {
             for pair in pairs {
                 guard case .events(let newIds) = pair.intent.scope else { continue }
                 let covered = pending.ghosts(of: ProblemUpdateIntent.self, in: .events(newIds))
-                    .filter { $0.ghost.eventIds.isSubset(of: newIds) }
+                    .filter { item in
+                        guard case .failed = item.state else { return false }
+                        return item.ghost.eventIds.isSubset(of: newIds)
+                    }
                     .map(\.token)
                 for token in covered where seen.insert(token).inserted {
                     tokens.append(token)
@@ -203,9 +209,12 @@ actor ZabbixWriteService {
                 logger.error(
                     "seat check failed: \(error.localizedDescription, privacy: .public)"
                 )
-                return tier().capReachedMessage()
+                return Self.problemUnreadableMessage
             }
-            guard let deviceID = row?.device?.id, seats.allowsActions(deviceID: deviceID) else {
+            guard let deviceID = row?.device?.id else {
+                return Self.problemMissingMessage
+            }
+            guard seats.allowsActions(deviceID: deviceID) else {
                 return tier().capReachedMessage()
             }
         }

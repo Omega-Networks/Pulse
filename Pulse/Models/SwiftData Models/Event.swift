@@ -126,40 +126,34 @@ final class Event {
     }
     
     var severityString: String {
-        switch Int(self.severity) {
-        case 0:
-            return "Not Classified"
-        case 1:
-            return "Information"
-        case 2:
-            return "Warning"
-        case 3:
-            return "Average"
-        case 4:
-            return "High"
-        case 5:
-            return "Disaster"
-        default:
-            return "Unknown"
+        Self.severityName(Int(severity) ?? -1)
+    }
+
+    var severityColor: Color {
+        Self.severityColor(for: Int(severity) ?? -1)
+    }
+
+    static func severityName(_ value: Int) -> String {
+        switch value {
+        case 0: return "Not Classified"
+        case 1: return "Information"
+        case 2: return "Warning"
+        case 3: return "Average"
+        case 4: return "High"
+        case 5: return "Disaster"
+        default: return "Unknown"
         }
     }
-    
-    var severityColor: Color {
-        switch Int(self.severity) {
-        case 0:
-            return .gray
-        case 1:
-            return .blue
-        case 2:
-            return .yellow
-        case 3:
-            return .orange
-        case 4:
-            return .red
-        case 5:
-            return .black
-        default:
-            return .purple
+
+    static func severityColor(for value: Int) -> Color {
+        switch value {
+        case 0: return .gray
+        case 1: return .blue
+        case 2: return .yellow
+        case 3: return .orange
+        case 4: return .red
+        case 5: return .black
+        default: return .purple
         }
     }
     

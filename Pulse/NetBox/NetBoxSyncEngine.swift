@@ -891,7 +891,9 @@ actor NetBoxSyncEngine {
         } catch is WriteIntentFrameFailed {
             return
         } catch {
-            await failStillPosting(pairs.map(\.token), error)
+            writeLogger.error(
+                "write frame failed outside an ask: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
@@ -906,13 +908,11 @@ actor NetBoxSyncEngine {
         )
     }
 
-    private func failWrite(_ token: WriteToken, _ error: Error, publish: Bool = true) async {
+    private func failWrite(_ token: WriteToken, _ error: Error) async {
         let syncError: NetBoxSyncError
         if let existing = error as? NetBoxSyncError {
             syncError = existing
-            if publish {
-                await existing.publish()
-            }
+            await existing.publish()
         } else {
             syncError = .httpStatus(code: 0, body: error.localizedDescription)
         }
@@ -925,22 +925,6 @@ actor NetBoxSyncEngine {
             writeLogger.error(
                 "write failed token \(token.id.uuidString, privacy: .public): \(syncError.localizedDescription, privacy: .public)"
             )
-        }
-    }
-
-    /// The frame threw something other than its own failure, so no ask is
-    /// left posting. `performWrite` publishes a `NetBoxSyncError` before it
-    /// throws, so this does not publish again.
-    private func failStillPosting(_ tokens: [WriteToken], _ error: Error) async {
-        let pending = pendingWrites
-        let stillPosting = await MainActor.run {
-            tokens.filter { token in
-                if case .posting = pending.state(of: token) { return true }
-                return false
-            }
-        }
-        for token in stillPosting {
-            await failWrite(token, error, publish: false)
         }
     }
 
@@ -1742,7 +1726,12 @@ actor NetBoxSyncEngine {
     private func refreshTouchedSites(_ progress: ChangelogCursor) async {
         guard progress.touchedDeviceSites else { return }
         progress.touchedDeviceSites = false
-        await SiteDataService(modelContainer: modelContainer).refreshSeverities()
+        let service = SiteDataService(modelContainer: modelContainer)
+        if passSeatsWholeStore {
+            await service.refreshSeverities()
+        } else {
+            await service.refreshSeverities(deviceIDs: Set(passDeviceIDs))
+        }
     }
 
     /// False when the token cannot read this model. The local row stays,

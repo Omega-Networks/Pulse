@@ -242,8 +242,8 @@ struct EventTable: View {
     ) -> some View {
         let item = pending[event.eventId]
         let severity = item?.ghost.severity
-        let name = severity.map(severityName) ?? event.severityString
-        let color = severity.map(severityColor) ?? event.severityColor
+        let name = severity.map(Event.severityName) ?? event.severityString
+        let color = severity.map { Event.severityColor(for: $0) } ?? event.severityColor
         shaded(
             SeverityCell(
                 severityString: name,
@@ -295,30 +295,6 @@ struct EventTable: View {
     private func failureMessage(_ state: WriteState?) -> String? {
         if case .failed(let failure) = state { return failure.message }
         return nil
-    }
-
-    private func severityName(_ value: Int) -> String {
-        switch value {
-        case 0: return "Not Classified"
-        case 1: return "Information"
-        case 2: return "Warning"
-        case 3: return "Average"
-        case 4: return "High"
-        case 5: return "Disaster"
-        default: return "Unknown"
-        }
-    }
-
-    private func severityColor(_ value: Int) -> Color {
-        switch value {
-        case 0: return .gray
-        case 1: return .blue
-        case 2: return .yellow
-        case 3: return .orange
-        case 4: return .red
-        case 5: return .black
-        default: return .purple
-        }
     }
 
     private var seatedSelection: Binding<Set<Event.ID>> {
