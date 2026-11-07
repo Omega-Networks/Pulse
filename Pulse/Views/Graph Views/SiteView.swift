@@ -56,6 +56,7 @@ struct SiteView: View {
     //Properties for showing the sheet for configuring Devices
     @State private var showingNewDeviceSheet = false
     @State private var devicePrefill: DeviceGhost?
+    @State private var problemPrefill: ProblemUpdateGhost?
     @State private var rackEdit = RackEditSession()
     
     //Properties to alter the laout
@@ -162,6 +163,12 @@ struct SiteView: View {
             devicePrefill = ghost
             showingNewDeviceSheet = true
         })
+        .environment(\.problemGhostEdit, ProblemGhostEditAction { ghost in
+            problemPrefill = ghost
+        })
+        .sheet(item: $problemPrefill) { ghost in
+            UpdateModal(prefill: ghost)
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(rackEdit)
         .task(id: rackEdit.draggingDeviceID) {
@@ -177,7 +184,8 @@ struct SiteView: View {
                 let service = SiteDataService(modelContainer: modelContext.container)
                 try await service.loadAllSiteData(for: siteId)
             } catch {
-                print("Error loading site data: \(error)")
+                Logger(subsystem: "zabbix", category: "siteData")
+                    .error("Loading site data failed: \(error.localizedDescription, privacy: .public)")
             }
         }
         .sheet(isPresented: $showingNewDeviceSheet, onDismiss: { devicePrefill = nil }) {

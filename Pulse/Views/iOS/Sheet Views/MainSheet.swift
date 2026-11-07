@@ -72,13 +72,15 @@ struct MainSheet: View {
         self._cameraPosition = cameraPosition
         self._selectedSite = selectedSite
         
-        // Predicate for filtering sites by search text and selected site groups
+        // Predicate for filtering sites by search text and selected site groups.
+        // Captured at init, the same way SitesList does.
+        let term = searchText.wrappedValue
+        let groups = selectedSiteGroups
         let predicate = #Predicate<Site> { site in
-            (selectedSiteGroups.isEmpty || (site.group.flatMap { selectedSiteGroups.contains($0.id) } ?? false))
+            (term.isEmpty || site.name.localizedStandardContains(term)) &&
+            (groups.isEmpty || (site.group.flatMap { groups.contains($0.id) } ?? false))
         }
         
-        // Query sites and enable filtering using the predicate and sorting using the sort descriptor
-        //TODO: Refine sorting logic by highest Severity
         _sites = Query(
             filter: predicate,
             sort: [

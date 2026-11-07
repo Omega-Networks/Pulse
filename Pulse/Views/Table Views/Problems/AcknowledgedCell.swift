@@ -39,32 +39,20 @@ struct AcknowledgedCell: View {
         Text(acknowledgedString)
             .foregroundColor(isHovering ? Color.blue : acknowledgedColor)
             .underline()
+            .contentTransition(.opacity)
+            .animation(.easeInOut(duration: 0.35), value: acknowledgedString)
+            .animation(.easeInOut(duration: 0.35), value: acknowledgedColor)
             .onTapGesture {
                 guard allowsUpdate else { return }
                 isShowingSheet = true
             }
             .help(allowsUpdate ? "Update event" : "Subscribe to resume")
+            .pointingHand(when: allowsUpdate)
             .sheet(isPresented: $isShowingSheet) {
-                UpdateModal(selectedEvents: selectedEvents)
+                UpdateModal(events: selectedEvents)
             }
             .onHover { isHovered in
                 self.isHovering = isHovered
-                #if os(macOS)
-                DispatchQueue.main.async { //<-- Here
-                    if (self.isHovering) {
-                        NSCursor.pointingHand.push()
-                    } else {
-                        NSCursor.pop()
-                    }
-
-                }
-                #endif
-
             }
-        #if os(macOS)
-//            .sheet(isPresented: $isShowingSheet) {
-//                UpdateModal(selectedEvents: selectedEvents)
-//            }
-        #endif
     }
 }

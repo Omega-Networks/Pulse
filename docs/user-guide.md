@@ -14,7 +14,7 @@ Pulse reads infrastructure inventory from NetBox and monitoring status from Zabb
 In the **Settings** tab:
 
 1. Under **NetBox Settings**, enter your NetBox **API Server** URL (for example `https://netbox.example.com`) and **API Token**.
-2. Under **Zabbix Settings**, enter the Zabbix **API Server** URL and an **API Token** (Users → API tokens). Pulse sends `Authorization: Bearer`. That is required on Zabbix 7.2+ and works on 6.4 and 7.0. For Zabbix 6.0-6.2 only, turn on **Legacy JSON-RPC authentication** and also enter **API User** (username + password session in the JSON body). Leave legacy off unless you are on those old releases. Zabbix is optional but recommended for live monitoring.
+2. Under **Zabbix Settings**, enter the Zabbix **API Server** URL and an **API Token** (Users → API tokens). Pulse calls `api_jsonrpc.php` on that URL. A Docker frontend is the host itself (`https://zabbix.example.com`). Include a subdirectory only when the frontend is served there (`https://zabbix.example.com/zabbix`). An install that saved a host-only URL and depended on Pulse inserting `/zabbix/` sets that subdirectory once (`https://host/zabbix`). A URL that already includes the path is unchanged. Pulse sends `Authorization: Bearer`. That is required on Zabbix 7.2+ and works on 6.4 and 7.0. For Zabbix 6.0-6.2 only, turn on **Legacy JSON-RPC authentication** and also enter **API User** (username + password session in the JSON body). Leave legacy off unless you are on those old releases. Zabbix is optional but recommended for live monitoring.
 3. Click **Apply Settings**. Pulse validates the connection and begins syncing.
 
 The first sync pulls sites, devices, roles, and types from NetBox. Later launches refresh in the background.
@@ -60,6 +60,12 @@ With Zabbix configured, Pulse colours every device by its current severity and s
 - Device and site colours reflect the highest active Zabbix severity.
 - Events and problems are listed per device; historical patterns are charted in Device view.
 - Notifications are dispatched **locally** from background polling. There is no cloud push; alerts are generated on-device.
+
+### Problems
+
+Update on the Problems table sends one `event.acknowledge` for the selection. **Change severity** sets a new severity while it is checked. **Suppress** for **Indefinitely** hides the problem with no end. **Until** hides it until the time you pick, and that time has to be later than now. **Close problem** tells Zabbix the problem is resolved. Update stays off until the ask is one Zabbix will accept, and the sheet says why. A dimmed row is an ask Zabbix has not finished answering. A failed row shows Zabbix's sentence; Edit reopens the form and Discard drops the ask. Nothing is queued. A crash drops the ask, and the next poll shows what Zabbix holds.
+
+**Fetch Events** polls Zabbix problems: once when switched on, then every two minutes. The toolbar squares count active problems, still open and not suppressed, the same rule as the device squares. A resolved problem stays in the Problems table and leaves the toolbar count. That table lists the events stored for the open site, including resolved ones. The circular-arrow control imports event history. Fetch Events does not.
 
 ## 4. Connecting to a device over SSH (macOS)
 

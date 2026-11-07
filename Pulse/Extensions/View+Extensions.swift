@@ -26,10 +26,14 @@
 import SwiftUI
 
 extension View {
-    /// Dims a posting or committed NetBox ask and badges a failed one.
+    /// Dims a posting or committed ask and badges a failed one.
+    /// `showsFailureDetail` stays true on the graph and the rack. The
+    /// problems table does not use this: inserting it replaces the cell,
+    /// so the row cannot ease into the ask and back out.
     func ghosted(
         state: WriteState,
         showsEdit: Bool = true,
+        showsFailureDetail: Bool = true,
         onEdit: @escaping () -> Void,
         onDiscard: @escaping () -> Void
     ) -> some View {
@@ -37,9 +41,41 @@ extension View {
             GhostedModifier(
                 state: state,
                 showsEdit: showsEdit,
+                showsFailureDetail: showsFailureDetail,
                 onEdit: onEdit,
                 onDiscard: onDiscard
             )
         )
+    }
+
+    /// Pointing hand over a control that acts on click. macOS 15 draws
+    /// this as `PointerStyle.link`. iOS has no pointer.
+    @ViewBuilder
+    func pointingHand(when enabled: Bool = true) -> some View {
+        #if os(macOS)
+        self.pointerStyle(enabled ? .link : .default)
+        #else
+        self
+        #endif
+    }
+
+    /// One load for this host. `reset` runs before the first await, so the
+    /// previous host's series is gone immediately. The task waits for that
+    /// host's items and is cancelled when `deviceId` changes, which drops a
+    /// reply that belongs to the host the operator has left.
+    func zabbixItemLoad(
+        deviceId: Int64,
+        reset: @escaping @MainActor () -> Void,
+        load: @escaping @MainActor () async -> Void
+    ) -> some View {
+        task(id: deviceId) {
+            reset()
+            await load()
+            guard deviceId != 0 else { return }
+            for await note in NotificationCenter.default.notifications(named: .itemsCached) {
+                guard note.itemsCachedDeviceId == deviceId else { continue }
+                await load()
+            }
+        }
     }
 }

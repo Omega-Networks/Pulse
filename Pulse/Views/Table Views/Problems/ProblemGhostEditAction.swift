@@ -1,5 +1,5 @@
 //
-//  UpdateParameters.swift
+//  ProblemGhostEditAction.swift
 //  Pulse
 //
 //  Copyright © 2025–present Omega Networks Limited.
@@ -23,22 +23,28 @@
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
-import Foundation
-import SwiftData
 import SwiftUI
 
-struct UpdateParameters: Sendable {
-    let eventIds: [String]
-    let action: String
-    let message: String?
-    let severity: String?
-    let suppressUntil: String?
-    
-    init(eventIds: [String], action: String, message: String?, isChangeSeverity: Bool, selectedSeverity: Int, isSuppress: Bool, selectedSuppressUntil: Date) {
-        self.eventIds = eventIds
-        self.action = action
-        self.message = message == "" ? nil : message
-        self.severity = isChangeSeverity ? String(selectedSeverity) : nil
-        self.suppressUntil = isSuppress ? String(Int(selectedSuppressUntil.timeIntervalSince1970)) : nil
+/// Opens the problem update sheet with a failed ghost's fields.
+/// The failed ask stays until that sheet submits. The default does
+/// nothing, so a surface without the sheet still compiles.
+struct ProblemGhostEditAction: Sendable {
+    var open: @MainActor @Sendable (ProblemUpdateGhost) -> Void
+
+    init(open: @escaping @MainActor @Sendable (ProblemUpdateGhost) -> Void) {
+        self.open = open
+    }
+
+    static let inactive = ProblemGhostEditAction { _ in }
+}
+
+private struct ProblemGhostEditActionKey: EnvironmentKey {
+    static let defaultValue = ProblemGhostEditAction.inactive
+}
+
+extension EnvironmentValues {
+    var problemGhostEdit: ProblemGhostEditAction {
+        get { self[ProblemGhostEditActionKey.self] }
+        set { self[ProblemGhostEditActionKey.self] = newValue }
     }
 }

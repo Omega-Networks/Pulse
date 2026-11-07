@@ -605,6 +605,7 @@ struct ConnectInterfaceSheet: View {
     }
 }
 
+#if os(macOS)
 /// The two devices chosen by a cable tether on the site graph.
 struct CableDevicePair: Identifiable, Equatable, Sendable {
     var sourceID: Int64
@@ -700,12 +701,12 @@ struct CablePairSheet: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
             } else {
-                Picker(title, selection: selection) {
-                    ForEach(ports) { port in
-                        Text(port.name).tag(port.id as Int64?)
-                    }
-                }
-                .labelsHidden()
+                ChoiceField(
+                    title: title,
+                    prompt: "Interface",
+                    selection: selection,
+                    options: .list(ports.map { (id: $0.id, name: $0.name) })
+                )
                 .disabled(isWriting)
             }
         }
@@ -746,3 +747,4 @@ struct CablePairSheet: View {
         onCreated(intent.ends)
     }
 }
+#endif

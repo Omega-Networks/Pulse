@@ -23,442 +23,99 @@
 //  along with this program. If not, see <https://www.gnu.org/licenses/>.
 //
 
+import os
 import SwiftUI
-import SwiftData
 
-struct UpdateModal: View {
-    @Environment(\.dismiss) var dismiss
-    @Environment(\.modelContext) private var modelContext
-    
-    var selectedEvents: [Event]
-    var deviceIds: [String] {
-        return selectedEvents.compactMap { event in
-            event.device?.id.description
-        }
-    }
-    
-    @State private var isHovering0: Bool = false
-    @State private var isHovering1: Bool = false
-    
-    @State private var message: String = ""
-    
-    @State private var selectedScope = 0
-    @State private var selectedSeverity = 0
-    @State private var selectedSuppression = 0
-    @State private var selectedDate = Date.now
-    @State private var selectedDummy = 0
-    
-    @State private var isChangeSeverity = false
-    @State private var isSuppress = false
-    @State private var isUnsuppress = false
-    @State private var isAcknowledge = false
-    @State private var isUnacknowledge = false
-    @State private var isCloseEvent = false
-    
-    @State private var selectedSuppressUntil = Date(timeIntervalSinceNow: 0)
-    
-    private var action: Int {
-        var value = 0
-        if isCloseEvent { value += 1}
-        if isAcknowledge { value += 2 }
-        if !message.isEmpty { value += 4 }
-        if isChangeSeverity { value += 8}
-        if isUnacknowledge { value += 16 }
-        if isSuppress { value += 32 }
-        if isUnsuppress { value += 64 }
-        return value
-    }
-    
-    ///Example acknowledge event API from Zabbix
-    ///{
-    ///    "jsonrpc": "2.0",
-    ///   "method": "event.acknowledge",
-    ///    "params": {
-    ///        "eventids": ["20427", "20428"],
-    ///        "action": 12,
-    ///        "message": "Maintenance required to fix it.",
-    ///        "severity": 4
-    ///    },
-    ///    "id": 1
-    ///}
-    
-    
-    func updateEvents() async {
-        let eventIds = selectedEvents.map { $0.eventId }  // Already Int64 from Event model
-        
-        let updateParams = UpdateParameters(
-            eventIds: eventIds,
-            action: String(action),
-            message: message,
-            isChangeSeverity: isChangeSeverity,
-            selectedSeverity: selectedSeverity,
-            isSuppress: isSuppress,
-            selectedSuppressUntil: selectedSuppressUntil
-        )
-        
-        let actor = ProviderModelActor(modelContainer: modelContext.container)
-        await actor.updateEvents(params: updateParams, eventIds: eventIds)
-    }
-    
-    var body: some View {
-#if os(macOS)
-        VStack (alignment: .leading) {
-            Form {
-                /// Event
-                HStack {
-                    Text("Event:")
-                        .frame(width: 100, alignment: .trailing)
-                    if selectedEvents.count == 1 {
-                        Text("\(selectedEvents.first?.name ?? "")")
-                    } else {
-                        Text("\(String(selectedEvents.count)) events selected")
-                    }
-                }
-                .padding(.vertical, 1)
-                .offset(x: -109)
-                
-                /// Message
-                TextField("Message:", text: $message)
-                    .lineLimit(10)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 553)
-                    .padding(.vertical, 1)
-                
-#if os(macOS)
-                // TODO: Scope has no function as Event is unaware of related trigger.
-                /// Scope
-                Picker("Scope:", selection: $selectedScope) {
-                    Text(" Only selected events").tag(0)
-                    Text(" Selected and all other events of related triggers").tag(1)
-                }
-                .pickerStyle(.radioGroup)
-                .padding(.vertical, 1)
-#endif
-                
-                /// Change Severity
-                Picker(selection: $selectedSeverity, label: Toggle("Change Severity:", isOn: $isChangeSeverity)){
-                    Text("Not Classified").tag(0)
-                    Text("Information").tag(1)
-                    Text("Warning").tag(2)
-                    Text("Average").tag(3)
-                    Text("High").tag(4)
-                    Text("Disaster").tag(5)
-                }
-                .pickerStyle(SegmentedPickerStyle())
-                .frame(width: 600)
-                .offset(x: 22)
-                .onChange(of: selectedSeverity) {
-                    isChangeSeverity = true
-                }
-                
-                /// Suppress
-                HStack {
-                    Picker(selection: $selectedSuppression, label: Toggle("Suppress:", isOn: $isSuppress)) {
-                        Text("Indefinitely").tag(0)
-                        Text("Until").tag(1)
-                    }
-                    .onChange(of: isSuppress) { newValue, _ in
-                        if newValue {
-                            isUnsuppress = false
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 290)
-                    
-#if os(macOS)
-                    DatePicker(selection: $selectedDate, displayedComponents: [.date, .hourAndMinute], label: {})
-                        .datePickerStyle(.field)
-                        .disabled(selectedSuppression != 1)
-                        .frame(width: 170)
-#endif
-                }
-                .padding(.vertical, 1)
-                .offset(x: 139)
-//                .offset(x: 10)
-                .onChange(of: selectedSuppression) {
-                    isSuppress = true
-                }
-                
-                // TODO: Supression and Unsuppression support
-                /// Unsuppress
-                if selectedEvents.contains(where: { $0.suppressed == "1" }) {
-                    Picker(selection: $selectedDummy, label: Toggle("Unsuppress:", isOn: $isUnsuppress)) {
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: isUnsuppress) { newValue, _ in
-                        if newValue {
-                            isSuppress = false
-                        }
-                    }
-                    .padding(.vertical, 1)
-                    .offset(x: 22)
-                }
-                
-                /// Acknowledge
-                if selectedEvents.contains(where: { $0.acknowledged == "0" }) {
-                    Picker(selection: $selectedDummy, label: Toggle("Acknowledge:", isOn: $isAcknowledge)) {
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: isAcknowledge) { newValue, _ in
-                        if newValue {
-                            isUnacknowledge = false
-                        }
-                    }
-                    .padding(.vertical, 1)
-                    .offset(x: 22)
-                }
-                
-                /// Unacknowledge
-                if selectedEvents.contains(where: { $0.acknowledged == "1" }) {
-                    Picker(selection: $selectedDummy, label: Toggle("Unacknowledge:", isOn: $isUnacknowledge)) {
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: isUnacknowledge) { newValue, _ in
-                        if newValue {
-                            isAcknowledge = false
-                        }
-                    }
-                    .padding(.vertical, 1)
-                    .offset(x: 22)
-                }
-                
-                /// Close Event
-                Picker(selection: $selectedDummy, label: Toggle("Close Event:", isOn: $isCloseEvent)) {
-                }
-                .pickerStyle(.segmented)
-                .padding(.vertical, 1)
-                .offset(x: 22)
-                
-            }
-            .padding(.trailing, 120)
-            HStack {
-                Spacer()
-                
-                /// Update
-                Button {
-                    ///Updating Events takes place in a background thread for performance purposes
-                    Task.detached(priority: .background) {
-                        await updateEvents()
-                    }
-                    
-                    dismiss()
-                    
-                } label: {
-                    Text("Update")
-                        .frame(width: 80)
-                }
-                .onHover { isHovered in
-                    if action != 0 {
-                        self.isHovering0 = isHovered
-#if os(macOS)
-                        DispatchQueue.main.async {
-                            if (self.isHovering0) {
-                                NSCursor.pointingHand.push()
-                            } else {
-                                NSCursor.pop()
-                            }
-                        }
-#else
-#endif
-                    }
-                }// TODO: This does not change color properly
-                
-                .buttonStyle(.borderedProminent)
-                .cornerRadius(5)
-                .disabled(action == 0)
-                
-                /// Cancel
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Cancel")
-                        .frame(width: 80)
-                        .foregroundColor(.primary)
-                        .cornerRadius(5)
-                }
-                .onHover { isHovered in
-                    self.isHovering1 = isHovered
-#if os(macOS)
-                    DispatchQueue.main.async {
-                        if (self.isHovering1) {
-                            NSCursor.pointingHand.push()
-                        } else {
-                            NSCursor.pop()
-                        }
-                    }
-#else
-#endif
-                }
-                .padding(.trailing, 15)
-            }
-            .padding(.top, 10)
-        }
-        .frame(minWidth: 700, maxWidth: 700, minHeight: 200, idealHeight: 300, maxHeight: 900)
-        .padding(1)
-        
-#elseif os(iOS)
-        //TODO: Consolidate into the original view with iOS specific features
-        VStack (alignment: .center) {
-            Form {
-                /// Event
-                HStack {
-                    Text("Event:")
-                    //                        .frame(width: 100, alignment: .trailing)
-                    if selectedEvents.count == 1 {
-                        Text("\(selectedEvents.first?.name ?? "")")
-                    } else {
-                        Text("\(String(selectedEvents.count)) events selected")
-                    }
-                }
-                .padding(.vertical, 1)
-                
-                /// Message
-                TextField("Message:", text: $message)
-                    .lineLimit(10)
-                    .textFieldStyle(.roundedBorder)
-                
-#if os(macOS)
-                /// Scope
-                Picker("Scope:", selection: $selectedScope) {
-                    Text(" Only selected events").tag(0)
-                    Text(" Selected and all other events of related triggers").tag(1)
-                }
-                .pickerStyle(.radioGroup)
-                .padding(.vertical, 1)
-#endif
-                
-                /// Change Severity
-                Picker(selection: $selectedSeverity, label: Toggle("Change Severity:", isOn: $isChangeSeverity)) {
-                    Text("Not Classified").tag(0)
-                    Text("Information").tag(1)
-                    Text("Warning").tag(2)
-                    Text("Average").tag(3)
-                    Text("High").tag(4)
-                    Text("Disaster").tag(5)
-                }
-                .textCase(nil)
-                .pickerStyle(.inline)
-                .padding(.vertical, 1)
-                .onChange(of: selectedSeverity) {
-                    isChangeSeverity = true
-                }
-                
-                /// Suppress
-                HStack {
-                    Picker(selection: $selectedSuppression, label: Toggle("Suppress:", isOn: $isSuppress)) {
-                        Text("Indefinitely").tag(0)
-                        Text("Until").tag(1)
-                    }
-                    .textCase(nil)
-                    .onChange(of: isSuppress) { newValue, _ in
-                        if newValue {
-                            isUnsuppress = false
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    
-#if os(macOS)
-                    DatePicker(selection: $selectedDate, displayedComponents: [.date, .hourAndMinute], label: {})
-                        .datePickerStyle(.field)
-                        .disabled(selectedSuppression != 1)
-                        .frame(width: 170)
-#endif
-                }
-                .padding(.vertical, 1)
-                .onChange(of: selectedSuppression) {
-                    isSuppress = true
-                }
-                
-                // TODO: Supression and Unsuppression support
-                /// Unsuppress
-                if selectedEvents.contains(where: { $0.suppressed == "1" }) {
-                    Picker(selection: $selectedDummy, label: Toggle("Unsuppress:", isOn: $isUnsuppress)) {
-                    }
-                    .textCase(nil)
-                    .pickerStyle(.inline)
-                    .onChange(of: isUnsuppress) { newValue, _ in
-                        if newValue {
-                            isSuppress = false
-                        }
-                    }
-                    .padding(.vertical, 1)
-                }
-                
-                /// Acknowledge
-                if selectedEvents.contains(where: { $0.acknowledged == "0" }) {
-                    Picker(selection: $selectedDummy, label: Toggle("Acknowledge:", isOn: $isAcknowledge)) {
-                    }
-                    .textCase(nil)
-                    .pickerStyle(.inline)
-                    .onChange(of: isAcknowledge) { newValue, _ in
-                        if newValue {
-                            isUnacknowledge = false
-                        }
-                    }
-                    .padding(.vertical, 1)
-                }
-                
-                /// Unacknowledge
-                if selectedEvents.contains(where: { $0.acknowledged == "1" }) {
-                    Picker(selection: $selectedDummy, label: Toggle("Unacknowledge:", isOn: $isUnacknowledge)) {
-                    }
-                    .textCase(nil)
-                    .pickerStyle(.inline)
-                    .onChange(of: isUnacknowledge) { newValue, _ in
-                        if newValue {
-                            isAcknowledge = false
-                        }
-                    }
-                    .padding(.vertical, 1)
-                }
-                
-                /// Close Event
-                Picker(selection: $selectedDummy, label: Toggle("Close Event:", isOn: $isCloseEvent)) {
-                }
-                .textCase(nil)
-                .pickerStyle(.inline)
-                .padding(.vertical, 1)
-                
-            }
-            
-            HStack {
-                Spacer()
-                
-                /// Update
-                Button {
-                    dismiss()
-                    
-                    ///Updating Events takes place in a background thread for performance purposes
-                    Task.detached(priority: .background) {
-                        await updateEvents()
-                    }
-                    
-                } label: {
-                    VStack {
-                        Text("Update")
-                            .foregroundColor(.white)
-                    }
-                    .padding(5)
-                }
-                .background(action == 0 ? nil: Color.accentColor)
-                .cornerRadius(5)
-                .disabled(action == 0)
-                
-                /// Cancel
-                Button (role: .cancel) {
-                    dismiss()
-                } label: {
-                    Text("Cancel")
-                        .foregroundColor(.primary)
-                        .cornerRadius(5)
-                }
-            }
-        }
-        .padding()
-#endif
-    }
+/// Names and flags copied off the selected rows before the sheet's task
+/// starts. The task snapshots the draft. It does not read these again,
+/// and it does not hold an `Event`.
+private struct ProblemUpdateSubject: Equatable, Sendable {
+    var name: String
+    var acknowledged: String
+    var suppressed: String
 }
 
-#Preview {
-    UpdateModal(selectedEvents: [])
+struct UpdateModal: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.zabbixWriteService) private var zabbixWriteService
+
+    private let subjects: [ProblemUpdateSubject]
+    @State private var draft: ProblemUpdateDraft
+
+    init(events: [Event] = [], prefill: ProblemUpdateGhost? = nil) {
+        if let prefill {
+            subjects = []
+            _draft = State(initialValue: ProblemUpdateDraft(prefill))
+        } else {
+            subjects = events.map {
+                ProblemUpdateSubject(
+                    name: $0.name,
+                    acknowledged: $0.acknowledged,
+                    suppressed: $0.suppressed
+                )
+            }
+            _draft = State(initialValue: ProblemUpdateDraft(eventIds: events.map(\.eventId)))
+        }
+    }
+
+    var body: some View {
+        ProblemUpdateForm(
+            draft: $draft,
+            eventTitle: eventTitle,
+            showsAcknowledge: showsAcknowledge,
+            showsUnacknowledge: showsUnacknowledge,
+            showsUnsuppress: showsUnsuppress,
+            onUpdate: submit,
+            onCancel: { dismiss() }
+        )
+    }
+
+    private var eventTitle: String {
+        if subjects.count == 1 { return subjects[0].name }
+        let count = subjects.isEmpty ? draft.eventIds.count : subjects.count
+        return "\(count) problems selected"
+    }
+
+    /// A fresh sheet follows the rows. Edit of a failed ask has no rows
+    /// in hand, so every action stays available and `isValid` rejects a
+    /// contradiction.
+    private var showsAcknowledge: Bool {
+        if subjects.isEmpty { return true }
+        return subjects.contains { $0.acknowledged != "1" }
+    }
+
+    private var showsUnacknowledge: Bool {
+        if subjects.isEmpty { return true }
+        return subjects.contains { $0.acknowledged == "1" }
+    }
+
+    private var showsUnsuppress: Bool {
+        if subjects.isEmpty { return true }
+        return subjects.contains { $0.suppressed == "1" }
+    }
+
+    /// Stages the ask, then dismisses. `submit` returns once the ask is
+    /// on screen. The RPC continues after the sheet is gone. The draft
+    /// is a value captured before the task, so the task does not read
+    /// this view's state.
+    private func submit() {
+        let snapshot = draft
+        guard let service = zabbixWriteService else {
+            Logger(subsystem: "zabbix", category: "write")
+                .error("problem update has no write service")
+            OperatorNoticeCenter.shared.post(OperatorNotice(
+                id: "zabbix.write.unavailable",
+                source: .zabbix,
+                severity: .failure,
+                message: "Problem update is unavailable.",
+                occurredAt: Date()
+            ))
+            dismiss()
+            return
+        }
+        Task {
+            _ = await service.submit([ProblemUpdateIntent(draft: snapshot)])
+        }
+        dismiss()
+    }
 }

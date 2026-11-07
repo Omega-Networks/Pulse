@@ -37,7 +37,9 @@ struct StatusCell: View {
             Spacer()
             Text(state)
                 .foregroundColor(stateColor)
+                .contentTransition(.opacity)
                 .opacity(state == "RESOLVED" ? (isVisible ? 1 : 0.2) : 1)
+                .animation(.easeInOut(duration: 0.35), value: state)
                 .animation(.easeInOut(duration: 0.5), value: isVisible)
             Spacer()
         }

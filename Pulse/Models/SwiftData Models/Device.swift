@@ -144,6 +144,10 @@ final class Device {
     var localY: Double = 0
     var highestSeverityStored: Int = -2
     var highestUnacknowledgedSeverityStored: Int = -1
+    /// Active problem counts by severity index 0...5. A row counts when
+    /// it is still a problem (`rClock == "0"` and `suppressed == "0"`).
+    /// A suppressed row does not count.
+    var activeCountsBySeverity: [Int] = [0, 0, 0, 0, 0, 0]
     
     // MARK: - Computed Properties
 
@@ -218,18 +222,11 @@ final class Device {
     
     // MARK: - Event States
     
-    /// Active events that are not suppressed or resolved
+    /// Active problems on this device. A resolved row and a suppressed row are absent.
     private var activeEvents: [Event] {
         events?.filter {
             $0.isStoreBacked && $0.rClock == "0" && $0.suppressed == "0"
         } ?? []
-    }
-    
-    /// Active events that have not been acknowledged
-    private var unacknowledgedEvents: [Event] {
-        activeEvents.filter {
-            $0.acknowledged == "0"
-        }
     }
     
     /// Current highest severity level among active events.
@@ -239,27 +236,46 @@ final class Device {
 
     var highestUnacknowledgedSeverity: Int { highestUnacknowledgedSeverityStored }
 
+    /// Writes the stored severities and `activeCountsBySeverity`.
+    /// Assigns a field only when it changed.
+    func assignActiveSeverity(_ next: ActiveSeverity) {
+        if highestSeverityStored != next.highest {
+            highestSeverityStored = next.highest
+        }
+        if highestUnacknowledgedSeverityStored != next.unacknowledged {
+            highestUnacknowledgedSeverityStored = next.unacknowledged
+        }
+        if activeCountsBySeverity != next.counts {
+            activeCountsBySeverity = next.counts
+        }
+    }
+
+    /// Writes the stored severities from this device's active problems.
+    /// A device with no Zabbix host stores -2, -1, and zeros. This is the
+    /// boot walk: it stamps `siteId`, and `hostId` where that is still 0.
+    /// The host stamp is a one-time migration for rows written before
+    /// the field was filled. A set `hostId` is left alone. A problem
+    /// pull does not call this walk.
     func refreshSeverityFromEvents() {
-        guard zabbixId != 0 else {
-            highestSeverityStored = -2
-            highestUnacknowledgedSeverityStored = -1
+        if zabbixId == 0 {
+            assignActiveSeverity(.unmonitored)
             return
         }
-        let active = activeEvents
-        highestSeverityStored = active.compactMap { Int($0.severity) }.max() ?? -1
-        highestUnacknowledgedSeverityStored =
-            unacknowledgedEvents.compactMap { Int($0.severity) }.max() ?? -1
+        if let events {
+            let resolved = resolvedSiteId
+            for event in events where event.isStoreBacked {
+                if resolved != 0, event.siteId != resolved {
+                    event.siteId = resolved
+                }
+                event.stampHostIdIfMissing(from: self)
+            }
+        }
+        var next = ActiveSeverity()
+        for event in activeEvents {
+            next.observe(severity: event.severity, acknowledged: event.acknowledged)
+        }
+        assignActiveSeverity(next)
     }
-    
-     /// Count of active events grouped by severity level
-     var eventCountBySeverity: [String: Int] {
-         guard let events = events else { return [:] }
-         return events
-             .filter { $0.isStoreBacked && $0.rClock == "0" }
-             .reduce(into: [:]) { counts, event in
-                 counts[event.severity, default: 0] += 1
-             }
-     }
     
     // MARK: - Visual Properties
     
@@ -311,6 +327,34 @@ final class Device {
         let b = Double(rgb & 0x0000FF) / 255.0
 
         return Color(red: r, green: g, blue: b)
+    }
+}
+
+/// Open-problem tally for one device. Six counts, index is severity 0...5.
+/// `highest` starts at -1 (no problem). `unmonitored` is a device with no
+/// Zabbix host.
+struct ActiveSeverity: Equatable {
+    var counts: [Int] = [0, 0, 0, 0, 0, 0]
+    var highest: Int = -1
+    var unacknowledged: Int = -1
+
+    static let unmonitored = ActiveSeverity(
+        counts: [0, 0, 0, 0, 0, 0],
+        highest: -2,
+        unacknowledged: -1
+    )
+
+    mutating func observe(severity raw: String, acknowledged: String) {
+        guard let severity = Int(raw) else { return }
+        if (0...5).contains(severity) {
+            counts[severity] += 1
+        }
+        if severity > highest {
+            highest = severity
+        }
+        if acknowledged == "0", severity > unacknowledged {
+            unacknowledged = severity
+        }
     }
 }
 

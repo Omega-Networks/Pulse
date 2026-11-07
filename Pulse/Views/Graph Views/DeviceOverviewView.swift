@@ -25,18 +25,15 @@
 
 import SwiftUI
 import Charts
-import SwiftData
 
 //#if os(macOS)
 struct DeviceOverviewView: View {
-    @Environment(\.modelContext) private var modelContext
     let deviceId: Int64
     
     // State for the two items
     @State private var icmpPingItem: Item?
     @State private var icmpResponseTimeItem: Item?
     
-    @State private var defaultPeriod: (Date, Date) = (Calendar.current.date(byAdding: .hour, value: -3, to: Date())!, Date())
     @State private var icmpPingHistoryData: [Date: String] = [:]
     @State private var icmpResponseTimeHistoryData: [Date: String] = [:]
     
@@ -53,7 +50,7 @@ struct DeviceOverviewView: View {
 #endif
     
     var icmpPingData: [(startDate: Date, endDate: Date, value: String, duration: TimeInterval)] {
-        let sortedHistory = icmpPingFilteredHistory.sorted { $0.key > $1.key }
+        let sortedHistory = icmpPingHistoryData.sorted { $0.key < $1.key }
         var result: [(startDate: Date, endDate: Date, value: String, duration: TimeInterval)] = []
         var currentValue: String = ""
         var currentStartDate: Date = Date.distantPast
@@ -76,16 +73,6 @@ struct DeviceOverviewView: View {
         return result
     }
     
-    var icmpPingFilteredHistory: [Date: String] {
-        let (startDate, _) = defaultPeriod
-        return icmpPingHistoryData.filter { $0.key >= startDate }
-    }
-    
-    var icmpResponseTimeFilteredHistory: [Date: String] {
-        let (startDate, _) = defaultPeriod
-        return icmpResponseTimeHistoryData.filter { $0.key >= startDate }
-    }
-    
     var totalDuration: TimeInterval {
         icmpPingData.reduce(0) { total, dataItem in
             total + dataItem.duration
@@ -93,7 +80,7 @@ struct DeviceOverviewView: View {
     }
     
     var icmpResponseTimeLast: String? {
-        guard let lastValue = icmpResponseTimeFilteredHistory.values.compactMap(Double.init).last else {
+        guard let lastValue = icmpResponseTimeHistoryData.values.compactMap(Double.init).last else {
             return "N/A"
         }
         let milliseconds = Int(lastValue * 1000)
@@ -139,7 +126,7 @@ struct DeviceOverviewView: View {
                             .padding(.bottom, 1)
                         
                         Chart {
-                            let historyArray = icmpResponseTimeFilteredHistory.sorted(by: { $0.key < $1.key })
+                            let historyArray = icmpResponseTimeHistoryData.sorted(by: { $0.key < $1.key })
                             ForEach(historyArray, id: \.key) { (date, value) in
                                 LineMark(
                                     x: .value("Date", date),
@@ -175,7 +162,12 @@ struct DeviceOverviewView: View {
 #if os(iOS)
         .frame(width: chartSize * 1.5, height: chartSize * 1.5)
 #endif
-        .task {
+        .zabbixItemLoad(deviceId: deviceId) {
+            icmpPingItem = nil
+            icmpResponseTimeItem = nil
+            icmpPingHistoryData = [:]
+            icmpResponseTimeHistoryData = [:]
+        } load: {
             await loadItems()
         }
     }
@@ -184,90 +176,39 @@ struct DeviceOverviewView: View {
     
     private func loadItems() async {
         let items = await ItemCache.shared.getItems(forDeviceId: deviceId)
-        
-        // Find our specific items
-        await MainActor.run {
-            self.icmpPingItem = items.first(where: { $0.name == "ICMP ping" })
-            self.icmpResponseTimeItem = items.first(where: { $0.name == "ICMP response time" })
-        }
-        
-        // Fetch history data for both items
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                await fetchIcmpPingHistoryData()
-            }
-            group.addTask {
-                await fetchIcmpResponseTimeHistoryData()
-            }
-        }
+        guard !Task.isCancelled else { return }
+        icmpPingItem = items.first { $0.name == "ICMP ping" }
+        icmpResponseTimeItem = items.first { $0.name == "ICMP response time" }
+        await fetchIcmpPingHistoryData()
+        await fetchIcmpResponseTimeHistoryData()
     }
     
     private func fetchIcmpPingHistoryData() async {
-        guard let item = icmpPingItem else { return }
-        print("Fetching ICMP Ping data")
-        
-        let historyFetcher = HistoryFetcher(modelContainer: modelContext.container)
-        let (fetchedData, isPartialData) = await historyFetcher.getHistories(
-            deviceId: deviceId,
+        guard let item = icmpPingItem else {
+            icmpPingHistoryData = [:]
+            return
+        }
+        let fetchedData = await HistoryFetcher().getHistories(
             itemId: item.itemId,
             selectedPeriod: "3H",
             valueType: item.valueType
         )
-        
-        await MainActor.run {
-            icmpPingHistoryData = fetchedData
-        }
-        
-        if isPartialData {
-            let itemId = item.itemId
-            let valueType = item.valueType
-            
-            Task.detached(priority: .background) {
-                let (completeData, _) = await historyFetcher.getHistories(
-                    deviceId: deviceId,
-                    itemId: itemId,
-                    selectedPeriod: "3H",
-                    valueType: valueType
-                )
-                await MainActor.run {
-                    self.icmpPingHistoryData = completeData
-                }
-            }
-        }
+        guard !Task.isCancelled else { return }
+        icmpPingHistoryData = fetchedData
     }
     
     private func fetchIcmpResponseTimeHistoryData() async {
-        guard let item = icmpResponseTimeItem else { return }
-        print("Fetching ICMP Response Time data")
-        
-        let historyFetcher = HistoryFetcher(modelContainer: modelContext.container)
-        let (fetchedData, isPartialData) = await historyFetcher.getHistories(
-            deviceId: deviceId,
+        guard let item = icmpResponseTimeItem else {
+            icmpResponseTimeHistoryData = [:]
+            return
+        }
+        let fetchedData = await HistoryFetcher().getHistories(
             itemId: item.itemId,
             selectedPeriod: "3H",
             valueType: item.valueType
         )
-        
-        await MainActor.run {
-            icmpResponseTimeHistoryData = fetchedData
-        }
-        
-        if isPartialData {
-            let itemId = item.itemId
-            let valueType = item.valueType
-            
-            Task.detached(priority: .background) {
-                let (completeData, _) = await historyFetcher.getHistories(
-                    deviceId: deviceId,
-                    itemId: itemId,
-                    selectedPeriod: "3H",
-                    valueType: valueType
-                )
-                await MainActor.run {
-                    self.icmpResponseTimeHistoryData = completeData
-                }
-            }
-        }
+        guard !Task.isCancelled else { return }
+        icmpResponseTimeHistoryData = fetchedData
     }
 }
 //#endif

@@ -138,41 +138,6 @@ struct DeviceView: View {
         return device == selectedDevice
     }
     
-    //TODO: Refine logic with showing resolved event squares
-    /**
-     Determines the system image name and resolution state based on event count.
-     
-     This function handles the visual representation of event counts:
-     - For counts > 50: Shows an exclamation mark
-     - For resolved events: Shows a checkmark
-     - For other cases: Shows the numeric count of unresolved events
-     
-     - Parameters:
-     - count: The number of events to represent
-     - events: Array of events to check for resolution status
-     - Returns: A tuple containing the system image name and whether all events are resolved
-     */
-    func imageName(for count: Int, events: [Event]) -> (name: String, isResolved: Bool) {
-        // First check if we have any events
-        guard !events.isEmpty else {
-            return ("\(count).square.fill", false)
-        }
-        
-        // If ANY event is resolved, show the checkmark
-        let hasResolvedEvent = events.contains { $0.state == "RESOLVED" }
-        
-        if hasResolvedEvent {
-            return ("checkmark.square.fill", true)
-        }
-        
-        // Handle overflow case
-        if count > 50 {
-            return ("exclamationmark.square.fill", false)
-        }
-
-        return ("\(count).square.fill", false)
-    }
-
     /// Hover shows it, a press sinks it, and a drag keeps it away.
     private var plusPresented: Bool {
         enableGestures && isHovering && !drawingCable && !plusHeld && !dragging && seats.allowsActions(deviceID: device.id)
@@ -292,7 +257,7 @@ struct DeviceView: View {
             .foregroundStyle(device.graphStrokeColor, device.unacknowledgedSeverityColor)
             .shadow(color: device.graphStrokeColor.opacity(0.7), radius: 2)
             .font(.system(size: 50, weight: .regular))
-            .animation(.easeInOut(duration: 0.2), value: device.highestUnacknowledgedSeverityStored)
+            .animation(.easeInOut(duration: 1), value: iconPaint)
             .overlay( //MARK: This overlay enables us to compute the bounding rectangle of the Image struct.
                 GeometryReader { geometry in
                     Color.clear
@@ -339,36 +304,25 @@ struct DeviceView: View {
 #endif
     }
     
-    /**
-     Creates and returns the event indicator view.
-     
-     This view displays status indicators for device events, including:
-     - Event counts by severity
-     - Resolution status
-     - Color coding based on severity
-     
-     - Returns: A view containing the event indicators
-     */
+    /// Active-problem squares for this device. The spring is on this row only.
     private var eventIndicators: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(eventsCountBySeverity.keys).sorted(), id: \.self) { key in
-                if let eventsForSeverity = device.events?.filter({ $0.severity == key }) {
-                    
-                    let count = eventsForSeverity.count
-                    let symbol = imageName(for: count, events: eventsForSeverity)
-                    
-                    Image(systemName: symbol.name)
-                        .symbolRenderingMode(.palette)
-                        .contentTransition(.symbolEffect(.replace))
-                        .transition(.symbolEffect(.automatic))
-                        .font(.system(size: 16.5))
-                        .shadow(color: Color.black, radius: 1)
-                        .foregroundStyle(Color.primary,
-                                         symbol.isResolved ? .green : severitySquareColor(for: Int64(key)))
-                        .frame(width: 15, height: 15)
-                }
+        let squares = problemSquares
+        return HStack(spacing: 0) {
+            ForEach(squares) { square in
+                Image(systemName: square.symbol)
+                    .symbolRenderingMode(.palette)
+                    .contentTransition(.symbolEffect(.replace))
+                    .transition(.symbolEffect(.automatic))
+                    .font(.system(size: 16.5))
+                    .shadow(color: Color.black, radius: 1)
+                    .foregroundStyle(
+                        Color.primary,
+                        severitySquareColor(for: Int64(square.severity))
+                    )
+                    .frame(width: 15, height: 15)
             }
         }
+        .animation(.spring(duration: 0.55, bounce: 0.32), value: squares)
     }
     
     /**
@@ -436,12 +390,41 @@ private struct RackDeviceDragModifier: ViewModifier {
 }
 #endif
 
+private struct IconPaint: Equatable {
+    var stroke: Color
+    var fill: Color
+}
+
+private struct ProblemSquare: Equatable, Identifiable {
+    var severity: String
+    var symbol: String
+    var id: String { severity }
+}
+
 extension DeviceView {
-    private var eventsCountBySeverity: [String: Int] {
-        // Use the persisted summary instead of computing from @Transient array
-        device.eventCountBySeverity
+    /// Stroke and fill of the icon. The one-second ease is attached to
+    /// this, not to the site graph's device query, so one device can
+    /// change colour without springing every node.
+    private var iconPaint: IconPaint {
+        IconPaint(stroke: device.graphStrokeColor, fill: device.unacknowledgedSeverityColor)
     }
-    
+
+    /// One square per severity with an active problem. The number is the
+    /// stored count. Over 50 is the exclamation glyph. Identity is the
+    /// severity, so a count change rolls the glyph and an added or
+    /// removed severity slides its neighbours.
+    private var problemSquares: [ProblemSquare] {
+        let counts = device.activeCountsBySeverity
+        return (0..<6).compactMap { severity in
+            let count = severity < counts.count ? counts[severity] : 0
+            guard count > 0 else { return nil }
+            let symbol = count > 50
+                ? "exclamationmark.square.fill"
+                : "\(count).square.fill"
+            return ProblemSquare(severity: String(severity), symbol: symbol)
+        }
+    }
+
     /**
      Determines the display color for a given severity level.
      
@@ -550,10 +533,10 @@ extension DeviceView {
                         .padding(.horizontal)
                     
                     if device.deviceRole?.name ?? "" == "Security Router" {
-                        ItemChart(deviceId: device.id, item: "CPU usage")
+                        ItemChart(deviceId: device.zabbixId, item: "CPU usage")
                             .padding(.horizontal)
                         
-                        ItemChart(deviceId: device.id, item: "Memory usage")
+                        ItemChart(deviceId: device.zabbixId, item: "Memory usage")
                             .padding(.horizontal)
                     }
                     

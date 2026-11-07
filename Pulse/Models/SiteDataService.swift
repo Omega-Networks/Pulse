@@ -50,7 +50,72 @@ actor SiteDataService {
         default:
             break
         }
-        OperatorNoticeCenter.shared.clear(source: .zabbix)
+        OperatorNoticeCenter.shared.clear(id: OperatorNotice.zabbixStatusID)
+    }
+
+    /// Deletes every stored event and clears the severity those rows had
+    /// written. Squares read the stored ints, so a host stays lit until
+    /// this write. One context, one save. Returns false when the save fails.
+    func deleteAllEvents() async -> Bool {
+        let logger = Logger(subsystem: "zabbix", category: "eventProcessing")
+        do {
+            let context = makeContext()
+            let events = try context.fetch(FetchDescriptor<Event>())
+            var devices = Set<Device>()
+            var hostIds = Set<Int64>()
+            for event in events {
+                if let device = event.device {
+                    devices.insert(device)
+                }
+                if event.hostId != 0 {
+                    hostIds.insert(event.hostId)
+                }
+                context.delete(event)
+            }
+            for batch in chunk(array: Array(hostIds), size: 200) {
+                let ids = batch
+                let fetched = try context.fetch(
+                    FetchDescriptor<Device>(
+                        predicate: #Predicate<Device> { device in
+                            ids.contains(device.zabbixId)
+                        }
+                    )
+                )
+                for device in fetched {
+                    devices.insert(device)
+                }
+            }
+            var siteIds = Set<Int64>()
+            for device in devices {
+                let cleared = device.zabbixId == 0 ? ActiveSeverity.unmonitored : ActiveSeverity()
+                device.assignActiveSeverity(cleared)
+                if device.siteId != 0 {
+                    siteIds.insert(device.siteId)
+                } else if let site = device.site {
+                    siteIds.insert(site.id)
+                }
+            }
+            for batch in chunk(array: Array(siteIds), size: 200) {
+                let ids = batch
+                let sites = try context.fetch(
+                    FetchDescriptor<Site>(
+                        predicate: #Predicate<Site> { site in
+                            ids.contains(site.id)
+                        }
+                    )
+                )
+                for site in sites {
+                    site.refreshSeverityFromDevices()
+                }
+            }
+            if context.hasChanges {
+                try context.save()
+            }
+            return true
+        } catch {
+            logger.error("Failed to delete events: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
     }
 
     @MainActor
@@ -73,65 +138,6 @@ actor SiteDataService {
             throw error
         }
     }
-    
-    //MARK: - WIP: loadItems function with TaskGroup
-    
-    //    func loadItems(for siteId: Int64) async throws {
-    //        // Create local context
-    //        let localContext = ModelContext(modelContainer)
-    //
-    //        // Create and execute fetch descriptor
-    //        let descriptor = FetchDescriptor<Device>(
-    //            predicate: #Predicate<Device> { device in
-    //                device.siteId == siteId && device.zabbixId != 0
-    //            }
-    //        )
-    //
-    //        let devices = try localContext.fetch(descriptor)
-    //
-    //        // Extract both IDs we need into a sendable collection
-    //        let deviceZabbixIds = devices.map { $0.zabbixId }
-    //
-    //        print("Verifying devices with Zabbix IDs")
-    //
-    //        for id in deviceZabbixIds {
-    //            print("Verifying device with Zabbix ID: \(id)")
-    //        }
-    //
-    //        for device in devices {
-    //            print("Device name: \(device.name ?? "Unknown Device Name") \n NetBox ID: \(device.id) \n Zabbix ID: \(device.zabbixId)")
-    //        }
-    //
-    //        try await withThrowingTaskGroup(of: Void.self) { group in
-    //            for deviceZabbixId in deviceZabbixIds {
-    //                group.addTask { [deviceZabbixId] in  // Explicitly capture ids
-    //
-    //                    print("Device Zabbix ID: \(deviceZabbixId)")
-    //
-    //                    let itemProperties = try await fetchItems(hostId: deviceZabbixId)
-    //                    let items = itemProperties.map { itemProperty in
-    //                        var item = Item(itemId: itemProperty.itemId)
-    //                        item.name = itemProperty.name
-    //                        item.trends = itemProperty.trends
-    //                        item.status = itemProperty.status
-    //                        item.units = itemProperty.units
-    //                        item.templateId = itemProperty.templateId
-    //                        item.valueType = itemProperty.valueType
-    //                        item.itemDescription = itemProperty.itemDescription
-    //                        item.tags = itemProperty.tags
-    //                        return item
-    //                    }
-    //
-    //                    await ItemCache.shared.setItems(items, forDeviceId: deviceZabbixId)
-    //                }
-    //            }
-    //
-    //            try await group.waitForAll()
-    //        }
-    //    }
-    
-    
-    //MARK: - Current loadItems function without TaskGroup
     
     func getItems(for siteId: Int64) async throws {
         
@@ -189,61 +195,90 @@ actor SiteDataService {
             if let eventIds = eventIds {
                 logger.debug("Fetching specific events: \(eventIds)")
                 let decoded = try await fetchHostProblems(eventIds: eventIds)
-                await processEvents(decoded.items, modelContainer: modelContainer)
-                try stampZabbixUpdate()
-                
+                let inserted = try await applyProblems(decoded.items, deleteAbsent: false)
+                if !inserted.isEmpty {
+                    await getEvents(using: inserted)
+                }
             } else if let hostIds = hostIds {
                 logger.debug("Fetching problems for hosts: \(hostIds)")
                 let decoded = try await fetchHostProblems(hostIds: hostIds)
-                await processEvents(decoded.items, modelContainer: modelContainer)
-                try stampZabbixUpdate()
-                
+                let inserted = try await applyProblems(decoded.items, deleteAbsent: false)
+                if !inserted.isEmpty {
+                    await getEvents(using: inserted)
+                }
             } else {
-                // Full sync path
-                let context = ModelContext(modelContainer)
-                
-                // Fetch all devices with zabbixId and batch process
-                let deviceFetchDescriptor = FetchDescriptor<Device>(
-                    predicate: #Predicate<Device> { $0.zabbixId != 0 }
-                )
-                let devices = (try? context.fetch(deviceFetchDescriptor)) ?? []
-                logger.debug("Found \(devices.count) devices to process")
-                
-                let zabbixIds = Array(Set(devices.map { String($0.zabbixId) }))
+                // Full sync. Host ids are paged and that context is gone
+                // before the network calls. `recent: true` returns the
+                // open problems for every stored host and the recently
+                // resolved ones. A complete pull deletes stale ids on
+                // the write context. `skipped != 0` skips the delete.
+#if DEBUG
+                let started = ContinuousClock.now
+                defer {
+                    logger.info("timing getProblems \(netBoxTimingMilliseconds(since: started))ms")
+                }
+#endif
+                let zabbixIds = try pagedZabbixHostIds()
+                logger.debug("Found \(zabbixIds.count) devices to process")
+
                 let batches = chunk(array: zabbixIds, size: batchSize)
                 logger.debug("Created \(batches.count) batches of size \(batchSize)")
 
-                let parts = try await mapZabbixBatchesCapped(batches) { index, batch in
-                    logger.debug("Processing problem batch \(index + 1)/\(batches.count)")
-                    return try await fetchHostProblems(hostIds: batch)
-                }
-                var items: [EventProperties] = []
-                var skipped = 0
-                for part in parts {
-                    items.append(contentsOf: part.items)
-                    skipped += part.skipped
-                }
-                await processEvents(items, modelContainer: modelContainer)
-
-                let currentEventIds = Set(items.map(\.eventId))
-                let fetchComplete = skipped == 0
-                if fetchComplete {
-                    logger.debug("Cleaning up old events")
-                    try context.delete(
-                        model: Event.self,
-                        where: #Predicate<Event> { event in
-                            !currentEventIds.contains(event.eventId)
+                let batchCount = batches.count
+                let inserted = try await withThrowingTaskGroup(
+                    of: ZabbixJSONRPC.DecodedList<EventProperties>.self,
+                    returning: [String].self
+                ) { group in
+                    let context = makeContext()
+                    let pull = ProblemPull()
+                    var iterator = batches.enumerated().makeIterator()
+                    func submitNext() {
+                        guard let (index, batch) = iterator.next() else { return }
+                        group.addTask {
+                            try await zabbixBatchAttempt(index: index, batch: batch) { index, batch in
+                                logger.debug("Processing problem batch \(index + 1)/\(batchCount)")
+                                return try await fetchHostProblems(hostIds: batch)
+                            }
                         }
-                    )
-                    try context.save()
-                    refreshSeverities(in: context)
-                    try context.save()
-                } else {
-                    logger.debug("Skipping stale-event delete; skipped=\(skipped)")
+                    }
+                    for _ in 0..<min(zabbixBatchesInFlight, batches.count) {
+                        submitNext()
+                    }
+                    while let part = try await group.next() {
+                        pull.skipped += part.skipped
+                        try upsertProblemBatch(part.items, into: context, pull: pull)
+                        submitNext()
+                    }
+                    if pull.skipped != 0 {
+                        logger.debug("Skipping stale-event delete; skipped=\(pull.skipped)")
+                    }
+                    var staleDeviceIds: [Int64] = []
+                    if pull.skipped == 0 {
+                        let stale = try staleProblemRows(absentFrom: pull.present)
+                        staleDeviceIds = stale.deviceIds
+                        try deleteEvents(ids: stale.eventIds, in: context)
+                    }
+                    if !pull.changed.isEmpty || !staleDeviceIds.isEmpty {
+                        try refreshApplied(
+                            events: pull.changed,
+                            staleDeviceIds: staleDeviceIds,
+                            in: context
+                        )
+                    }
+                    try stampZabbixUpdate(in: context)
+                    if context.hasChanges {
+#if DEBUG
+                        let saveStarted = ContinuousClock.now
+#endif
+                        try context.save()
+#if DEBUG
+                        logger.info("timing problemSave \(netBoxTimingMilliseconds(since: saveStarted))ms")
+#endif
+                    }
+                    return pull.inserted
                 }
-
-                if fetchComplete {
-                    try stampZabbixUpdate()
+                if !inserted.isEmpty {
+                    await getEvents(using: inserted)
                 }
             }
 
@@ -255,33 +290,24 @@ actor SiteDataService {
             await MainActor.run { Self.publishZabbixFailure(error) }
         }
     }
-    
-    // Helper function to process events
-    private func processEvents(_ eventPropertiesList: [EventProperties], modelContainer: ModelContainer) async {
+
+    /// Writes one pull on one context and saves once. Returns the ids of
+    /// rows that were inserted. The caller maps those through `getEvents`,
+    /// which is a network call and must see the saved insert. A quiet pull
+    /// still stamps `lastZabbixUpdate`, so that one row saves even when no
+    /// event changed.
+    private func applyProblems(
+        _ eventPropertiesList: [EventProperties],
+        deleteAbsent: Bool
+    ) async throws -> [String] {
         let logger = Logger(subsystem: "zabbix", category: "eventProcessing")
-        let context = ModelContext(modelContainer)
-        
+        let context = makeContext()
         logger.debug("Starting to process \(eventPropertiesList.count) events")
-        
-        // First, fetch all existing events that match our incoming eventIds
-        let eventIds = eventPropertiesList.map { $0.eventId }
-        let descriptor = FetchDescriptor<Event>(
-            predicate: #Predicate<Event> { event in
-                eventIds.contains(event.eventId)
-            }
-        )
-        
-        let existingEvents = (try? context.fetch(descriptor)) ?? []
-        logger.debug("Fetched \(existingEvents.count) existing events")
 
         // Last-wins. `uniqueKeysWithValues` traps in Release when
         // problem.get returns the same eventid twice (duplicate zabbix
         // host ids, overlapping batches, or a trigger on more than one
         // host).
-        let existingEventsDict = Dictionary(
-            existingEvents.map { ($0.eventId, $0) },
-            uniquingKeysWith: { _, last in last }
-        )
         let propertiesDict = Dictionary(
             eventPropertiesList.map { ($0.eventId, $0) },
             uniquingKeysWith: { _, last in last }
@@ -291,270 +317,535 @@ actor SiteDataService {
                 "Collapsed \(eventPropertiesList.count - propertiesDict.count) duplicate problem rows"
             )
         }
-        
-        logger.debug("Created lookup dictionaries")
-        
-        // Update existing events
+
+        let existingEventsDict = try eventsById(Array(propertiesDict.keys), in: context)
+        logger.debug("Fetched \(existingEventsDict.count) existing events")
+
+        var changedEvents: [Event] = []
         var updateCount = 0
         for (eventId, event) in existingEventsDict {
-            if let properties = propertiesDict[eventId] {
-                event.update(with: properties)
+            if let properties = propertiesDict[eventId], event.update(with: properties) {
+                changedEvents.append(event)
                 updateCount += 1
             }
         }
-        
         logger.debug("Updated \(updateCount) events")
-        
-        // Insert new events
-        let newEventIds = Set(eventIds).subtracting(existingEventsDict.keys)
-        var insertCount = 0
+
         var insertedEventIds: [String] = []
-        var insertedEvents: [Event] = []
-        
+        let newEventIds = Set(propertiesDict.keys).subtracting(existingEventsDict.keys)
         for eventId in newEventIds {
-            if let properties = propertiesDict[eventId] {
-                let event = Event(eventId: eventId)
-                event.update(with: properties)
-                context.insert(event)
-                insertCount += 1
-                insertedEventIds.append(eventId)
-                insertedEvents.append(event)
-            }
+            guard let properties = propertiesDict[eventId] else { continue }
+            let event = Event(eventId: eventId)
+            event.update(with: properties)
+            context.insert(event)
+            insertedEventIds.append(eventId)
         }
-        
-        logger.debug("Inserted \(insertCount) new events")
-        
-        do {
+        logger.debug("Inserted \(insertedEventIds.count) new events")
+
+        var staleDeviceIds: [Int64] = []
+        if deleteAbsent {
+            logger.debug("Cleaning up old events")
+            let stale = try staleProblemRows(absentFrom: Set(propertiesDict.keys))
+            staleDeviceIds = stale.deviceIds
+            try deleteEvents(ids: stale.eventIds, in: context)
+        }
+
+        if !changedEvents.isEmpty || !staleDeviceIds.isEmpty {
+            try refreshApplied(
+                events: changedEvents,
+                staleDeviceIds: staleDeviceIds,
+                in: context
+            )
+        }
+
+        try stampZabbixUpdate(in: context)
+        if context.hasChanges {
+#if DEBUG
+            let started = ContinuousClock.now
+#endif
             try context.save()
+#if DEBUG
+            Logger(subsystem: "zabbix", category: "problemSync")
+                .info("timing problemSave \(netBoxTimingMilliseconds(since: started))ms")
+#endif
             logger.debug("Successfully saved context")
-            let touched = Array(existingEventsDict.values) + insertedEvents
-            refreshSeverities(in: context, events: touched)
-            try? context.save()
-            
-            // Map devices for newly inserted events
-            if !insertedEventIds.isEmpty {
-                logger.debug("Mapping devices for \(insertedEventIds.count) new events")
-                await self.getEvents(using: insertedEventIds)
-            }
-            
-            // Total processing statistics
-            logger.debug("""
-                Event processing completed:
-                - Processed: \(eventPropertiesList.count) events
-                - Updated: \(updateCount) events
-                - Inserted: \(insertCount) events
-                - Device mappings: \(insertedEventIds.count) events
-                """)
-        } catch {
-            logger.error("Failed to save context: \(error.localizedDescription)")
         }
-        
-        if updateCount + insertCount != eventPropertiesList.count {
-            logger.warning("Mismatch in event counts. Expected \(eventPropertiesList.count), processed \(updateCount + insertCount)")
-        }
+        return insertedEventIds
     }
     
     func getEvents(using eventIds: [String]? = nil, deviceIds: [String]? = nil) async {
         let logger = Logger(subsystem: "zabbix", category: "eventSync")
         let batchSize = 200
-        
+
         logger.debug("Starting event sync process")
-        
+
         do {
-            // Determine fetch mode and get relevant devices
-            let devices: [Device]
-            if let deviceIds = deviceIds {
-                logger.debug("Fetching events for specific devices: \(deviceIds)")
-                let context = ModelContext(modelContainer)
-                let ids = deviceIds.compactMap { Int64($0) }
-                let descriptor = FetchDescriptor<Device>(
-                    predicate: #Predicate<Device> { device in
-                        device.zabbixId != 0 && ids.contains(device.id)
-                    }
-                )
-                devices = (try? context.fetch(descriptor)) ?? []
-                
-            } else if eventIds == nil {
-                // Full sync mode
-                logger.debug("Performing full event sync")
-                let context = ModelContext(modelContainer)
-                let descriptor = FetchDescriptor<Device>(
-                    predicate: #Predicate<Device> { $0.zabbixId != 0 }
-                )
-                devices = (try? context.fetch(descriptor)) ?? []
-            } else {
-                // Event mapping mode - we'll fetch devices later based on API response
-                devices = []
-            }
-            
-            // Prepare API request parameters
+            // Host ids for the API. The context that reads them ends
+            // before the network call. `deviceIds` are NetBox ids.
             let apiParameters: [String]
-            if let eventIds = eventIds {
+            if let eventIds {
                 apiParameters = eventIds
+            } else if let deviceIds {
+                logger.debug("Fetching events for specific devices: \(deviceIds)")
+                apiParameters = try zabbixHostIds(forDeviceIds: deviceIds)
             } else {
-                apiParameters = Array(Set(devices.map { String($0.zabbixId) }))
+                logger.debug("Performing full event sync")
+                apiParameters = try pagedZabbixHostIds()
             }
-            
+
             let batches = chunk(array: apiParameters, size: batchSize)
             logger.debug("Created \(batches.count) batches for processing")
 
-            let mapped = try await mapZabbixBatchesCapped(batches) { index, batch in
-                logger.debug("Processing event batch \(index + 1)/\(batches.count)")
-                let decoded = try await fetchHostEvents(
-                    hostIds: eventIds == nil ? batch : nil,
-                    eventIds: eventIds != nil ? batch : nil
-                )
-                return decoded.items.flatMap { event in
-                    event.hostIds.map { hostId in (hostId, [event]) }
-                }
-            }
-
-            let context = ModelContext(modelContainer)
-            var mappedEvents: [Event] = []
-            for batchResults in mapped {
-                for (hostId, events) in batchResults {
-                    let device: Device?
-                    if let existingDevice = devices.first(where: { String($0.zabbixId) == hostId }) {
-                        device = existingDevice
-                    } else {
-                        let zabbixIdInt = Int64(hostId) ?? 0
-                        let descriptor = FetchDescriptor<Device>(
-                            predicate: #Predicate<Device> { $0.zabbixId == zabbixIdInt }
-                        )
-                        device = try? context.fetch(descriptor).first
-                    }
-
-                    guard device != nil else { continue }
-
-                    for eventProperty in events {
-                        let searchEventId = eventProperty.eventId
-                        let descriptor = FetchDescriptor<Event>(
-                            predicate: #Predicate<Event> { event in
-                                event.eventId == searchEventId
+            let scopedToEvents = eventIds != nil
+            let batchCount = batches.count
+            try await withThrowingTaskGroup(of: [(String, [EventProperties])].self) { group in
+                let context = makeContext()
+                let pull = EventPull()
+                var iterator = batches.enumerated().makeIterator()
+                func submitNext() {
+                    guard let (index, batch) = iterator.next() else { return }
+                    group.addTask {
+                        try await zabbixBatchAttempt(index: index, batch: batch) { index, batch in
+                            logger.debug("Processing event batch \(index + 1)/\(batchCount)")
+                            let decoded = try await fetchHostEvents(
+                                hostIds: scopedToEvents ? nil : batch,
+                                eventIds: scopedToEvents ? batch : nil
+                            )
+                            return decoded.items.flatMap { event in
+                                event.hostIds.map { hostId in (hostId, [event]) }
                             }
-                        )
-
-                        if let existing = try? context.fetch(descriptor).first {
-                            existing.update(with: eventProperty, device: device)
-                            mappedEvents.append(existing)
-                        } else {
-                            let event = Event(eventId: searchEventId)
-                            event.update(with: eventProperty, device: device)
-                            context.insert(event)
-                            mappedEvents.append(event)
                         }
                     }
                 }
+                for _ in 0..<min(zabbixBatchesInFlight, batches.count) {
+                    submitNext()
+                }
+                while let batchResults = try await group.next() {
+                    try applyEventBatch(batchResults, into: context, pull: pull)
+                    submitNext()
+                }
+                if !pull.changed.isEmpty {
+                    var devices: [Device] = []
+                    var seen = Set<Int64>()
+                    for event in pull.changed {
+                        if event.hostId != 0,
+                           let device = pull.devicesByHost[String(event.hostId)],
+                           seen.insert(device.id).inserted {
+                            devices.append(device)
+                        }
+                        if let device = event.device, seen.insert(device.id).inserted {
+                            devices.append(device)
+                        }
+                    }
+                    try storeActiveCounts(on: devices, in: context)
+                }
+                if context.hasChanges {
+#if DEBUG
+                    let started = ContinuousClock.now
+#endif
+                    try context.save()
+#if DEBUG
+                    logger.info("timing eventSave \(netBoxTimingMilliseconds(since: started))ms")
+#endif
+                }
             }
-            try context.save()
-            refreshSeverities(in: context, events: mappedEvents)
-            try? context.save()
-            
+
             logger.debug("Event sync completed successfully")
-            
+
         } catch {
-            logger.error("Failed to sync events: \(error.localizedDescription)")
+            logger.error("Failed to sync events: \(error.localizedDescription, privacy: .public)")
+            await MainActor.run { Self.publishZabbixFailure(error) }
         }
     }
 
-    private func stampZabbixUpdate() throws {
-        let context = ModelContext(modelContainer)
+    /// Stamps the freshness row on the context that is about to save.
+    /// A new `Date` dirties that one row even when no event changed.
+    private func stampZabbixUpdate(in context: ModelContext) throws {
         if let syncProvider = try context.fetch(FetchDescriptor<SyncProvider>()).first {
             syncProvider.lastZabbixUpdate = Date()
-            try context.save()
         }
     }
 
-    private func mapZabbixBatchesCapped<Out: Sendable>(
-        _ batches: [[String]],
-        operation: @escaping @Sendable (Int, [String]) async throws -> Out
-    ) async throws -> [Out] {
-        let maxInFlight = 4
-        let maxRetries = 3
-        return try await withThrowingTaskGroup(of: Out.self) { group in
-            var iterator = batches.enumerated().makeIterator()
-            func submitNext() {
-                guard let (index, batch) = iterator.next() else { return }
-                group.addTask {
-                    var lastError: Error?
-                    for attempt in 1...maxRetries {
-                        do {
-                            return try await operation(index, batch)
-                        } catch {
-                            lastError = error
-                            if attempt < maxRetries {
-                                try await Task.sleep(
-                                    nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000
-                                )
-                            }
+    /// Boot walk. Pages devices, then sites, on one context, and saves
+    /// once. A failed fetch stops the walk. Idle refresh passes the
+    /// device ids that delta applied.
+    func refreshSeverities() async {
+        let context = makeContext()
+        do {
+            try walkDevices(in: context)
+            try walkSites(in: context)
+            if context.hasChanges {
+                try context.save()
+            }
+        } catch {
+            await reportSeverityFailure(error)
+        }
+    }
+
+    /// Devices the idle delta touched, and the sites those devices belong
+    /// to. An empty set returns without a fetch.
+    func refreshSeverities(deviceIDs: Set<Int64>) async {
+        guard !deviceIDs.isEmpty else { return }
+        let context = makeContext()
+        do {
+            var siteIds = Set<Int64>()
+            for batch in chunk(array: Array(deviceIDs), size: 200) {
+                let ids = batch
+                let devices = try context.fetch(
+                    FetchDescriptor<Device>(
+                        predicate: #Predicate<Device> { device in
+                            ids.contains(device.id)
                         }
+                    )
+                )
+                for device in devices {
+                    device.refreshSeverityFromEvents()
+                    if device.siteId != 0 {
+                        siteIds.insert(device.siteId)
+                    } else if let site = device.site {
+                        siteIds.insert(site.id)
                     }
-                    throw lastError ?? ZabbixError.unreachable
                 }
             }
-            for _ in 0..<min(maxInFlight, batches.count) {
-                submitNext()
+            for batch in chunk(array: Array(siteIds), size: 200) {
+                let ids = batch
+                let sites = try context.fetch(
+                    FetchDescriptor<Site>(
+                        predicate: #Predicate<Site> { site in
+                            ids.contains(site.id)
+                        }
+                    )
+                )
+                for site in sites {
+                    site.refreshSeverityFromDevices()
+                }
             }
-            var results: [Out] = []
-            while let value = try await group.next() {
-                results.append(value)
-                submitNext()
+            if context.hasChanges {
+                try context.save()
             }
-            return results
+        } catch {
+            await reportSeverityFailure(error)
         }
     }
 
-    func refreshSeverities() {
-        let context = ModelContext(modelContainer)
-        refreshSeverities(in: context)
-        try? context.save()
-    }
-
-    /// Recompute stored pin colours. Pass the events that just changed so a
-    /// single acknowledge does not walk every device and site (that path was
-    /// ~8s at 12K devices). Full sync after stale-event delete still refreshes
-    /// the whole store so resolved problems clear.
-    private func refreshSeverities(in context: ModelContext, events: [Event]? = nil) {
-        if let events {
-            var seenDevice = Set<Int64>()
-            var seenSite = Set<Int64>()
-            for device in devicesTouched(by: events, in: context) {
-                guard seenDevice.insert(device.id).inserted else { continue }
+    private func walkDevices(in context: ModelContext) throws {
+        var lastId = Int64.min
+        let pageSize = 200
+        while true {
+            let after = lastId
+            var descriptor = FetchDescriptor<Device>(
+                predicate: #Predicate<Device> { device in
+                    device.id > after
+                },
+                sortBy: [SortDescriptor(\Device.id, order: .forward)]
+            )
+            descriptor.fetchLimit = pageSize
+            let page = try context.fetch(descriptor)
+            if page.isEmpty { break }
+            for device in page {
                 device.refreshSeverityFromEvents()
-                if let site = device.site, seenSite.insert(site.id).inserted {
-                    site.refreshSeverityFromEvents()
-                }
             }
-            return
-        }
-        let devices = (try? context.fetch(FetchDescriptor<Device>())) ?? []
-        for device in devices {
-            device.refreshSeverityFromEvents()
-        }
-        let sites = (try? context.fetch(FetchDescriptor<Site>())) ?? []
-        for site in sites {
-            site.refreshSeverityFromEvents()
+            lastId = page[page.count - 1].id
+            if page.count < pageSize { break }
         }
     }
 
-    private func devicesTouched(by events: [Event], in context: ModelContext) -> [Device] {
-        var devices: [Device] = []
-        var seen = Set<Int64>()
+    private func walkSites(in context: ModelContext) throws {
+        var lastId = Int64.min
+        let pageSize = 200
+        while true {
+            let after = lastId
+            var descriptor = FetchDescriptor<Site>(
+                predicate: #Predicate<Site> { site in
+                    site.id > after
+                },
+                sortBy: [SortDescriptor(\Site.id, order: .forward)]
+            )
+            descriptor.fetchLimit = pageSize
+            let page = try context.fetch(descriptor)
+            if page.isEmpty { break }
+            for site in page {
+                site.refreshSeverityFromDevices()
+            }
+            lastId = page[page.count - 1].id
+            if page.count < pageSize { break }
+        }
+    }
+
+    private func reportSeverityFailure(_ error: Error) async {
+        Logger(subsystem: "zabbix", category: "problemSync")
+            .error("Severity refresh failed: \(error.localizedDescription, privacy: .public)")
+        await MainActor.run { Self.publishSeverityFailure() }
+    }
+
+    @MainActor
+    private static func publishSeverityFailure() {
+        let message = "Could not refresh problem severity from the on-device store."
+        RequestStatusManager.shared.updateStatus(
+            .zabbix,
+            .dataError(code: 0, message: message)
+        )
+        OperatorNoticeCenter.shared.post(OperatorNotice(
+            id: "zabbix.severity",
+            source: .zabbix,
+            severity: .failure,
+            message: message,
+            occurredAt: Date()
+        ))
+    }
+
+    /// Host ids for the full pull. Each page starts after the last device
+    /// id, so a later page does not re-read the rows before it. The context
+    /// ends with this function, before any network call.
+    func pagedZabbixHostIds() throws -> [String] {
+        let context = makeContext()
+        var ids: [String] = []
+        var seen = Set<String>()
+        var lastId = Int64.min
+        let pageSize = 200
+        while true {
+            let after = lastId
+            var descriptor = FetchDescriptor<Device>(
+                predicate: #Predicate<Device> { device in
+                    device.zabbixId != 0 && device.id > after
+                },
+                sortBy: [SortDescriptor(\Device.id, order: .forward)]
+            )
+            descriptor.fetchLimit = pageSize
+            let page = try context.fetch(descriptor)
+            if page.isEmpty { break }
+            for device in page {
+                let id = String(device.zabbixId)
+                if seen.insert(id).inserted {
+                    ids.append(id)
+                }
+            }
+            lastId = page[page.count - 1].id
+            if page.count < pageSize { break }
+        }
+        return ids
+    }
+
+    /// Event ids absent from the pull, and the device id of a stale row
+    /// whose `hostId` names a stored device. Each page is its own context,
+    /// so the page is released before the next. `hostId == 0` does not
+    /// name a device.
+    private func staleProblemRows(absentFrom currentEventIds: Set<String>) throws -> (eventIds: [String], deviceIds: [Int64]) {
+#if DEBUG
+        let started = ContinuousClock.now
+        defer {
+            Logger(subsystem: "zabbix", category: "problemSync")
+                .info("timing staleProblemRows \(netBoxTimingMilliseconds(since: started))ms")
+        }
+#endif
+        var eventIds: [String] = []
+        var hostIds = Set<Int64>()
+        var last: String?
+        let pageSize = 200
+        while true {
+            let context = makeContext()
+            var descriptor: FetchDescriptor<Event>
+            if let after = last {
+                descriptor = FetchDescriptor(
+                    predicate: #Predicate<Event> { event in
+                        event.eventId > after
+                    },
+                    sortBy: [SortDescriptor(\Event.eventId, order: .forward)]
+                )
+            } else {
+                descriptor = FetchDescriptor(
+                    sortBy: [SortDescriptor(\Event.eventId, order: .forward)]
+                )
+            }
+            descriptor.fetchLimit = pageSize
+            let columns: [PartialKeyPath<Event>] = [\.eventId, \.hostId]
+            descriptor.propertiesToFetch = columns
+            let page = try context.fetch(descriptor)
+            if page.isEmpty { break }
+            for event in page where !currentEventIds.contains(event.eventId) {
+                eventIds.append(event.eventId)
+                if event.hostId != 0 {
+                    hostIds.insert(event.hostId)
+                }
+            }
+            last = page[page.count - 1].eventId
+            if page.count < pageSize { break }
+        }
+        let devices = try devicesByZabbixId(hostIds.map(String.init), in: makeContext())
+        return (eventIds, devices.values.map(\.id))
+    }
+
+    /// Devices whose rows changed, plus devices that lost a stale row,
+    /// refreshed once after the delete so a deleted event is already gone.
+    /// Counts come from the open rows for those Zabbix hosts. Inserted
+    /// rows are not here; `getEvents` links them and refreshes.
+    private func refreshApplied(
+        events: [Event],
+        staleDeviceIds: [Int64],
+        in context: ModelContext
+    ) throws {
+        var hostIds: [Int64] = []
+        var seenHost = Set<Int64>()
+        for event in events where event.hostId != 0 && seenHost.insert(event.hostId).inserted {
+            hostIds.append(event.hostId)
+        }
+        var devices = Array(try devicesByZabbixId(hostIds.map(String.init), in: context).values)
+        var seen = Set(devices.map(\.id))
         for event in events {
             if let device = event.device, seen.insert(device.id).inserted {
                 devices.append(device)
-                continue
             }
-            let hostId = event.hostId
-            guard hostId != 0 else { continue }
-            let descriptor = FetchDescriptor<Device>(
-                predicate: #Predicate<Device> { $0.zabbixId == hostId }
+        }
+        for batch in chunk(array: staleDeviceIds, size: 200) {
+            let ids = batch
+            let fetched = try context.fetch(
+                FetchDescriptor<Device>(
+                    predicate: #Predicate<Device> { device in
+                        ids.contains(device.id)
+                    }
+                )
             )
-            if let device = try? context.fetch(descriptor).first, seen.insert(device.id).inserted {
+            for device in fetched where seen.insert(device.id).inserted {
                 devices.append(device)
             }
         }
-        return devices
+        try storeActiveCounts(on: devices, in: context)
+    }
+
+    /// Open rows for these devices, counted by `hostId`. An open row
+    /// still at `hostId == 0` is stamped from the device it is linked to
+    /// before the count. History is not walked. Site ints are then read
+    /// from the stored device counts.
+    private func storeActiveCounts(on devices: [Device], in context: ModelContext) throws {
+        guard !devices.isEmpty else { return }
+        for device in devices where device.zabbixId == 0 {
+            device.assignActiveSeverity(.unmonitored)
+        }
+        let monitored = devices.filter { $0.zabbixId != 0 }
+        try stampMissingHostIds(on: monitored, in: context)
+        var tally: [Int64: ActiveSeverity] = [:]
+        for batch in chunk(array: Array(Set(monitored.map(\.zabbixId))), size: 200) {
+            let ids = batch
+            let descriptor = FetchDescriptor<Event>(
+                predicate: #Predicate<Event> { event in
+                    event.rClock == "0" && event.suppressed == "0" && ids.contains(event.hostId)
+                }
+            )
+            for event in try context.fetch(descriptor) {
+                var next = tally[event.hostId] ?? ActiveSeverity()
+                next.observe(severity: event.severity, acknowledged: event.acknowledged)
+                tally[event.hostId] = next
+            }
+        }
+        var siteIds = Set<Int64>()
+        for device in devices {
+            if device.zabbixId != 0 {
+                device.assignActiveSeverity(tally[device.zabbixId] ?? ActiveSeverity())
+            }
+            if device.siteId != 0 {
+                siteIds.insert(device.siteId)
+            } else if let site = device.site {
+                siteIds.insert(site.id)
+            }
+        }
+        for batch in chunk(array: Array(siteIds), size: 200) {
+            let ids = batch
+            let sites = try context.fetch(
+                FetchDescriptor<Site>(
+                    predicate: #Predicate<Site> { site in
+                        ids.contains(site.id)
+                    }
+                )
+            )
+            for site in sites {
+                site.refreshSeverityFromDevices()
+            }
+        }
+    }
+
+    /// Open problems that `problem.get` stored without a host. The link
+    /// already names the device. History is not in this fetch.
+    private func stampMissingHostIds(on devices: [Device], in context: ModelContext) throws {
+        let byId = Dictionary(devices.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        guard !byId.isEmpty else { return }
+        let rows = try context.fetch(
+            FetchDescriptor<Event>(
+                predicate: #Predicate<Event> { event in
+                    event.hostId == 0 && event.rClock == "0" && event.suppressed == "0"
+                }
+            )
+        )
+        for event in rows {
+            guard let device = event.device, let monitored = byId[device.id] else { continue }
+            event.stampHostIdIfMissing(from: monitored)
+        }
+    }
+
+    private func eventsById(_ ids: [String], in context: ModelContext) throws -> [String: Event] {
+        var found: [Event] = []
+        for batch in chunk(array: ids, size: 200) {
+            let batchIds = batch
+            found.append(contentsOf: try context.fetch(
+                FetchDescriptor<Event>(
+                    predicate: #Predicate<Event> { event in
+                        batchIds.contains(event.eventId)
+                    }
+                )
+            ))
+        }
+        return Dictionary(found.map { ($0.eventId, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private func devicesByZabbixId(_ ids: [String], in context: ModelContext) throws -> [String: Device] {
+        let zabbixIds = Array(Set(ids.compactMap(Int64.init).filter { $0 != 0 }))
+        var found: [Device] = []
+        for batch in chunk(array: zabbixIds, size: 200) {
+            let batchIds = batch
+            found.append(contentsOf: try context.fetch(
+                FetchDescriptor<Device>(
+                    predicate: #Predicate<Device> { device in
+                        batchIds.contains(device.zabbixId)
+                    }
+                )
+            ))
+        }
+        return Dictionary(
+            found.map { (String($0.zabbixId), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    /// NetBox device ids to Zabbix host ids. The context ends here.
+    private func zabbixHostIds(forDeviceIds deviceIds: [String]) throws -> [String] {
+        let context = makeContext()
+        let ids = deviceIds.compactMap(Int64.init)
+        var hosts: [String] = []
+        var seen = Set<String>()
+        for batch in chunk(array: ids, size: 200) {
+            let batchIds = batch
+            let fetched = try context.fetch(
+                FetchDescriptor<Device>(
+                    predicate: #Predicate<Device> { device in
+                        device.zabbixId != 0 && batchIds.contains(device.id)
+                    }
+                )
+            )
+            for device in fetched {
+                let host = String(device.zabbixId)
+                if seen.insert(host).inserted {
+                    hosts.append(host)
+                }
+            }
+        }
+        return hosts
+    }
+
+    /// Autosave off. A context that saves again as it dies is a second
+    /// merge onto the main thread.
+    private func makeContext() -> ModelContext {
+        let context = ModelContext(modelContainer)
+        context.autosaveEnabled = false
+        return context
     }
 
     private func chunk<T>(array: [T], size: Int) -> [[T]] {
@@ -562,12 +853,145 @@ actor SiteDataService {
             Array(array[$0..<min($0 + size, array.count)])
         }
     }
-    
-    private func getDevicesWithZabbixId() async throws -> [Device] {
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Device>(
-            predicate: #Predicate<Device> { $0.zabbixId != 0 }
+
+    /// Last-wins inside the batch. An event already touched by an earlier
+    /// batch is updated in place. Inserts are not severity-refreshed here.
+    private func upsertProblemBatch(
+        _ items: [EventProperties],
+        into context: ModelContext,
+        pull: ProblemPull
+    ) throws {
+        let properties = Dictionary(
+            items.map { ($0.eventId, $0) },
+            uniquingKeysWith: { _, last in last }
         )
-        return try context.fetch(descriptor)
+        let missing = properties.keys.filter { pull.touched[$0] == nil }
+        let existing = try eventsById(Array(missing), in: context)
+        for (eventId, props) in properties {
+            pull.present.insert(eventId)
+            if let event = pull.touched[eventId] ?? existing[eventId] {
+                if event.update(with: props), pull.changedIds.insert(eventId).inserted {
+                    pull.changed.append(event)
+                }
+                pull.touched[eventId] = event
+            } else {
+                let event = Event(eventId: eventId)
+                event.update(with: props)
+                context.insert(event)
+                pull.touched[eventId] = event
+                pull.inserted.append(eventId)
+            }
+        }
     }
+
+    private func applyEventBatch(
+        _ batchResults: [(String, [EventProperties])],
+        into context: ModelContext,
+        pull: EventPull
+    ) throws {
+        var hostIds: [String] = []
+        var eventIds: [String] = []
+        var seenHosts = Set<String>()
+        var seenEvents = Set<String>()
+        for (hostId, events) in batchResults {
+            if pull.devicesByHost[hostId] == nil, seenHosts.insert(hostId).inserted {
+                hostIds.append(hostId)
+            }
+            for event in events where pull.stored[event.eventId] == nil && seenEvents.insert(event.eventId).inserted {
+                eventIds.append(event.eventId)
+            }
+        }
+        if !hostIds.isEmpty {
+            let fetched = try devicesByZabbixId(hostIds, in: context)
+            for (hostId, device) in fetched {
+                pull.devicesByHost[hostId] = device
+            }
+        }
+        if !eventIds.isEmpty {
+            let fetched = try eventsById(eventIds, in: context)
+            for (eventId, event) in fetched {
+                pull.stored[eventId] = event
+            }
+        }
+        for (hostId, events) in batchResults {
+            guard let device = pull.devicesByHost[hostId] else { continue }
+            for eventProperty in events {
+                let searchEventId = eventProperty.eventId
+                let event: Event
+                let wrote: Bool
+                if let existing = pull.stored[searchEventId] {
+                    event = existing
+                    wrote = existing.update(with: eventProperty, device: device)
+                } else {
+                    event = Event(eventId: searchEventId)
+                    event.update(with: eventProperty, device: device)
+                    context.insert(event)
+                    pull.stored[searchEventId] = event
+                    wrote = true
+                }
+                let stamped = event.stampHostIdIfMissing(from: device)
+                if (wrote || stamped), pull.changedIds.insert(searchEventId).inserted {
+                    pull.changed.append(event)
+                }
+            }
+        }
+    }
+
+    private func deleteEvents(ids: [String], in context: ModelContext) throws {
+        for batch in chunk(array: ids, size: 200) {
+            let batchIds = batch
+            try context.delete(
+                model: Event.self,
+                where: #Predicate<Event> { event in
+                    batchIds.contains(event.eventId)
+                }
+            )
+        }
+    }
+}
+
+/// Ids seen in one problem pull, plus the rows this pull changed.
+/// The decoded pages are not kept.
+private final class ProblemPull {
+    var skipped = 0
+    var changed: [Event] = []
+    var changedIds = Set<String>()
+    var present = Set<String>()
+    var inserted: [String] = []
+    var touched: [String: Event] = [:]
+}
+
+/// Rows and hosts already resolved while event batches stream in.
+private final class EventPull {
+    var stored: [String: Event] = [:]
+    var devicesByHost: [String: Device] = [:]
+    var changed: [Event] = []
+    var changedIds = Set<String>()
+}
+
+/// How many problem or event pages are fetched at once, and how many
+/// times one page is tried. The child task returns the decoded page and
+/// does not see the store.
+private let zabbixBatchesInFlight = 4
+private let zabbixBatchAttempts = 3
+
+private func zabbixBatchAttempt<Out: Sendable>(
+    index: Int,
+    batch: [String],
+    operation: @escaping @Sendable (Int, [String]) async throws -> Out
+) async throws -> Out {
+    var lastError: Error?
+    for attempt in 1...zabbixBatchAttempts {
+        do {
+            return try await operation(index, batch)
+        } catch {
+            lastError = error
+            if attempt < zabbixBatchAttempts {
+                try await Task.sleep(
+                    nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000
+                )
+            }
+        }
+    }
+    throw lastError ?? ZabbixError.unreachable
 }

@@ -47,24 +47,13 @@ struct Item: Equatable {
 actor ItemCache {
     static let shared = ItemCache()
     private var cache: [Int64: [Item]] = [:]
-    private var allItems: Set<String> = []  // Track all item IDs
-    
+
     private init() {}
-    
+
     func getItems(forDeviceId deviceId: Int64) -> [Item] {
         return cache[deviceId] ?? []
     }
-    
-    func getItems(withId itemId: String) -> Item? {
-        for items in cache.values {
-            if let item = items.first(where: { $0.itemId == itemId }) {
-                return item
-            }
-        }
-        return nil
-    }
-    
-    // Add notification when items are set
+
     func setItems(_ items: [Item], forDeviceId deviceId: Int64) {
         cache[deviceId] = items
         Task { @MainActor in
@@ -77,13 +66,7 @@ actor ItemCache {
         guard let deviceItems = cache[deviceId] else { return nil }
         return deviceItems.first { $0.name == itemName }
     }
-    
-    // Optional: Add method to get multiple items matching criteria
-    func getItems(forDeviceId deviceId: Int64, matching criteria: (Item) -> Bool) -> [Item] {
-        guard let deviceItems = cache[deviceId] else { return [] }
-        return deviceItems.filter(criteria)
-    }
-    
+
     func getItemById(_ itemId: String) -> Item? {
         for items in cache.values {
             if let item = items.first(where: { $0.itemId == itemId }) {
@@ -97,6 +80,18 @@ actor ItemCache {
 // Add Notification extension
 extension Notification.Name {
     static let itemsCached = Notification.Name("ItemsCached")
+}
+
+extension Notification {
+    /// Host id posted with `.itemsCached`. The cache is filled after a chart
+    /// may already have read it, so the chart compares against this id.
+    var itemsCachedDeviceId: Int64? {
+        guard name == .itemsCached, let raw = userInfo?["deviceId"] else { return nil }
+        if let id = raw as? Int64 { return id }
+        if let number = raw as? NSNumber { return number.int64Value }
+        if let id = raw as? Int { return Int64(id) }
+        return nil
+    }
 }
 
 
@@ -140,15 +135,15 @@ struct ItemProperties: Decodable, Sendable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         
-        let rawItemId = try? values.decode(String.self, forKey: .itemId)
-        let rawName = try? values.decode(String.self, forKey: .name)
-        let rawHistory = try? values.decode(String.self, forKey: .history)
-        let rawTrends = try? values.decode(String.self, forKey: .trends)
-        let rawStatus = try? values.decode(String.self, forKey: .status)
-        let rawUnits = try? values.decode(String.self, forKey: .units)
-        let rawTemplateId = try? values.decode(String.self, forKey: .templateId)
-        let rawValueType = try? values.decode(String.self, forKey: .valueType)
-        let rawItemDescription = try? values.decode(String.self, forKey: .itemDescription)
+        let rawItemId = ZabbixJSONRPC.flexibleString(values, .itemId)
+        let rawName = ZabbixJSONRPC.flexibleString(values, .name)
+        let rawHistory = ZabbixJSONRPC.flexibleString(values, .history)
+        let rawTrends = ZabbixJSONRPC.flexibleString(values, .trends)
+        let rawStatus = ZabbixJSONRPC.flexibleString(values, .status)
+        let rawUnits = ZabbixJSONRPC.flexibleString(values, .units)
+        let rawTemplateId = ZabbixJSONRPC.flexibleString(values, .templateId)
+        let rawValueType = ZabbixJSONRPC.flexibleString(values, .valueType)
+        let rawItemDescription = ZabbixJSONRPC.flexibleString(values, .itemDescription)
         
         var rawTags: [String: [String]] = [:]
         

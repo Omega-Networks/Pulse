@@ -25,10 +25,8 @@
 
 import SwiftUI
 import Charts
-import SwiftData
 
 struct CPUCoresChart: View {
-    @Environment(\.modelContext) private var modelContext
     let deviceId: Int64
     
     @State private var coreItems: [Item] = []
@@ -63,7 +61,10 @@ struct CPUCoresChart: View {
                 }
             }
         }
-        .task(id: deviceId) {
+        .zabbixItemLoad(deviceId: deviceId) {
+            coreItems = []
+            historyData = [:]
+        } load: {
             await loadCPUCoreItems()
         }
     }
@@ -76,48 +77,24 @@ struct CPUCoresChart: View {
         
         // Get all items for this device and filter for CPU core items
         let items = await ItemCache.shared.getItems(forDeviceId: deviceId)
+        guard !Task.isCancelled else { return }
         let cpuItems = items.filter {
             $0.name.localizedStandardContains("Average Usage over 1min")
         }
-        
-        // Sort the items to ensure consistent ordering
-        self.coreItems = cpuItems.sorted { $0.name < $1.name }
-        
-        // Once we have the items, fetch their history data
+        coreItems = cpuItems.sorted { $0.name < $1.name }
         await fetchHistoryData()
     }
     
     private func fetchHistoryData() async {
         for item in coreItems {
-            let historyFetcher = HistoryFetcher(modelContainer: modelContext.container)
-            let (fetchedData, isPartialData) = await historyFetcher.getHistories(
-                deviceId: deviceId,
+            guard !Task.isCancelled else { return }
+            let fetchedData = await HistoryFetcher().getHistories(
                 itemId: item.itemId,
                 selectedPeriod: "3H",
                 valueType: item.valueType
             )
-            
-            await MainActor.run {
-                historyData[item.itemId] = fetchedData
-            }
-            
-            if isPartialData {
-                // Handle partial data with background fetch
-                let itemId = item.itemId
-                let valueType = item.valueType
-                
-                Task.detached(priority: .background) {
-                    let (completeData, _) = await historyFetcher.getHistories(
-                        deviceId: deviceId,
-                        itemId: itemId,
-                        selectedPeriod: "3H",
-                        valueType: valueType
-                    )
-                    await MainActor.run {
-                        self.historyData[itemId] = completeData
-                    }
-                }
-            }
+            guard !Task.isCancelled else { return }
+            historyData[item.itemId] = fetchedData
         }
     }
     
@@ -129,7 +106,7 @@ struct CPUCoresChart: View {
         }
         
         let sortedHistory = itemHistory.sorted { $0.key > $1.key }
-        guard let latestEntry = sortedHistory.last,
+        guard let latestEntry = sortedHistory.first,
               let utilization = Double(latestEntry.value) else {
             return 0.0
         }

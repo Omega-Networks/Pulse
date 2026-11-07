@@ -24,6 +24,7 @@
 //
 
 import Foundation
+import os
 import SwiftUI
 import SwiftData
 import MapKit
@@ -157,7 +158,8 @@ struct DetailSheet: View {
                 let service = SiteDataService(modelContainer: modelContext.container)
                 try await service.loadAllSiteData(for: site.id)
             } catch {
-                print("Error loading site data: \(error)")
+                Logger(subsystem: "zabbix", category: "siteData")
+                    .error("Loading site data failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }

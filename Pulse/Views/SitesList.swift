@@ -51,23 +51,19 @@ struct SitesList: View {
             (selectedSiteGroups.isEmpty || (site.group.flatMap { selectedSiteGroups.contains($0.id) } ?? false))
         }
         
-        // Just sort by name initially
         _sites = Query(
             filter: predicate,
-            sort: [SortDescriptor(\Site.name)]
+            sort: [
+                SortDescriptor(\Site.highestSeverityStored, order: .reverse),
+                SortDescriptor(\Site.name)
+            ]
         )
     }
-    
+
     var body: some View {
         ScrollView(.vertical) {
             LazyVStack {
-                // Sort sites in the view instead
-                ForEach(sites.sorted { site1, site2 in
-                    if site1.highestSeverity != site2.highestSeverity {
-                        return site1.highestSeverity > site2.highestSeverity
-                    }
-                    return site1.name < site2.name
-                }) { site in
+                ForEach(sites) { site in
                     SiteRow(
                         cameraPosition: $cameraPosition,
                         selectedSite: $selectedSite,
@@ -76,7 +72,6 @@ struct SitesList: View {
                 }
             }
         }
-        .id(UUID())
         .frame(minWidth: 400, idealWidth: 450, maxWidth: 500, maxHeight: .infinity)
     }
 }

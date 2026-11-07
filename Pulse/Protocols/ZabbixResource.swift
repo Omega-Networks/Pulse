@@ -175,6 +175,7 @@ enum ZabbixError: Error, LocalizedError, Equatable {
     case sessionExpired
     case missingParameters(String)
     case unreachable
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -185,13 +186,17 @@ enum ZabbixError: Error, LocalizedError, Equatable {
         case .sessionExpired: return "The Zabbix session expired."
         case .missingParameters(let params): return "Missing required parameters: \(params)"
         case .unreachable: return "Zabbix is unreachable. Check that the server is up and reachable from this Mac."
+        case .timedOut: return "Zabbix timed out. Pulse did not see a response."
         }
     }
 
     static func fromTransport(_ error: Error) -> ZabbixError {
         if let zabbix = error as? ZabbixError { return zabbix }
         let ns = error as NSError
-        if ns.domain == NSURLErrorDomain { return .unreachable }
+        if ns.domain == NSURLErrorDomain {
+            if ns.code == NSURLErrorTimedOut { return .timedOut }
+            return .unreachable
+        }
         if ns.domain == NSCocoaErrorDomain && ns.code == 3840 { return .unreachable }
         return .invalidResponse(error.localizedDescription)
     }
@@ -199,7 +204,7 @@ enum ZabbixError: Error, LocalizedError, Equatable {
     static func status(from error: Error) -> RequestStatusManager.RequestStatus {
         let zabbix = fromTransport(error)
         switch zabbix {
-        case .unreachable, .invalidRequest, .invalidServerURL:
+        case .unreachable, .invalidRequest, .invalidServerURL, .timedOut:
             return .connectionError(zabbix.localizedDescription)
         case .authenticationFailed, .sessionExpired:
             return .authenticationFailure(code: 401, message: zabbix.localizedDescription)
@@ -346,6 +351,9 @@ struct RetrieveItemResource: ZabbixResource {
     var headers: [String : String]?
 }
 
+/// The most rows one `history.get` returns.
+let zabbixHistoryPageLimit = 100_000
+
 //MARK: Retrieving History data
 struct RetrieveHistoryResource: ZabbixResource {
     typealias ModelType = HistoryProperties
@@ -366,7 +374,7 @@ struct RetrieveHistoryResource: ZabbixResource {
             "itemids": itemId,
             "sortfield": ["clock"],
             "sortorder": "DESC",
-            "limit": 100000
+            "limit": zabbixHistoryPageLimit
         ]
         
         if let timeFrom = timeFrom {
@@ -380,6 +388,37 @@ struct RetrieveHistoryResource: ZabbixResource {
         return parameters
     }
     
+    var headers: [String: String]?
+}
+
+// Hourly averages. trend.get has no history table and rejects sortfield.
+struct RetrieveTrendResource: ZabbixResource {
+    typealias ModelType = TrendProperties
+
+    var methodPath: String
+    let method = "trend.get"
+
+    let itemId: String
+    let timeFrom: Date?
+    let timeTill: Date?
+
+    var params: [String: Any]? {
+        var parameters: [String: Any] = [
+            "output": ["itemid", "clock", "value_avg"],
+            "itemids": itemId
+        ]
+
+        if let timeFrom {
+            parameters["time_from"] = Int(timeFrom.timeIntervalSince1970)
+        }
+
+        if let timeTill {
+            parameters["time_till"] = Int(timeTill.timeIntervalSince1970)
+        }
+
+        return parameters
+    }
+
     var headers: [String: String]?
 }
 
@@ -437,35 +476,6 @@ func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) asyn
     return decoded
 }
 
-func updateHostEvents(params: UpdateParameters) async throws {
-    let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
-    
-    logger.debug("Updating events: \(params.eventIds)")
-    
-    let jsonBody: [String: Any] = [
-        "eventids": params.eventIds,
-        "action": params.action,
-        "message": params.message as Any,
-        "severity": params.severity as Any,
-        "suppress_until": params.suppressUntil as Any
-    ]
-    
-    let resource = EventAcknowledgeResource(params: jsonBody)
-    let request = try await resource.request
-    let data: Data
-    do {
-        (data, _) = try await URLSession.shared.data(for: request)
-    } catch {
-        throw ZabbixError.fromTransport(error)
-    }
-    let jsonObject = try zabbixJSONObject(from: data)
-    guard jsonObject["result"] != nil else {
-        throw ZabbixError.fromRPC(jsonObject)
-    }
-    logger.debug("event.acknowledge accepted for \(params.eventIds.count) events")
-}
-
-
 // Function to fetch Items
 func fetchItems(hostId: Int64) async throws -> [ItemProperties] {
     let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
@@ -513,6 +523,32 @@ func fetchHistories(itemId: String, timeFrom: Date? = nil, timeTill: Date? = nil
     let jsonObject = try zabbixJSONObject(from: data)
     let decoded = try ZabbixJSONRPC.decodeElements(HistoryProperties.self, from: jsonObject)
     logger.debug("Successfully fetched \(decoded.items.count) history entries skipped=\(decoded.skipped)")
+    return decoded.items
+}
+
+func fetchTrends(itemId: String, timeFrom: Date? = nil, timeTill: Date? = nil) async throws -> [TrendProperties] {
+    let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
+
+    logger.debug("""
+        Fetching trends:
+        - itemId: \(itemId)
+        - timeFrom: \(timeFrom?.description ?? "nil")
+        - timeTill: \(timeTill?.description ?? "nil")
+        """)
+
+    let resource = RetrieveTrendResource(
+        methodPath: "",
+        itemId: itemId,
+        timeFrom: timeFrom,
+        timeTill: timeTill
+    )
+
+    let request = try await resource.request
+    let (data, _) = try await URLSession.shared.data(for: request)
+
+    let jsonObject = try zabbixJSONObject(from: data)
+    let decoded = try ZabbixJSONRPC.decodeElements(TrendProperties.self, from: jsonObject)
+    logger.debug("Successfully fetched \(decoded.items.count) trend entries skipped=\(decoded.skipped)")
     return decoded.items
 }
 

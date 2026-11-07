@@ -30,14 +30,15 @@ import SwiftData
 
 struct EventTable: View {
     var site: Site
-    @State private var isPopoverShown = false
-    @State private var selectedEvent: Event?
-    @Query private var devices: [Device]
+    @Query private var events: [Event]
     @Environment(LicenseSeatStore.self) private var seats
-    
-    //Properties for the table
-    @State private var sortOrder = [KeyPathComparator(\Event.formattedClock)]
-    @State private var sortedEvents: [Event] = []
+    @Environment(PendingWrites.self) private var pendingWrites
+    @Environment(\.zabbixWriteService) private var zabbixWriteService
+    @Environment(\.problemGhostEdit) private var problemGhostEdit
+
+    /// `clock` is a unix-seconds string of fixed width, so string order is
+    /// time order. The cell still draws `formattedClock`.
+    @State private var sortOrder = [KeyPathComparator(\Event.clock, order: .reverse)]
     @State private var selection = Set<Event.ID>()
     
 #if os(iOS)
@@ -49,39 +50,35 @@ struct EventTable: View {
     private let isCompact = false
 #endif
     
-    //Old solution for getting all events within a Site (still could cause problems)
-    var events: [Event] {
-        return devices.compactMap { device in
-            device.events
-        }
-        .flatMap { $0 }
-        .filter(\.isStoreBacked)
-        .sorted(by: { $0.formattedClock > $1.formattedClock })
+    /// Delete All invalidates rows this query still holds. A persisted
+    /// property read on those rows traps, so every column reads this list.
+    private var storedEvents: [Event] {
+        events.filter(\.isStoreBacked)
     }
-    
+
     var selectedEvents: [Event] {
         let selectedEventIDs = selection.map { $0 }
-        return events.filter { selectedEventIDs.contains($0.id) }
+        return storedEvents.filter { selectedEventIDs.contains($0.id) }
     }
     
     //MARK: Initialisation body
     init(site: Site) {
         self.site = site
-        self.isPopoverShown = isPopoverShown
-        self.selectedEvent = selectedEvent
-        
-        // Applying predication to devices and events
+
         let siteId = site.id
-        self._devices = Query(filter: #Predicate<Device> { device in
-            device.siteId == siteId
-        })
+        self._events = Query(
+            filter: #Predicate<Event> { $0.siteId == siteId },
+            sort: [SortDescriptor(\Event.clock, order: .reverse)]
+        )
     }
     
     var body: some View {
+        let pending = pendingByEvent
         VStack {
             //TODO: Determine how to enable multi-selection in iOS
-            Table(events, selection: seatedSelection, sortOrder: $sortOrder) {
-                TableColumn("Time", value: \.formattedClock) { value in
+            Table(storedEvents.sorted(using: sortOrder), selection: seatedSelection, sortOrder: $sortOrder) {
+                TableColumn("Time", value: \.clock) { value in
+                    Group {
                     if isCompact {
                         HStack {
                             VStack (alignment: .leading) {
@@ -131,57 +128,55 @@ struct EventTable: View {
                         }
                     #endif
                     }
+                    }
+                    .problemAsk(pending[value.eventId]?.state)
                 }
                 .width(isCompact ? nil: 135)
                 
                 TableColumn("Severity", value: \.severityString) { value in
-                    SeverityCell(severityString: value.severityString, severityColor: value.severityColor, state: value.state)
+                    severityCell(value, pending: pending)
                 }.width(105)
                 
                 TableColumn("Status", value: \.state) { value in
                     StatusCell(state: value.state, stateColor: value.stateColor)
+                        .problemAsk(pending[value.eventId]?.state)
                 }.width(100)
                 
                 TableColumn("Device") { value in
-                    if isSeated(value) {
-                        Text(value.device?.name ?? "Unknown")
-                    } else {
-                        VStack(alignment: .leading, spacing: 2) {
+                    Group {
+                        if isSeated(value) {
                             Text(value.device?.name ?? "Unknown")
-                                .foregroundStyle(.secondary)
-                            SubscribeToResumeLabel()
-                                .font(.caption)
+                        } else {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(value.device?.name ?? "Unknown")
+                                    .foregroundStyle(.secondary)
+                                SubscribeToResumeLabel()
+                                    .font(.caption)
+                            }
                         }
                     }
+                    .problemAsk(pending[value.eventId]?.state)
                 }
                 .width(min: 80, ideal: 100, max: 200)
                 
-                TableColumn("Description", value: \.name)
-                    .width(min:150, ideal: 300, max: .infinity)
+                TableColumn("Description", value: \.name) { value in
+                    Text(value.name)
+                        .problemAsk(pending[value.eventId]?.state)
+                }
+                .width(min:150, ideal: 300, max: .infinity)
                 
-                TableColumn("Duration", value: \.timeTillResolvedOrNow)
-                    .width(90)
+                TableColumn("Duration", value: \.timeTillResolvedOrNow) { value in
+                    Text(value.timeTillResolvedOrNow)
+                        .problemAsk(pending[value.eventId]?.state)
+                }
+                .width(90)
                 
                 TableColumn("Ack", value: \.acknowledgedString) { value in
-                    AcknowledgedCell(
-                        selectedEvents: [value],
-                        acknowledgedString: value.acknowledgedString,
-                        acknowledgedColor: value.acknowledgedColor,
-                        allowsUpdate: isSeated(value)
-                    )
+                    ackCell(value, pending: pending)
                 }.width(25)
             }
-            .onChange(of: sortOrder) { newValue, _ in
-                sortedEvents = events.sorted(using: newValue)
-            }
-            TableToolbar(selectedEvents: selectedEvents, events: events)
+            TableToolbar(selectedEvents: selectedEvents, events: storedEvents)
                 .padding()
-        }
-        .onChange(of: selectedEvents) {
-            print("Changes in selectedEvents detected.")
-            for event in selectedEvents {
-                print("Event ID: \(event.eventId)")
-            }
         }
     }
 
@@ -190,15 +185,181 @@ struct EventTable: View {
         return seats.allowsActions(deviceID: deviceID)
     }
 
+    /// Asks whose events are on this table. Built once per render from the
+    /// in-memory store. O(pending). It does not fetch SwiftData.
+    /// `ghosts` is oldest first, so the last ask that names an event is the
+    /// one the row draws.
+    private var pendingByEvent: [String: PendingGhost<ProblemUpdateGhost>] {
+        let ids = Set(storedEvents.map(\.eventId))
+        guard !ids.isEmpty else { return [:] }
+        let pending = pendingWrites.ghosts(of: ProblemUpdateIntent.self, in: .events(ids))
+        var byEvent: [String: PendingGhost<ProblemUpdateGhost>] = [:]
+        byEvent.reserveCapacity(pending.count)
+        for item in pending {
+            for id in item.ghost.eventIds where ids.contains(id) {
+                byEvent[id] = item
+            }
+        }
+        return byEvent
+    }
+
+    private func ackPresentation(
+        _ event: Event,
+        item: PendingGhost<ProblemUpdateGhost>?
+    ) -> (text: String, color: Color) {
+        if item?.ghost.acknowledges == true {
+            return ("Yes", .green)
+        }
+        if item?.ghost.unacknowledges == true {
+            return ("No", .red)
+        }
+        return (event.acknowledgedString, event.acknowledgedColor)
+    }
+
+    @ViewBuilder
+    private func ackCell(
+        _ event: Event,
+        pending: [String: PendingGhost<ProblemUpdateGhost>]
+    ) -> some View {
+        let item = pending[event.eventId]
+        let shown = ackPresentation(event, item: item)
+        shaded(
+            AcknowledgedCell(
+                selectedEvents: [event],
+                acknowledgedString: shown.text,
+                acknowledgedColor: shown.color,
+                allowsUpdate: isSeated(event)
+            ),
+            item: item,
+            fallbackHelp: isSeated(event) ? "Update event" : "Subscribe to resume"
+        )
+    }
+
+    @ViewBuilder
+    private func severityCell(
+        _ event: Event,
+        pending: [String: PendingGhost<ProblemUpdateGhost>]
+    ) -> some View {
+        let item = pending[event.eventId]
+        let severity = item?.ghost.severity
+        let name = severity.map(Event.severityName) ?? event.severityString
+        let color = severity.map { Event.severityColor(for: $0) } ?? event.severityColor
+        shaded(
+            SeverityCell(
+                severityString: name,
+                severityColor: color,
+                state: event.state
+            ),
+            item: item,
+            fallbackHelp: name
+        )
+    }
+
+    /// The phase modifier stays mounted across the ask. The non-failed
+    /// branches are one view, so retiring the ask does not replace the
+    /// cell. Edit and Discard appear only once it has failed.
+    /// Replacing the cell with `ghosted` snapped.
+    @ViewBuilder
+    private func shaded<Content: View>(
+        _ cell: Content,
+        item: PendingGhost<ProblemUpdateGhost>?,
+        fallbackHelp: String
+    ) -> some View {
+        asked(cell, item: item, fallbackHelp: fallbackHelp)
+            .problemAsk(item?.state)
+    }
+
+    @ViewBuilder
+    private func asked<Content: View>(
+        _ cell: Content,
+        item: PendingGhost<ProblemUpdateGhost>?,
+        fallbackHelp: String
+    ) -> some View {
+        if let item, case .failed = item.state {
+            cell
+                .help(failureMessage(item.state) ?? fallbackHelp)
+                .contextMenu {
+                    Button("Edit") {
+                        problemGhostEdit.open(item.ghost)
+                    }
+                    Button("Discard") {
+                        let token = item.token
+                        Task { await zabbixWriteService?.discard(token) }
+                    }
+                }
+        } else {
+            cell.help(fallbackHelp)
+        }
+    }
+
+    private func failureMessage(_ state: WriteState?) -> String? {
+        if case .failed(let failure) = state { return failure.message }
+        return nil
+    }
+
     private var seatedSelection: Binding<Set<Event.ID>> {
         Binding(
             get: { selection },
             set: { newValue in
                 selection = Set(
-                    events.filter { newValue.contains($0.id) && isSeated($0) }.map(\.id)
+                    storedEvents.filter { newValue.contains($0.id) && isSeated($0) }.map(\.id)
                 )
             }
         )
+    }
+}
+
+/// Eases one cell of a problem row. The cell stays mounted. Leaving the
+/// ask animates the dim back to full. A failed ask ends solid. The
+/// sentence is in the help tip.
+private struct ProblemRowPhase: ViewModifier {
+    var state: WriteState?
+
+    @State private var dimmed = false
+    @State private var pulse = false
+
+    private var inFlight: Bool {
+        switch state {
+        case .posting, .committed:
+            return true
+        case .failed, nil:
+            return false
+        }
+    }
+
+    private var shownOpacity: Double {
+        guard dimmed else { return 1 }
+        return pulse ? 0.85 : 0.4
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shownOpacity)
+            .animation(.easeInOut(duration: 0.9), value: pulse)
+            .onChange(of: inFlight, initial: true) { _, flying in
+                if flying {
+                    dimmed = true
+                    pulse = false
+                } else if dimmed {
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        dimmed = false
+                    }
+                }
+            }
+            .task(id: inFlight) {
+                guard inFlight else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(900))
+                    guard !Task.isCancelled else { return }
+                    pulse.toggle()
+                }
+            }
+    }
+}
+
+private extension View {
+    func problemAsk(_ state: WriteState?) -> some View {
+        modifier(ProblemRowPhase(state: state))
     }
 }
 
@@ -209,7 +370,8 @@ struct EventTable: View {
     if let previewSite = sites.first {
         EventTable(site: previewSite)
             .environment(LicenseSeatStore())
-            .frame(width: 600, height: 400) // Good size for table preview
+            .environment(PendingWrites())
+            .frame(width: 600, height: 400)
     }
 }
 #endif

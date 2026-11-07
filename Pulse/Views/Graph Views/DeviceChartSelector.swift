@@ -28,19 +28,16 @@ import SwiftData
 
 struct DeviceChartSelector: View {
     let deviceId: Int64
-    
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var devices: [Device]
     
     @State private var items: [Item] = []
     @State private var itemTags: [String: Set<String>] = [:]
-    @State private var selectedItemTagKey: String = "Application"
+    @State private var selectedItemTagKey: String = ""
     @State private var selectedItemTagValue: String = ""
-    @State private var selectedItem: String = ""
-    @State private var refreshChart: Bool = false
-    @State private var isLoading = false
-    
-    @AppStorage("selectedPeriod") private var selectedPeriod: String = "1H"
-    let periods = ["1H", "3H", "6H", "12H", "1D", "2D", "1W"]
+    @State private var selectedItemId: String = ""
+    @State private var selectedPeriod: String = "1H"
     
     init(deviceId: Int64) {
         self.deviceId = deviceId
@@ -51,51 +48,28 @@ struct DeviceChartSelector: View {
     
     var body: some View {
         VStack(alignment: .center, spacing: 10) {
-            if isLoading {
-                ProgressView()
-            } else {
-                // Item Tag Value Menu
-                Menu {
-                    ForEach(itemTags[selectedItemTagKey]?.sorted() ?? [], id: \.self) { value in
-                        Button(value) {
-                            selectedItemTagValue = value
-                            selectedItem = "" // Reset selected item when tag value changes
-                        }
-                    }
-                } label: {
-                    Label(selectedItemTagValue.isEmpty ? "Select Item Tag Value" : selectedItemTagValue,
-                          systemImage: "chevron.down")
-                }
-                .cornerRadius(8)
-                
-                // Item Selection Menu
-                if !selectedItemTagValue.isEmpty {
-                    Menu {
-                        ForEach(filteredItems, id: \.self) { item in
-                            Button(item) {
-                                selectedItem = item
-                            }
-                        }
-                    } label: {
-                        Label(selectedItem.isEmpty ? "Select Item" : selectedItem,
-                              systemImage: "chevron.down")
-                    }
-                    .cornerRadius(8)
-                }
-                
-                // Selected Chart
-                if let selectedItemObject = items.first(where: { $0.name == selectedItem }) {
-                    SelectedChart(
-                        deviceId: deviceId,
-                        itemId: selectedItemObject.itemId,
-                        selectedPeriod: $selectedPeriod
-                    )
-                    .id(refreshChart)
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { filters }
+                    .animation(filterAnimation, value: filterMotion)
+                VStack(spacing: 10) { filters }
+                    .animation(filterAnimation, value: filterMotion)
+            }
+
+            if !selectedItemId.isEmpty {
+                SelectedChart(
+                    itemId: selectedItemId,
+                    selectedPeriod: $selectedPeriod
+                )
             }
         }
         .frame(minWidth: 200, idealWidth: 500, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task {
+        .zabbixItemLoad(deviceId: devices.first?.zabbixId ?? 0) {
+            items = []
+            itemTags = [:]
+            selectedItemId = ""
+            selectedItemTagKey = ""
+            selectedItemTagValue = ""
+        } load: {
             await loadItems()
         }
     }
@@ -103,13 +77,9 @@ struct DeviceChartSelector: View {
     // MARK: - Data Loading
     
     private func loadItems() async {
-        isLoading = true
-        defer { isLoading = false }
-        
-        // Load items from cache
         let cachedItems = await ItemCache.shared.getItems(forDeviceId: devices.first?.zabbixId ?? 0)
-        
-        // Build tags dictionary
+        guard !Task.isCancelled else { return }
+
         var tags: [String: Set<String>] = [:]
         for item in cachedItems {
             for (key, values) in item.tags {
@@ -119,24 +89,105 @@ struct DeviceChartSelector: View {
                 tags[key]?.formUnion(values)
             }
         }
-        
-        await MainActor.run {
-            self.items = cachedItems
-            self.itemTags = tags
-        }
+        items = cachedItems
+        itemTags = tags
     }
     
     // MARK: - Computed Properties
     
-    private var filteredItems: [String] {
-        items.filter { item in
-            if let applicationTags = item.tags[selectedItemTagKey] {
-                return applicationTags.contains(selectedItemTagValue)
-            }
-            return false
+    private var selectedItemName: String {
+        items.first { $0.itemId == selectedItemId }?.name ?? ""
+    }
+
+    /// Drives the filter-row spring. The chart is not part of it.
+    private var filterMotion: String {
+        "\(tagKeys.isEmpty)|\(selectedItemTagKey)|\(selectedItemTagValue)|\(selectedItemId)"
+    }
+
+    private var filterAnimation: Animation? {
+        reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.22)
+    }
+
+    private var tagKeys: [String] {
+        itemTags.keys.filter { !$0.isEmpty }.sorted()
+    }
+
+    private var tagValues: [String] {
+        (itemTags[selectedItemTagKey] ?? []).filter { !$0.isEmpty }.sorted()
+    }
+
+    /// Every item on the host. A tag name limits that to items carrying the tag, and a value limits it further.
+    private var filteredItems: [Item] {
+        let matched = items.filter { item in
+            guard !selectedItemTagKey.isEmpty else { return true }
+            guard let values = item.tags[selectedItemTagKey] else { return false }
+            guard !selectedItemTagValue.isEmpty else { return true }
+            return values.contains(selectedItemTagValue)
         }
-        .sorted(by: { $0.name < $1.name })
-        .map { $0.name }
+        return matched.sorted { $0.name < $1.name }
+    }
+
+    @ViewBuilder
+    private var filters: some View {
+        if !tagKeys.isEmpty {
+            Menu {
+                Button("All") {
+                    selectedItemTagKey = ""
+                    selectedItemTagValue = ""
+                }
+                ForEach(tagKeys, id: \.self) { key in
+                    Button(key) {
+                        selectedItemTagKey = key
+                        selectedItemTagValue = ""
+                        clearItemUnlessVisible()
+                    }
+                }
+            } label: {
+                Text(selectedItemTagKey.isEmpty ? "Tag" : selectedItemTagKey)
+                    .contentTransition(.interpolate)
+            }
+            .transition(filterTransition)
+        }
+
+        if !selectedItemTagKey.isEmpty {
+            Menu {
+                Button("Any") {
+                    selectedItemTagValue = ""
+                }
+                ForEach(tagValues, id: \.self) { value in
+                    Button(value) {
+                        selectedItemTagValue = value
+                        clearItemUnlessVisible()
+                    }
+                }
+            } label: {
+                Text(selectedItemTagValue.isEmpty ? "Value" : selectedItemTagValue)
+                    .contentTransition(.interpolate)
+            }
+            .transition(filterTransition)
+        }
+
+        Menu {
+            ForEach(filteredItems, id: \.itemId) { item in
+                Button(item.name) {
+                    selectedItemId = item.itemId
+                }
+            }
+        } label: {
+            Text(selectedItemName.isEmpty ? "Item" : selectedItemName)
+                .contentTransition(.interpolate)
+        }
+    }
+
+    private var filterTransition: AnyTransition {
+        .scale(scale: 0.86, anchor: .leading).combined(with: .opacity)
+    }
+
+    private func clearItemUnlessVisible() {
+        guard !selectedItemId.isEmpty else { return }
+        if !filteredItems.contains(where: { $0.itemId == selectedItemId }) {
+            selectedItemId = ""
+        }
     }
 }
 

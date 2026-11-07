@@ -352,7 +352,7 @@ struct SiteGraphView: View {
         
         self._devices = Query(filter: #Predicate<Device> { device in
             device.siteId == siteId
-        }, animation: .easeInOut(duration: 0.15))
+        })
     }
 #endif
     
@@ -375,7 +375,7 @@ struct SiteGraphView: View {
         
         self._devices = Query(filter: #Predicate<Device> { device in
             device.siteId == siteId
-        }, animation: .easeInOut(duration: 0.15))
+        })
     }
 #endif
     
@@ -766,7 +766,7 @@ extension SiteGraphView {
     private func completeCableHandoff(stored: [Edge]) {
         guard let id = cableHandoffID else { return }
         let arrived = stored.contains { $0.id == id }
-        let stillPosting = pendingWrites.ghosts(of: CableCreateIntent.self, at: siteId)
+        let stillPosting = pendingWrites.ghosts(of: CableCreateIntent.self, in: .site(siteId))
             .contains { $0.ghost.id == id && !cableAskFailed($0.state) }
         guard arrived || !stillPosting else { return }
         cableHandoffID = nil
@@ -833,7 +833,7 @@ extension SiteGraphView {
     #endif
 
     private var visibleDeviceGhosts: [PendingGhost<DeviceGhost>] {
-        pendingWrites.ghosts(of: DeviceCreateIntent.self, at: siteId)
+        pendingWrites.ghosts(of: DeviceCreateIntent.self, in: .site(siteId))
             .filter { !rolePresentation.policy(for: $0.ghost.roleID).hideFromGraph }
     }
 
@@ -900,7 +900,7 @@ extension SiteGraphView {
                     .transition(.opacity)
                 }
             }
-            ForEach(pendingWrites.ghosts(of: CableCreateIntent.self, at: siteId)) { item in
+            ForEach(pendingWrites.ghosts(of: CableCreateIntent.self, in: .site(siteId))) { item in
                 if cableAskFailed(item.state), let points = adjustPoints(edge: item.ghost) {
                     if !computedEdges.contains(where: { $0.id == item.ghost.id }) {
                         EdgeView(start: points.start, end: points.end)
@@ -935,7 +935,7 @@ extension SiteGraphView {
     }
 
     private var failedCableAskIDs: Set<String> {
-        Set(pendingWrites.ghosts(of: CableCreateIntent.self, at: siteId).compactMap { item in
+        Set(pendingWrites.ghosts(of: CableCreateIntent.self, in: .site(siteId)).compactMap { item in
             guard cableAskFailed(item.state) else { return nil }
             return item.ghost.id
         })

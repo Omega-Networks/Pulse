@@ -35,9 +35,15 @@ final class LicenseSeatStore: @unchecked Sendable {
     /// blanks, shelves). They never hold a seat, but Connect / Disconnect
     /// and other operator actions still have to work.
     private(set) var unbilledIDs: Set<Int64> = []
+    /// `allowsActions` is read off the main actor while a sync mutates the
+    /// sets. The lock covers that read and each assignment. It is not held
+    /// across a fetch.
+    private let lock = NSLock()
 
     func allowsActions(deviceID: Int64) -> Bool {
-        unbilledIDs.contains(deviceID) || seatedIDs.contains(deviceID)
+        lock.lock()
+        defer { lock.unlock() }
+        return unbilledIDs.contains(deviceID) || seatedIDs.contains(deviceID)
     }
 
     /// Rack hardware (blanks, panels, shelves) is not billed, so it
@@ -81,14 +87,18 @@ final class LicenseSeatStore: @unchecked Sendable {
         if changed {
             try context.save()
         }
+        lock.lock()
         seatedIDs = result.effectiveIDs
         unbilledIDs = Self.unbilledIDs(in: snapshots, presentation: presentation)
+        lock.unlock()
         return result
     }
 
     /// Replace or merge the in-memory sets from a sync notice. Does not
     /// fetch or save. The engine already wrote the grants.
     func apply(_ update: SyncSeatUpdate) {
+        lock.lock()
+        defer { lock.unlock() }
         if let seated = update.replaceSeated, let unbilled = update.replaceUnbilled {
             seatedIDs = seated
             unbilledIDs = unbilled
@@ -108,6 +118,8 @@ final class LicenseSeatStore: @unchecked Sendable {
     /// while the read was in flight stays seated: the snapshot may still
     /// list that device as hardware.
     func mergeLoaded(seated: Set<Int64>, unbilled: Set<Int64>) {
+        lock.lock()
+        defer { lock.unlock() }
         seatedIDs.formUnion(seated)
         let staleUnbilled = unbilled.subtracting(seatedIDs)
         unbilledIDs.formUnion(staleUnbilled)

@@ -77,7 +77,7 @@ extension ContentView {
             Toggle("Fetch Events", isOn: $isEventMonitoringEnabled)
                 .help("Enable/Disable Event Monitoring")
                 .onChange(of: isEventMonitoringEnabled) {
-                    Task.detached(priority: .background) {
+                    Task {
                         await updateEventMonitoring()
                     }
                 }

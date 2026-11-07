@@ -318,7 +318,7 @@ struct NetBoxLiveFetcher: NetBoxFetching {
                  NSURLErrorDataNotAllowed:
                 return "NetBox is unreachable. The change was not saved."
             case NSURLErrorTimedOut:
-                return "NetBox timed out. The change was not saved."
+                return "NetBox timed out. Pulse did not see a response. The next sync shows what NetBox stored."
             case NSURLErrorCannotFindHost,
                  NSURLErrorCannotConnectToHost,
                  NSURLErrorDNSLookupFailed:
