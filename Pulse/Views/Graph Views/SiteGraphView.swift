@@ -27,10 +27,17 @@ import SwiftUI
 import SwiftData
 import Observation
 #if os(macOS)
-import AppKit
+import AppKit // Approved bridge: right-click retract. ADR 0005.
+#endif
+#if DEBUG
+import OSLog
 #endif
 
 typealias NodeID = Int64
+
+#if DEBUG
+private let netBoxSyncTiming = Logger(subsystem: "netbox", category: "sync")
+#endif
 
 #if os(macOS)
 private enum CableTetherPhase {
@@ -59,7 +66,6 @@ private final class CableTetherState {
 /// diagram's own space. The device nodes are not hit-tested for that time.
 /// This layer does not take key focus.
 private struct CablePointerOverlay: View {
-    var tracking: Bool
     var onMove: (CGPoint) -> Void
     var onLeave: () -> Void
     var onLeftClick: (CGPoint) -> Void
@@ -71,37 +77,31 @@ private struct CablePointerOverlay: View {
             .onContinuousHover(coordinateSpace: .named(siteDiagramCoordinateSpace)) { phase in
                 switch phase {
                 case .active(let point):
-                    guard tracking else { return }
                     onMove(point)
                 case .ended:
                     onLeave()
                 }
             }
             .onTapGesture(coordinateSpace: .named(siteDiagramCoordinateSpace)) { point in
-                guard tracking else { return }
                 onLeftClick(point)
             }
-            .gesture(CableRightClick(onEnded: onRightClick))
+            .gesture(SecondaryClick(action: onRightClick))
     }
 }
 
-/// Secondary click. SwiftUI's tap gesture does not carry the mouse button.
-/// Attached with `.gesture`, so it is not a view and not an event monitor.
-private struct CableRightClick: NSGestureRecognizerRepresentable {
-    var onEnded: () -> Void
+/// SwiftUI's tap gesture does not carry the mouse button, so this is the
+/// approved AppKit bridge for right-click (ADR 0005).
+private struct SecondaryClick: NSGestureRecognizerRepresentable {
+    var action: () -> Void
 
     func makeNSGestureRecognizer(context: Context) -> NSClickGestureRecognizer {
         let recognizer = NSClickGestureRecognizer()
-        recognizer.buttonMask = 0x2
+        recognizer.buttonMask = 1 << 1
         return recognizer
     }
 
-    func handleNSGestureRecognizerAction(
-        _ recognizer: NSClickGestureRecognizer,
-        context: Context
-    ) {
-        guard recognizer.state == .ended else { return }
-        onEnded()
+    func handleNSGestureRecognizerAction(_ recognizer: NSClickGestureRecognizer, context: Context) {
+        action()
     }
 }
 
@@ -137,15 +137,13 @@ private struct CableTetherLine: View {
                     path.move(to: start)
                     path.addLine(to: tether.end)
                 }
-                .stroke(Color.accentColor, style: cableStroke)
+                .stroke(Color.accentColor, style: edgeStroke)
             }
         }
         .opacity(tether.opacity)
         .allowsHitTesting(false)
     }
 }
-
-private let cableStroke = StrokeStyle(lineWidth: 1.69, lineCap: .round)
 
 /// The plus is 16.5 points, lifted 34 above the icon's bottom-trailing
 /// corner. The X uses that same seat.
@@ -170,7 +168,7 @@ private struct RetractingCable: View {
 
     var body: some View {
         CableRetractShape(start: start, end: end)
-            .stroke(Color.accentColor, style: cableStroke)
+            .stroke(Color.accentColor, style: edgeStroke)
             .onAppear {
                 guard !started else { return }
                 started = true
@@ -234,6 +232,9 @@ struct Graph {
 struct SiteGraphView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openWindow) var openWindow
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Environment(PendingWrites.self) private var pendingWrites
+    @Environment(\.deviceGhostEdit) private var deviceGhostEdit
     @Environment(RolePresentationStore.self) private var rolePresentation
     var siteId: Int64
     var isInPopover: Bool
@@ -244,9 +245,6 @@ struct SiteGraphView: View {
     @State private var imageCentres: [Int64: CGPoint] = [:]
     @State private var iconFrames: [Int64: CGRect] = [:]
     @State private var draggingNodeID: Int64?
-    @State private var nodeToDrag: (device: Device, offset: CGSize)? = nil
-    @State private var nodeBoundingRect: CGRect = .zero
-    @State private var originalPositions: [Int64: CGPoint] = [:]
     
     //Properties for zooming in and out
     @State private var currentZoom: CGFloat = 0.0
@@ -254,11 +252,6 @@ struct SiteGraphView: View {
     @State private var finalPosition: CGSize = .zero
     
 #if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    private var isCompact: Bool {
-        horizontalSizeClass == .compact
-    }
-    
     //Properties for dragging
     @GestureState private var dragOffset: CGSize = .zero
     
@@ -322,32 +315,32 @@ struct SiteGraphView: View {
     @Binding var enableGestures: Bool
     
     @State private var computedEdges: [Edge] = []
-    @State private var needsEdgeUpdate = true  // New state to trigger updates
+    /// Latest edge pass. A slower pass does not paint over a newer one.
+    @State private var edgePass = 0
         
-    //Property for saving Devices' coordinates and pushing to NetBox
-    @Binding var saveCoordinates: Bool
-    
     @Binding var isHorizontalLayout: Bool
-    
-    let fontSize: CGFloat = 50
+
     @State private var currentLayout: Layout?
-    
     @State private var userDefinedPositions: [Int64: CGPoint] = [:]
 
     #if os(macOS)
     @Environment(LicenseSeatStore.self) private var seats
     @State private var cableTether = CableTetherState()
     @State private var cablePair: CableDevicePair?
+    /// Interface-pair id of an ask whose tether stays up until the stored
+    /// stroke is on screen. Retract leaves it alone.
+    @State private var cableHandoffID: String?
+    /// Node centre when this drag began. The pointer's grab point stays
+    /// under the pointer; the centre is not moved onto it.
+    @State private var dragOrigin: CGPoint?
     #endif
 
-    @State private var isCalculatingLayout: Bool = false
 #if os(iOS)
     init(site: Site,
          selectedDevice: Binding<Device?>,
          enableGestures: Binding<Bool>,
          isInPopover: Bool,
          labelsEnabled: Binding<Bool>,
-         saveCoordinates: Binding<Bool>,
          isHorizontalLayout: Binding<Bool>) {
         // iOS-specific initialization
         self.siteId = site.id
@@ -355,7 +348,6 @@ struct SiteGraphView: View {
         self.isInPopover = isInPopover
         self._labelsEnabled = labelsEnabled
         self._enableGestures = enableGestures
-        self._saveCoordinates = saveCoordinates
         self._isHorizontalLayout = isHorizontalLayout
         
         self._devices = Query(filter: #Predicate<Device> { device in
@@ -372,7 +364,6 @@ struct SiteGraphView: View {
          enableGestures: Binding<Bool>,
          isInPopover: Bool,
          labelsEnabled: Binding<Bool>,
-         saveCoordinates: Binding<Bool>,
          isHorizontalLayout: Binding<Bool>) {
         
         self.siteId = siteId
@@ -380,7 +371,6 @@ struct SiteGraphView: View {
         self.isInPopover = isInPopover
         self._labelsEnabled = labelsEnabled
         self._enableGestures = enableGestures
-        self._saveCoordinates = saveCoordinates
         self._isHorizontalLayout = isHorizontalLayout
         
         self._devices = Query(filter: #Predicate<Device> { device in
@@ -390,22 +380,38 @@ struct SiteGraphView: View {
 #endif
     
     private func computeEdges() async {
-        let vos = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: modelContext)) ?? []
+        #if DEBUG
+        let started = ContinuousClock.now
+        #endif
+        edgePass += 1
+        let pass = edgePass
         let visible = Set(
             devices
                 .filter { !rolePresentation.policy(for: $0.deviceRole?.id).hideFromGraph }
                 .map(\.id)
         )
-        let newEdges = SiteTopologyEdges.derive(from: vos).filter { edge in
-            guard let start = edge.start.deviceId, let end = edge.end.deviceId else {
-                return false
+        let siteId = siteId
+        let container = modelContext.container
+        let newEdges = await Task.detached(priority: .userInitiated) { () -> [Edge] in
+            let context = ModelContext(container)
+            let vos = (try? SiteTopologyEdges.fetchVOs(siteId: siteId, in: context)) ?? []
+            return SiteTopologyEdges.derive(from: vos).filter { edge in
+                guard let start = edge.start.deviceId, let end = edge.end.deviceId else {
+                    return false
+                }
+                return visible.contains(start) && visible.contains(end)
             }
-            return visible.contains(start) && visible.contains(end)
-        }
-        await MainActor.run {
-            self.computedEdges = newEdges
-            self.needsEdgeUpdate = false
-        }
+        }.value
+        guard pass == edgePass, !Task.isCancelled else { return }
+        computedEdges = newEdges
+        #if os(macOS)
+        completeCableHandoff(stored: newEdges)
+        #endif
+        #if DEBUG
+        netBoxSyncTiming.info(
+            "timing computeEdges \(netBoxTimingMilliseconds(since: started))ms"
+        )
+        #endif
     }
     
     var body: some View {
@@ -427,15 +433,16 @@ struct SiteGraphView: View {
                             CableTetherLine(start: anchor(for: sourceID), tether: cableTether)
                                 .zIndex(1)
                                 .allowsHitTesting(false)
-                            CablePointerOverlay(
-                                tracking: cableTether.phase == .tracking,
-                                onMove: { moveCable($0) },
-                                onLeave: { cableTether.overOrigin = false },
-                                onLeftClick: { finishCable(at: $0) },
-                                onRightClick: { retractCable() }
-                            )
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .zIndex(40)
+                            if cableTether.phase == .tracking {
+                                CablePointerOverlay(
+                                    onMove: { moveCable($0) },
+                                    onLeave: { cableTether.overOrigin = false },
+                                    onLeftClick: { finishCable(at: $0) },
+                                    onRightClick: { retractCable() }
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .zIndex(40)
+                            }
                             if cableTether.phase == .tracking, let icon = iconFrames[sourceID] {
                                 CableOriginMark(tether: cableTether)
                                     .position(originMarkCentre(icon))
@@ -471,25 +478,41 @@ struct SiteGraphView: View {
                             .id(deviceId)
                             #if os (macOS)
                             .highPriorityGesture(
-                                DragGesture(minimumDistance: 1)
+                                DragGesture(
+                                    minimumDistance: 1,
+                                    coordinateSpace: .named(siteDiagramCoordinateSpace)
+                                )
                                     .onChanged { value in
                                         guard enableGestures, cableTether.sourceID == nil else {
-                                            if draggingNodeID == deviceId { draggingNodeID = nil }
+                                            if draggingNodeID == deviceId {
+                                                draggingNodeID = nil
+                                                dragOrigin = nil
+                                            }
                                             return
                                         }
                                         if draggingNodeID != deviceId {
                                             draggingNodeID = deviceId
+                                            dragOrigin = positionBinding(for: deviceId).wrappedValue
                                         }
-                                        userDefinedPositions[deviceId] = CGPoint(x: value.location.x, y: value.location.y)
+                                        let origin = dragOrigin ?? positionBinding(for: deviceId).wrappedValue
+                                        userDefinedPositions[deviceId] = CGPoint(
+                                            x: origin.x + value.translation.width,
+                                            y: origin.y + value.translation.height
+                                        )
                                     }
                                     .onEnded { _ in
                                         if draggingNodeID == deviceId {
                                             draggingNodeID = nil
+                                            dragOrigin = nil
                                         }
                                     },
                                 including: enableGestures ? .all : .none
                             )
                             #endif
+                        }
+
+                        ForEach(visibleDeviceGhosts) { item in
+                            deviceGhostMark(item)
                         }
                     }
                     .coordinateSpace(name: siteDiagramCoordinateSpace)
@@ -517,43 +540,11 @@ struct SiteGraphView: View {
                         .scaleEffect(currentZoom + totalZoom)
                     #endif
                         .task {
-                            // Initial layout and edge computation
-                            await MainActor.run {
-                                isCalculatingLayout = true
-                            }
-                            
-                            let container = modelContext.container
-                            let actor = LayoutManager(modelContainer: container)
-                            let layout = await actor.getLayout(for: siteId,
-                                                               isHorizontalLayout: isHorizontalLayout,
-                                                               userDefinedPositions: userDefinedPositions)
-                            
-                            // Compute edges right after layout
-                            if needsEdgeUpdate {
-                                await computeEdges()
-                            }
-                            
-                            await MainActor.run {
-                                self.currentLayout = layout
-                                self.isCalculatingLayout = false
-                            }
+                            await recalculateLayout()
                         }
                         .onChange(of: isHorizontalLayout) {
-                            Task.detached(priority: .background) {
-                                //TODO: Conform to Swift 6 standards
-                                await recalculateLayout()
-                                await computeEdges()
-                            }
+                            Task { await recalculateLayout() }
                             try? modelContext.save()
-                        }
-                        .onChange(of: saveCoordinates) {
-                            if saveCoordinates == true {
-                                Task.detached(priority: .background) {
-                                    await saveDevicePositions()
-                                }
-                                // Reset saveCoordinates to false after saving
-                                saveCoordinates = false
-                            }
                         }
                 )
         }
@@ -568,6 +559,13 @@ struct SiteGraphView: View {
             Task { await computeEdges() }
         }
         #if os(macOS)
+        .onChange(of: failedCableAskIDs) { _, ids in
+            guard let handoff = cableHandoffID, ids.contains(handoff) else { return }
+            cableHandoffID = nil
+            dissolveCable()
+        }
+        #endif
+        #if os(macOS)
         .onChange(of: enableGestures) { _, enabled in
             if !enabled {
                 cablePair = nil
@@ -580,36 +578,20 @@ struct SiteGraphView: View {
             }
         }
         .sheet(item: $cablePair) { pair in
-            CablePairSheet(pair: pair, onCancel: {
+            CablePairSheet(pair: pair, siteID: siteId, onCancel: {
                 cablePair = nil
                 retractCable()
-            }, onCreated: {
+            }, onCreated: { edge in
                 cablePair = nil
-                dissolveCable()
+                armCableHandoff(edge.id)
             })
         }
         #endif
     }
 }
 
-extension CGPoint {
-    static func +(lhs: CGPoint, rhs: CGPoint) -> CGPoint {
-        return CGPoint(x: lhs.x + rhs.x, y: lhs.y + rhs.y)
-    }
-}
-
 ///Extension containing helper methods for the SiteGraphView
 extension SiteGraphView {
-    
-    private func saveDevicePositions() async {
-        do {
-            try modelContext.save()
-        } catch {
-            print("Error: \(error)")
-        }
-        
-    }
-    
     private func positionLabel(edge: Edge, points: (start: CGPoint, end: CGPoint), ratio: CGFloat) -> CGPoint {
         let labelX = points.start.x + (points.end.x - points.start.x) * ratio
         let labelY = points.start.y + (points.end.y - points.start.y) * ratio - 15
@@ -636,38 +618,15 @@ extension SiteGraphView {
         return (start: adjustedStart, end: adjustedEnd)
     }
     
-    //TODO: Refactor to Swift 6 standards
-    private func loadLayout() async {
-        await MainActor.run { isCalculatingLayout = true }
-        
-        let container = modelContext.container
-        let actor = LayoutManager(modelContainer: container)
-        
-        let isHorizontal = isHorizontalLayout
-        
-        let layout = await actor.getLayout(for: siteId, isHorizontalLayout: isHorizontal, userDefinedPositions: userDefinedPositions)
-        
-        await MainActor.run {
-            self.currentLayout = layout
-            isCalculatingLayout = false
-        }
-    }
-    
     private func recalculateLayout() async {
-        await MainActor.run { isCalculatingLayout = true }
-        
         let container = modelContext.container
         let actor = LayoutManager(modelContainer: container)
-        
-        // Capture the current value of isHorizontalLayout
         let isHorizontal = isHorizontalLayout
-        
-        let newLayout = await actor.getLayout(for: siteId, isHorizontalLayout: isHorizontal, userDefinedPositions: userDefinedPositions)
-        
-        await MainActor.run {
-            self.currentLayout = newLayout
-            isCalculatingLayout = false
-        }
+        currentLayout = await actor.getLayout(
+            for: siteId,
+            isHorizontalLayout: isHorizontal,
+            userDefinedPositions: userDefinedPositions
+        )
     }
 
     /// Image centre in the diagram, the same sum drawn edges use.
@@ -776,6 +735,7 @@ extension SiteGraphView {
     /// pair first.
     private func retractCable() {
         guard cablePair == nil else { return }
+        guard cableHandoffID == nil else { return }
         guard cableTether.sourceID != nil else { return }
         guard cableTether.phase == .tracking || cableTether.phase == .locked else { return }
         cableTether.phase = .retracting
@@ -793,17 +753,37 @@ extension SiteGraphView {
         }
     }
 
-    /// The write landed. The temporary stroke fades over the stored edge.
+    /// Create has recorded the ask. The tether stays, at the stored
+    /// stroke's width, until that cable is in `computedEdges`.
+    private func armCableHandoff(_ edgeID: String) {
+        cableHandoffID = edgeID
+        cableTether.phase = .locked
+        cableTether.opacity = 1
+    }
+
+    /// The stored stroke is on screen, or the ask has left without one.
+    /// The tether fades out on the same curve the stored stroke fades in.
+    private func completeCableHandoff(stored: [Edge]) {
+        guard let id = cableHandoffID else { return }
+        let arrived = stored.contains { $0.id == id }
+        let stillPosting = pendingWrites.ghosts(of: CableCreateIntent.self, at: siteId)
+            .contains { $0.ghost.id == id && !cableAskFailed($0.state) }
+        guard arrived || !stillPosting else { return }
+        cableHandoffID = nil
+        dissolveCable()
+    }
+
+    /// The temporary stroke fades over the stored edge.
     private func dissolveCable() {
         guard cableTether.sourceID != nil else { return }
         cableTether.phase = .locked
         cableTether.generation += 1
         let token = cableTether.generation
-        withAnimation(.easeOut(duration: 0.28)) {
+        withAnimation(cableFade) {
             cableTether.opacity = 0
         }
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(320))
+            try? await Task.sleep(for: .milliseconds(380))
             guard cableTether.generation == token else { return }
             resetCableTether()
         }
@@ -852,77 +832,46 @@ extension SiteGraphView {
     }
     #endif
 
+    private var visibleDeviceGhosts: [PendingGhost<DeviceGhost>] {
+        pendingWrites.ghosts(of: DeviceCreateIntent.self, at: siteId)
+            .filter { !rolePresentation.policy(for: $0.ghost.roleID).hideFromGraph }
+    }
+
+    private func deviceGhostMark(_ item: PendingGhost<DeviceGhost>) -> some View {
+        VStack {
+            Image(Device.symbolName(forRoleName: item.ghost.roleName))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(.black, .white)
+                .shadow(color: Color.black.opacity(0.7), radius: 2)
+                .font(.system(size: 50, weight: .regular))
+            VStack {
+                Text(item.ghost.name)
+                    .font(.headline)
+                Text(item.ghost.typeModel.isEmpty ? " " : item.ghost.typeModel)
+                    .font(.caption)
+            }
+        }
+        .ghosted(
+            state: item.state,
+            showsEdit: deviceGhostEdit.isInstalled,
+            onEdit: { deviceGhostEdit.open(item.ghost) },
+            onDiscard: { discardDeviceGhost(item.ghost, engine: netBoxSyncEngine) }
+        )
+        .position(DeviceGhost.fallbackPoint)
+        .zIndex(6)
+    }
+
     private func positionBinding(for deviceId: Int64) -> Binding<CGPoint> {
         Binding(
             get: {
                 userDefinedPositions[deviceId]
                     ?? currentLayout?.positions[deviceId]
-                    ?? CGPoint(x: 150, y: 150)
+                    ?? DeviceGhost.fallbackPoint
             },
             set: { newValue in
                 userDefinedPositions[deviceId] = newValue
             }
         )
-    }
-    
-    /**
-     Calculates the final position to center the view based on the average position of devices.
-     - Parameter geometry: The geometry proxy to calculate the relative size and position.
-     - Note: This method calculates the average X and Y coordinates of all devices and adjusts the final position based on the view's geometry.
-     */
-    private func calculateFinalPosition(geometry: GeometryProxy) {
-        let padding: CGFloat = 50 // Add some padding around the graph
-        
-        let minX = devices.map { $0.x ?? 0.0 }.min() ?? 0
-        let minY = devices.map { $0.y ?? 0.0 }.min() ?? 0
-        let maxX = devices.map { $0.x ?? 0.0 }.max() ?? 0
-        let maxY = devices.map { $0.y ?? 0.0 }.max() ?? 0
-        
-        let graphWidth = maxX - minX
-        let graphHeight = maxY - minY
-        
-        let viewWidth = geometry.size.width
-        let viewHeight = geometry.size.height
-        
-        let scaleX = (viewWidth - 2 * padding) / CGFloat(graphWidth)
-        let scaleY = (viewHeight - 2 * padding) / CGFloat(graphHeight)
-        
-        let scale = min(scaleX, scaleY)
-        
-        let offsetX = (viewWidth - scale * CGFloat(graphWidth)) / 2
-        let offsetY = (viewHeight - scale * CGFloat(graphHeight)) / 2
-        
-        finalPosition.width = offsetX
-        finalPosition.height = offsetY
-    }
-    
-    /**
-     Calculates the total zoom needed to fit all devices within the view.
-     - Parameter geometry: The geometry proxy to calculate the relative size and position.
-     - Note: This method determines the min and max X and Y coordinates of devices and calculates the scale to fit all devices comfortably within the view.
-     */
-    private func calculateTotalZoom(geometry: GeometryProxy) {
-        let padding: CGFloat = 35 // Define a padding to not stick the content to the edges.
-        let maxX = devices.map { $0.x ?? 0.0 }.max() ?? 0
-        let maxY = devices.map { $0.y ?? 0.0 }.max() ?? 0
-        let minX = devices.map { $0.x ?? 0.0 }.min() ?? 0
-        let minY = devices.map { $0.y ?? 0.0 }.min() ?? 0
-        
-        let contentWidth = maxX - minX + padding
-        let contentHeight = maxY - minY + padding
-        
-        let scaleX = (geometry.size.width - padding) / contentWidth
-        let scaleY = (geometry.size.height - padding) / contentHeight
-        
-        let selectedScale = min(scaleX, scaleY)
-        
-        if maxX == minX && maxY == minY {
-            totalZoom = 1.0
-        } else {
-            // Set a minimum zoom level to ensure content is visible
-            let minimumZoomLevel: CGFloat = 0.3
-            totalZoom = max(selectedScale, minimumZoomLevel)
-        }
     }
     
     /**
@@ -936,64 +885,70 @@ extension SiteGraphView {
         Group {
             ForEach(computedEdges, id: \.id) { edge in
                 if let points = adjustPoints(edge: edge) {
-                    EdgeView(start: points.start, end: points.end)
-                        .id(edge.id)  // Force unique identity
-                        .zIndex(2)
-                    
-                    if labelsEnabled {
-                        let startPos = positionLabel(edge: edge, points: points, ratio: 0.25)
-                        let endPos = positionLabel(edge: edge, points: points, ratio: 0.75)
-                        
-                        EdgeLabel(name: edge.start.name, position: startPos)
-                            .zIndex(3)
-                        EdgeLabel(name: edge.end.name, position: endPos)
-                            .zIndex(3)
+                    Group {
+                        EdgeView(start: points.start, end: points.end)
+                            .zIndex(2)
+                        if labelsEnabled {
+                            let startPos = positionLabel(edge: edge, points: points, ratio: 0.25)
+                            let endPos = positionLabel(edge: edge, points: points, ratio: 0.75)
+                            EdgeLabel(name: edge.start.name, position: startPos)
+                                .zIndex(3)
+                            EdgeLabel(name: edge.end.name, position: endPos)
+                                .zIndex(3)
+                        }
                     }
+                    .transition(.opacity)
+                }
+            }
+            ForEach(pendingWrites.ghosts(of: CableCreateIntent.self, at: siteId)) { item in
+                if cableAskFailed(item.state), let points = adjustPoints(edge: item.ghost) {
+                    if !computedEdges.contains(where: { $0.id == item.ghost.id }) {
+                        EdgeView(start: points.start, end: points.end)
+                            .transition(.opacity)
+                            .allowsHitTesting(false)
+                            .zIndex(2)
+                    }
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .ghosted(
+                            state: item.state,
+                            showsEdit: false,
+                            onEdit: {},
+                            onDiscard: { discardCableAsk(item.token) }
+                        )
+                        .position(
+                            x: (points.start.x + points.end.x) / 2,
+                            y: (points.start.y + points.end.y) / 2
+                        )
+                        .zIndex(7)
                 }
             }
         }
+        .animation(cableFade, value: edgeFadeKey)
     }
-    
-    /**
-     Renders the persistent devices in the site graph.
-     This function creates DeviceViews for each persistent device and handles their positioning and gestures.
-     
-     - Returns: A view containing all the persistent devices.
-     */
-    @ViewBuilder
-    private func DevicesLayer() -> some View {
-        
-        ForEach(devices.filter { !rolePresentation.policy(for: $0.deviceRole?.id).hideFromGraph }) { device in
-            let deviceId = device.id
-            
-            DeviceView(device: device,
-                       selectedDevice: $selectedDevice,
-                       position: positionBinding(for: deviceId),
-                       labelsEnabled: $labelsEnabled,
-                       enableGestures: $enableGestures,
-                       action: {})
-            .position(positionBinding(for: deviceId).wrappedValue)
-            .zIndex(selectedDevice?.id == deviceId ? 20 : 5)
-            .onPreferenceChange(ImageCentrePreferenceKey.self) { center in
-                Task { @MainActor in
-                    if let center = center {
-                        imageCentres[deviceId] = center
-                    }
-                }
-            }
-            .id(deviceId)
-            #if os (macOS)
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        guard enableGestures else { return }
-                        let newPosition = CGPoint(x: value.location.x, y: value.location.y)
-                        userDefinedPositions[deviceId] = newPosition
-                    },
-                including: enableGestures ? .all : .none
-            )
-            #endif
-        }
+
+    /// Cable identities currently drawn. Unchanged cables stay put,
+    /// so a save does not fade the whole graph. A posting ask is the tether,
+    /// so it is not a second stroke.
+    private var edgeFadeKey: Set<String> {
+        Set(computedEdges.map(\.id)).union(failedCableAskIDs)
+    }
+
+    private var failedCableAskIDs: Set<String> {
+        Set(pendingWrites.ghosts(of: CableCreateIntent.self, at: siteId).compactMap { item in
+            guard cableAskFailed(item.state) else { return nil }
+            return item.ghost.id
+        })
+    }
+
+    private func cableAskFailed(_ state: WriteState) -> Bool {
+        if case .failed = state { return true }
+        return false
+    }
+
+    private func discardCableAsk(_ token: WriteToken) {
+        guard let engine = netBoxSyncEngine else { return }
+        Task { await engine.discard(token) }
     }
 }
 

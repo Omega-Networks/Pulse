@@ -56,7 +56,7 @@ struct NetBoxWriteService: Sendable {
 
     func createCable(
         _ body: NetBoxWriteBody.CableCreate
-    ) async throws -> NetBoxRecord.Cable {
+    ) async throws -> (record: NetBoxRecord.Cable, raw: Data) {
         let response = try await fetcher.send(
             NetBoxHTTPRequest(
                 method: "POST",
@@ -64,7 +64,8 @@ struct NetBoxWriteService: Sendable {
                 body: try NetBoxWriteJSON.encode(body)
             )
         )
-        return try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: response.body)
+        let record = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cable.self, from: response.body)
+        return (record, response.body)
     }
 
     func deleteCable(id: Int64) async throws {

@@ -77,6 +77,9 @@ struct SingleRackView: View {
     @Environment(RolePresentationStore.self) private var rolePresentation
     @Environment(RackEditSession.self) private var rackEdit
     @Environment(LicenseSeatStore.self) private var seats
+    @Environment(PendingWrites.self) private var pendingWrites
+    @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
+    @Environment(\.deviceGhostEdit) private var deviceGhostEdit
     var site: Site
     let rack: Rack
     var pointsPerInch: CGFloat = EIA310.pointsPerInch
@@ -152,6 +155,10 @@ struct SingleRackView: View {
                 }
             }
 
+            ForEach(rackGhosts) { item in
+                rackGhost(item)
+            }
+
             if let hover = rackEdit.hover,
                hover.rackID == rack.id,
                RackOccupancy.normalizedFace(hover.face) == visibleFace {
@@ -164,6 +171,40 @@ struct SingleRackView: View {
             RoundedRectangle(cornerRadius: rackCornerRadius)
                 .stroke(Color.gray, lineWidth: 1)
         )
+    }
+
+    private var rackGhosts: [PendingGhost<DeviceGhost>] {
+        pendingWrites.ghosts(of: DeviceCreateIntent.self, at: site.id).filter { item in
+            guard item.ghost.rackID == rack.id, item.ghost.position != nil else { return false }
+            guard rolePresentation.policy(for: item.ghost.roleID).showInRack else { return false }
+            return RackOccupancy.normalizedFace(item.ghost.face ?? "front") == visibleFace
+        }
+    }
+
+    private func rackGhost(_ item: PendingGhost<DeviceGhost>) -> some View {
+        let ghost = item.ghost
+        let position = ghost.position ?? 1
+        let height = EIA310.height(units: CGFloat(max(ghost.uHeight, 0.5)), pointsPerInch: pointsPerInch)
+        let y = EIA310.yOffset(
+            position: position,
+            uHeight: ghost.uHeight,
+            rackHeight: rackHeight,
+            pointsPerInch: pointsPerInch
+        )
+        return Text(ghost.name)
+            .font(.system(size: min(12, ruHeight * 0.5)))
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 4)
+            .frame(width: chassisWidth, height: height)
+            .background(Color.primary.opacity(0.08))
+            .ghosted(
+                state: item.state,
+                showsEdit: deviceGhostEdit.isInstalled,
+                onEdit: { deviceGhostEdit.open(ghost) },
+                onDiscard: { discardDeviceGhost(ghost, engine: netBoxSyncEngine) }
+            )
+            .offset(x: earWidth, y: y)
     }
 
     private var chassisBackground: some View {

@@ -126,6 +126,16 @@ enum NetBoxSyncError: Error, Equatable {
 }
 
 extension NetBoxSyncError: LocalizedError {
+    /// Words on a failed ask: NetBox's own sentence, without the status
+    /// code, which stays in the log and the sync status. Code 0 is a local
+    /// refusal, and its body is already that sentence.
+    var noticeMessage: String {
+        if case .httpStatus(let code, let body) = self {
+            return code == 0 ? body : Self.operatorMessage(code: code, body: body)
+        }
+        return localizedDescription
+    }
+
     var errorDescription: String? {
         switch self {
         case .missingServerURL:
@@ -159,8 +169,8 @@ extension NetBoxSyncError: LocalizedError {
         if looksLikeMarkup(trimmed) {
             return fallback(code)
         }
-        if let detail = jsonDetail(trimmed) {
-            return detail
+        if let message = jsonMessage(trimmed) {
+            return message
         }
         if trimmed.count > 280 {
             return fallback(code)
@@ -177,15 +187,36 @@ extension NetBoxSyncError: LocalizedError {
             || head.hasPrefix("<body")
     }
 
-    private static func jsonDetail(_ body: String) -> String? {
+    /// NetBox answers `{"detail": "..."}`, or a validation object of field
+    /// to messages, with `__all__` or `non_field_errors` for the whole
+    /// object. A bulk request answers with a list of those.
+    private static func jsonMessage(_ body: String) -> String? {
         guard let data = body.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let object = try? JSONSerialization.jsonObject(with: data) else {
             return nil
         }
-        if let detail = object["detail"] as? String, !detail.isEmpty {
-            return detail
+        var seen = Set<String>()
+        let lines = messages(in: object, field: nil).filter { seen.insert($0).inserted }
+        return lines.isEmpty ? nil : lines.joined(separator: " ")
+    }
+
+    private static let wholeObjectKeys = ["detail", "__all__", "non_field_errors"]
+
+    private static func messages(in value: Any, field: String?) -> [String] {
+        switch value {
+        case let text as String:
+            guard let text = text.nonBlank else { return [] }
+            return [field.map { "\($0): \(text)" } ?? text]
+        case let list as [Any]:
+            return list.flatMap { messages(in: $0, field: field) }
+        case let object as [String: Any]:
+            let whole = wholeObjectKeys.filter { object[$0] != nil }
+            let fields = object.keys.filter { !wholeObjectKeys.contains($0) }.sorted()
+            return whole.flatMap { messages(in: object[$0] as Any, field: field) }
+                + fields.flatMap { messages(in: object[$0] as Any, field: $0.snakeCaseWords) }
+        default:
+            return []
         }
-        return nil
     }
 
     private static func fallback(_ code: Int) -> String {

@@ -25,7 +25,6 @@
 
 import SwiftUI
 import SwiftData
-import Charts
 import Foundation
 import os
 
@@ -49,30 +48,18 @@ struct SiteView: View {
     @State private var showRight = false ///Set to true when testing
     @State private var showBottom = false
     @State private var selectedDevice: Device?
-    @State private var searchText = ""
     @State private var enableGestures = false
     @State private var labelsEnabled = false
-    
-    //Property for saving Devices' coordinates
-    @State private var saveCoordinates: Bool = false
-    @State private var showAlert: Bool = false
-    
-    //Properties for SiteGraphView's zoom levels
-    @State private var scale = 1.0
-    private let minScale = 0.1
-    private let maxScale = 4.0
     
     @State private var contentWidth: CGFloat = 220 // Default width for left hand pane
     
     //Properties for showing the sheet for configuring Devices
     @State private var showingNewDeviceSheet = false
+    @State private var devicePrefill: DeviceGhost?
     @State private var rackEdit = RackEditSession()
     
     //Properties to alter the laout
     @State var isHorizontalLayout: Bool = true
-    
-    //Properties for the ItemChart
-    @State private var startDate: Date = Calendar.current.date(byAdding: .hour, value: -1, to: Date.now) ?? Date()
     
     // MARK: Initialization body for SiteView
     init(siteId: Int64) {
@@ -126,7 +113,6 @@ struct SiteView: View {
                                     enableGestures: $enableGestures,
                                     isInPopover: false,
                                     labelsEnabled: $labelsEnabled,
-                                    saveCoordinates: $saveCoordinates,
                                     isHorizontalLayout: $isHorizontalLayout
                                 )
                                 .frame(width: 5000, height: 5000)
@@ -172,6 +158,10 @@ struct SiteView: View {
         }
         .toolbar(content: toolbarContent)
         .navigationTitle(sites.first?.name ?? "Unknown")
+        .environment(\.deviceGhostEdit, DeviceGhostEditAction { ghost in
+            devicePrefill = ghost
+            showingNewDeviceSheet = true
+        })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(rackEdit)
         .task(id: rackEdit.draggingDeviceID) {
@@ -190,10 +180,12 @@ struct SiteView: View {
                 print("Error loading site data: \(error)")
             }
         }
-        .sheet(isPresented: $showingNewDeviceSheet) {
+        .sheet(isPresented: $showingNewDeviceSheet, onDismiss: { devicePrefill = nil }) {
             NewDeviceSheet(
                 siteId: siteId,
+                mount: mountTarget(for: devicePrefill),
                 defaultTenantID: sites.first?.tenant?.id,
+                prefill: devicePrefill,
                 onDismiss: { showingNewDeviceSheet = false }
             )
                 .environment(\.netBoxSyncEngine, netBoxSyncEngine)
@@ -204,13 +196,15 @@ struct SiteView: View {
     }
 }
 
+extension SiteView {
+    private func mountTarget(for ghost: DeviceGhost?) -> RackMountTarget? {
+        guard let ghost, let rackID = ghost.rackID, let position = ghost.position else { return nil }
+        return RackMountTarget(rackID: rackID, position: position, face: ghost.face ?? "front")
+    }
+}
+
 // MARK: The toolbar content of SiteView
 extension SiteView {
-    func updateStartDate(_ date: Date) {
-        // Use the date parameter as needed
-        startDate = date
-    }
-    
     @ToolbarContentBuilder
     private func toolbarContent() -> some ToolbarContent {
         
@@ -239,6 +233,7 @@ extension SiteView {
 
         ToolbarItemGroup (placement: .primaryAction) {
             Button {
+                devicePrefill = nil
                 showingNewDeviceSheet = true
             } label: {
                 Image(systemName: "plus")

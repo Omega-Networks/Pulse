@@ -439,6 +439,8 @@ Day-to-day use is in the [User guide](docs/user-guide.md).
 - [SSH and web foundations](docs/architecture/0001-ssh-terminal-and-web-foundations.md): credential, trust, and session-recording model.
 - [Billing and distribution](docs/architecture/0002-billing-and-distribution.md): App Store seats and subscription caps.
 - [NetBox OpenAPI sync](docs/architecture/0003-netbox-openapi-sync.md): how the local twin is built from NetBox.
+- [Cable drag on the site graph](docs/architecture/0004-site-graph-cable-drag.md): the two-click cable gesture in build mode.
+- [SwiftUI interface and approved bridges](docs/architecture/0005-swiftui-interface-and-approved-bridges.md): interface standards and the register of approved AppKit bridges.
 - [Architecture diagram](docs/media/pulse_architecture_diagram.md): high-level data flow.
 
 ## Contributing
@@ -450,6 +452,27 @@ Pulse thrives on the triadic relationship between Industry, Academia, and Commun
 - **Community**: Provide use cases, feedback, and local knowledge that shapes development
 
 Contributions are welcome via issues and pull requests.
+
+### Before you commit
+
+Xcode rewrites `Pulse.xcodeproj/project.pbxproj` on Archive and when the Signing tab is opened: a literal Team ID, an `objectVersion` bump, and a reordered file list. None of that belongs in git.
+
+1. Turn on the pre-commit hook once per clone. It refuses a staged `Development.xcconfig` and a literal `DEVELOPMENT_TEAM` in `*.pbxproj`, `*.plist`, or `*.entitlements`.
+
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+
+2. If `project.pbxproj` is dirty and the diff is only that churn, restore it. The hook does not catch an `objectVersion` bump or a reordered file list, so read the diff.
+
+   ```bash
+   git checkout -- Pulse.xcodeproj/project.pbxproj
+   ```
+
+3. Intended project edits are fine: a new Swift file's four entries (build file, file reference, group child, Sources phase), or a setting such as `$(MARKETING_VERSION)`. Stage only those lines.
+4. `Development.xcconfig` stays local. Team ID, bundle ID, and the App Store version and build live there only. Keep `$(DEVELOPMENT_TEAM)` or omit the key in project files.
+5. Do not stage `*.xcuserstate`, `xcuserdata/`, or `Pulse/Products.storekit`.
+6. Agent instructions, skills, and prompts stay local. `.gitignore` keeps them out of git.
 
 Pulse is open source and sponsor-supported. If it's useful to you, consider [sponsoring](https://github.com/sponsors/Omega-Networks).
 

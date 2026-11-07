@@ -31,6 +31,7 @@ struct NewDeviceSheet: View {
     let siteId: Int64
     var mount: RackMountTarget? = nil
     var defaultTenantID: Int64? = nil
+    var prefill: DeviceGhost? = nil
     var onDismiss: () -> Void
 
     @Environment(\.netBoxSyncEngine) private var netBoxSyncEngine
@@ -45,9 +46,9 @@ struct NewDeviceSheet: View {
     @State private var name = ""
     @State private var roleID: Int64?
     @State private var typeID: Int64?
-    @State private var status = "active"
+    @State private var status: String? = "active"
     @State private var tenantID: Int64?
-    @State private var face = "front"
+    @State private var face: String? = "front"
     @State private var isWriting = false
     @State private var writeError: String?
     @State private var showingPaywall = false
@@ -60,34 +61,32 @@ struct NewDeviceSheet: View {
 
             Form {
                 TextField("Name", text: $name)
-                Picker("Role", selection: $roleID) {
-                    Text("Select…").tag(Optional<Int64>.none)
-                    ForEach(roles) { role in
-                        Text(role.name ?? "role \(role.id)").tag(Optional(role.id))
-                    }
-                }
-                Picker("Type", selection: $typeID) {
-                    Text("Select…").tag(Optional<Int64>.none)
-                    ForEach(deviceTypes) { type in
-                        Text(type.model ?? "type \(type.id)").tag(Optional(type.id))
-                    }
-                }
-                Picker("Status", selection: $status) {
-                    Text("Active").tag("active")
-                    Text("Planned").tag("planned")
-                    Text("Offline").tag("offline")
-                }
-                Picker("Tenant", selection: $tenantID) {
-                    Text("None").tag(Optional<Int64>.none)
-                    ForEach(tenants) { tenant in
-                        Text(tenant.name).tag(Optional(tenant.id))
-                    }
-                }
+                ChoiceField(
+                    title: "Role",
+                    prompt: "Search roles",
+                    selection: $roleID,
+                    options: .list(roles.map { ($0.id, $0.name ?? "role \($0.id)") })
+                )
+                ChoiceField(
+                    title: "Type",
+                    prompt: "Search types",
+                    selection: $typeID,
+                    options: .list(deviceTypes.map { ($0.id, $0.model ?? "type \($0.id)") })
+                )
+                ChoiceField(
+                    title: "Status",
+                    prompt: "Select",
+                    selection: $status,
+                    options: .list([("active", "Active"), ("planned", "Planned"), ("offline", "Offline")])
+                )
+                ChoiceField(
+                    title: "Tenant",
+                    prompt: "None",
+                    selection: $tenantID,
+                    options: .list(tenants.map { ($0.id, $0.name) })
+                )
                 if mount != nil {
-                    Picker("Face", selection: $face) {
-                        Text("Front").tag("front")
-                        Text("Rear").tag("rear")
-                    }
+                    ChoiceField(title: "Face", prompt: "Select", selection: $face, options: .faces)
                 }
             }
 
@@ -102,6 +101,8 @@ struct NewDeviceSheet: View {
                 Button("Cancel", action: onDismiss)
                     .keyboardShortcut(.cancelAction)
                 Button(isWriting ? "Creating…" : "Create") {
+                    guard !isWriting else { return }
+                    isWriting = true
                     Task { await create() }
                 }
                 .disabled(!canCreate)
@@ -112,11 +113,22 @@ struct NewDeviceSheet: View {
         .frame(minWidth: 420)
         .modifier(SubscriptionPaywallSheet(isPresented: $showingPaywall))
         .onAppear {
-            if tenantID == nil {
-                tenantID = defaultTenantID
-            }
-            if let mount {
-                face = mount.face
+            if let prefill {
+                name = prefill.name
+                roleID = prefill.roleID
+                typeID = prefill.typeID
+                status = prefill.status ?? "active"
+                tenantID = prefill.tenantID
+                if let face = prefill.face {
+                    self.face = face
+                }
+            } else {
+                if tenantID == nil {
+                    tenantID = defaultTenantID
+                }
+                if let mount {
+                    face = mount.face
+                }
             }
         }
     }
@@ -131,15 +143,22 @@ struct NewDeviceSheet: View {
     private var canCreate: Bool {
         !isWriting
             && netBoxSyncEngine != nil
-            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && name.nonBlank != nil
             && roleID != nil
             && typeID != nil
+            && status != nil
+            && (mount == nil || face != nil)
+    }
+
+    private func uHeight(for typeID: Int64) -> Float {
+        let raw = deviceTypes.first { $0.id == typeID }?.uHeight ?? 1
+        return raw < 0.5 ? 0.5 : raw
     }
 
     private func create() async {
-        guard let engine = netBoxSyncEngine, let roleID, let typeID else { return }
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        defer { isWriting = false }
+        guard let engine = netBoxSyncEngine, let roleID, let typeID, let status,
+              let trimmed = name.nonBlank else { return }
         if rolePresentation.presentation.countsTowardLicense(roleID: roleID) {
             let allowed = (try? seats.canAdmitEligible(
                 additional: 1,
@@ -153,26 +172,27 @@ struct NewDeviceSheet: View {
                 return
             }
         }
-        isWriting = true
-        defer { isWriting = false }
-        do {
-            try await engine.createDevice(
-                NetBoxWriteBody.DeviceCreate(
-                    name: trimmed,
-                    deviceType: typeID,
-                    role: roleID,
-                    site: siteId,
-                    status: status,
-                    rack: mount?.rackID,
-                    position: mount?.position,
-                    face: mount == nil ? nil : face,
-                    tenant: tenantID
-                )
-            )
-            onDismiss()
-        } catch {
-            writeError = error.localizedDescription
+        let intent = DeviceCreateIntent(
+            body: NetBoxWriteBody.DeviceCreate(
+                name: trimmed,
+                deviceType: typeID,
+                role: roleID,
+                site: siteId,
+                status: status,
+                rack: mount?.rackID,
+                position: mount?.position,
+                face: mount == nil ? nil : face,
+                tenant: tenantID
+            ),
+            uHeight: uHeight(for: typeID),
+            roleName: roles.first { $0.id == roleID }?.name ?? "",
+            typeModel: deviceTypes.first { $0.id == typeID }?.model ?? ""
+        )
+        _ = await engine.submit([intent])
+        if let prefill {
+            await engine.discard(prefill.token)
         }
+        onDismiss()
     }
 }
 
@@ -186,7 +206,7 @@ struct AddToRackSheet: View {
     @Environment(LicenseSeatStore.self) private var seats
     var onCreateNew: () -> Void
     @State private var selectedID: Int64?
-    @State private var face: String
+    @State private var face: String?
     @State private var placeError: String?
 
     init(
@@ -208,20 +228,19 @@ struct AddToRackSheet: View {
                 .font(.title2)
                 .fontWeight(.bold)
 
-            Picker("Face", selection: $face) {
-                Text("Front").tag("front")
-                Text("Rear").tag("rear")
-            }
+            Form {
+                ChoiceField(title: "Face", prompt: "Select", selection: $face, options: .faces)
 
-            if candidates.isEmpty {
-                Text("No unracked devices at this site.")
-                    .foregroundStyle(.secondary)
-            } else {
-                Picker("Device", selection: $selectedID) {
-                    Text("Select…").tag(Optional<Int64>.none)
-                    ForEach(candidates, id: \.id) { device in
-                        Text(device.name ?? "device \(device.id)").tag(Optional(device.id))
-                    }
+                if candidates.isEmpty {
+                    Text("No unracked devices at this site.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ChoiceField(
+                        title: "Device",
+                        prompt: "Search unracked devices",
+                        selection: $selectedID,
+                        options: .list(candidates.map { ($0.id, $0.name ?? "device \($0.id)") })
+                    )
                 }
             }
 
@@ -237,7 +256,7 @@ struct AddToRackSheet: View {
                 Button("Cancel", action: onDismiss)
                     .keyboardShortcut(.cancelAction)
                 Button("Place") { placeExisting() }
-                    .disabled(selectedID == nil)
+                    .disabled(selectedID == nil || face == nil)
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -263,7 +282,7 @@ struct AddToRackSheet: View {
     }
 
     private func placeExisting() {
-        guard let selectedID,
+        guard let selectedID, let face,
               let device = site.devices?.first(where: { $0.id == selectedID }),
               let rack = site.racks?.first(where: { $0.id == target.rackID }) else {
             return
@@ -297,26 +316,26 @@ struct NewRackSheet: View {
 
     @State private var name = ""
     @State private var facilityId = ""
-    @State private var status = "active"
+    @State private var status: String? = "active"
     @State private var tenantID: Int64?
     @State private var locationID: Int64?
     @State private var rackRoleID: Int64?
     @State private var uHeight = 42
     @State private var startingUnit = 1
-    @State private var formFactor = "4-post-cabinet"
-    @State private var width = 19
+    @State private var formFactor: String? = "4-post-cabinet"
+    @State private var width: Int? = 19
     @State private var descUnits = false
     @State private var mountingDepth = "500"
     @State private var outerWidth = "600"
     @State private var outerHeight = ""
     @State private var outerDepth = "600"
-    @State private var outerUnit = "mm"
-    @State private var airflow = "front-to-rear"
+    @State private var outerUnit: String? = "mm"
+    @State private var airflow: String? = "front-to-rear"
     @State private var serial = ""
     @State private var rackDescription = ""
     @State private var weight = ""
     @State private var maxWeight = ""
-    @State private var weightUnit = "kg"
+    @State private var weightUnit: String? = "kg"
     @State private var isWriting = false
     @State private var writeError: String?
 
@@ -330,30 +349,33 @@ struct NewRackSheet: View {
                 Section("Identity") {
                     TextField("Name", text: $name)
                     TextField("Facility ID", text: $facilityId)
-                    Picker("Status", selection: $status) {
-                        Text("Active").tag("active")
-                        Text("Planned").tag("planned")
-                        Text("Reserved").tag("reserved")
-                        Text("Deprecated").tag("deprecated")
-                    }
-                    Picker("Tenant", selection: $tenantID) {
-                        Text("None").tag(Optional<Int64>.none)
-                        ForEach(tenants) { tenant in
-                            Text(tenant.name).tag(Optional(tenant.id))
-                        }
-                    }
-                    Picker("Location", selection: $locationID) {
-                        Text("None").tag(Optional<Int64>.none)
-                        ForEach(siteLocations) { location in
-                            Text(location.name).tag(Optional(location.id))
-                        }
-                    }
-                    Picker("Role", selection: $rackRoleID) {
-                        Text("None").tag(Optional<Int64>.none)
-                        ForEach(rackRoles) { role in
-                            Text(role.name).tag(Optional(role.id))
-                        }
-                    }
+                    ChoiceField(
+                        title: "Status",
+                        prompt: "Select",
+                        selection: $status,
+                        options: .list([
+                            ("active", "Active"), ("planned", "Planned"),
+                            ("reserved", "Reserved"), ("deprecated", "Deprecated"),
+                        ])
+                    )
+                    ChoiceField(
+                        title: "Tenant",
+                        prompt: "None",
+                        selection: $tenantID,
+                        options: .list(tenants.map { ($0.id, $0.name) })
+                    )
+                    ChoiceField(
+                        title: "Location",
+                        prompt: "None",
+                        selection: $locationID,
+                        options: .list(siteLocations.map { ($0.id, $0.name) })
+                    )
+                    ChoiceField(
+                        title: "Role",
+                        prompt: "None",
+                        selection: $rackRoleID,
+                        options: .list(rackRoles.map { ($0.id, $0.name) })
+                    )
                     TextField("Serial", text: $serial)
                     TextField("Description", text: $rackDescription)
                 }
@@ -361,21 +383,26 @@ struct NewRackSheet: View {
                 Section("Elevation") {
                     TextField("Height (U)", value: $uHeight, format: .number)
                     TextField("Starting unit", value: $startingUnit, format: .number)
-                    Picker("Form factor", selection: $formFactor) {
-                        Text("2-post frame").tag("2-post-frame")
-                        Text("4-post frame").tag("4-post-frame")
-                        Text("4-post cabinet").tag("4-post-cabinet")
-                        Text("Wall-mounted frame").tag("wall-frame")
-                        Text("Wall-mounted frame (vertical)").tag("wall-frame-vertical")
-                        Text("Wall-mounted cabinet").tag("wall-cabinet")
-                        Text("Wall-mounted cabinet (vertical)").tag("wall-cabinet-vertical")
-                    }
-                    Picker("Width", selection: $width) {
-                        Text("10 inches").tag(10)
-                        Text("19 inches").tag(19)
-                        Text("21 inches").tag(21)
-                        Text("23 inches").tag(23)
-                    }
+                    ChoiceField(
+                        title: "Form factor",
+                        prompt: "Select",
+                        selection: $formFactor,
+                        options: .list([
+                            ("2-post-frame", "2-post frame"),
+                            ("4-post-frame", "4-post frame"),
+                            ("4-post-cabinet", "4-post cabinet"),
+                            ("wall-frame", "Wall-mounted frame"),
+                            ("wall-frame-vertical", "Wall-mounted frame (vertical)"),
+                            ("wall-cabinet", "Wall-mounted cabinet"),
+                            ("wall-cabinet-vertical", "Wall-mounted cabinet (vertical)"),
+                        ])
+                    )
+                    ChoiceField(
+                        title: "Width",
+                        prompt: "Select",
+                        selection: $width,
+                        options: .list([(10, "10 inches"), (19, "19 inches"), (21, "21 inches"), (23, "23 inches")])
+                    )
                     Toggle("Descending units", isOn: $descUnits)
                 }
 
@@ -384,22 +411,26 @@ struct NewRackSheet: View {
                     TextField("Outer width", text: $outerWidth)
                     TextField("Outer height", text: $outerHeight)
                     TextField("Outer depth", text: $outerDepth)
-                    Picker("Outer unit", selection: $outerUnit) {
-                        Text("Millimeters").tag("mm")
-                        Text("Inches").tag("in")
-                    }
-                    Picker("Airflow", selection: $airflow) {
-                        Text("Front to rear").tag("front-to-rear")
-                        Text("Rear to front").tag("rear-to-front")
-                    }
+                    ChoiceField(
+                        title: "Outer unit",
+                        prompt: "Select",
+                        selection: $outerUnit,
+                        options: .list([("mm", "Millimeters"), ("in", "Inches")])
+                    )
+                    ChoiceField(
+                        title: "Airflow",
+                        prompt: "Select",
+                        selection: $airflow,
+                        options: .list([("front-to-rear", "Front to rear"), ("rear-to-front", "Rear to front")])
+                    )
                     TextField("Weight", text: $weight)
                     TextField("Max weight", text: $maxWeight)
-                    Picker("Weight unit", selection: $weightUnit) {
-                        Text("Kilograms").tag("kg")
-                        Text("Grams").tag("g")
-                        Text("Pounds").tag("lb")
-                        Text("Ounces").tag("oz")
-                    }
+                    ChoiceField(
+                        title: "Weight unit",
+                        prompt: "Select",
+                        selection: $weightUnit,
+                        options: .list([("kg", "Kilograms"), ("g", "Grams"), ("lb", "Pounds"), ("oz", "Ounces")])
+                    )
                 }
             }
 
@@ -431,17 +462,24 @@ struct NewRackSheet: View {
     private var canCreate: Bool {
         !isWriting
             && netBoxSyncEngine != nil
-            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && name.nonBlank != nil
             && uHeight >= 1
             && startingUnit >= 1
+            && status != nil
+            && formFactor != nil
+            && width != nil
+            && airflow != nil
+            && (!hasOuterDimensions || outerUnit != nil)
+            && (!hasWeights || weightUnit != nil)
     }
 
     private func create() async {
-        guard let engine = netBoxSyncEngine else { return }
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard let engine = netBoxSyncEngine, let status, let formFactor, let width, let airflow,
+              let trimmed = name.nonBlank else { return }
         isWriting = true
         defer { isWriting = false }
+        let weightValue = Double(weight.trimmed)
+        let maxWeightValue = Int(maxWeight.trimmed)
         do {
             try await engine.createRack(
                 NetBoxWriteBody.RackCreate(
@@ -452,22 +490,22 @@ struct NewRackSheet: View {
                     startingUnit: Int64(startingUnit),
                     formFactor: formFactor,
                     width: width,
-                    mountingDepth: intValue(mountingDepth),
-                    outerWidth: intValue(outerWidth),
-                    outerHeight: intValue(outerHeight),
-                    outerDepth: intValue(outerDepth),
+                    mountingDepth: Int(mountingDepth.trimmed),
+                    outerWidth: Int(outerWidth.trimmed),
+                    outerHeight: Int(outerHeight.trimmed),
+                    outerDepth: Int(outerDepth.trimmed),
                     outerUnit: hasOuterDimensions ? outerUnit : nil,
                     airflow: airflow,
-                    facilityId: optionalText(facilityId),
-                    serial: optionalText(serial),
-                    description: optionalText(rackDescription),
+                    facilityId: facilityId.nonBlank,
+                    serial: serial.nonBlank,
+                    description: rackDescription.nonBlank,
                     descUnits: descUnits ? true : nil,
                     tenant: tenantID,
                     location: locationID,
                     role: rackRoleID,
-                    weight: doubleValue(weight),
-                    maxWeight: intValue(maxWeight),
-                    weightUnit: (doubleValue(weight) != nil || intValue(maxWeight) != nil) ? weightUnit : nil
+                    weight: weightValue,
+                    maxWeight: maxWeightValue,
+                    weightUnit: hasWeights ? weightUnit : nil
                 )
             )
             onDismiss()
@@ -477,20 +515,74 @@ struct NewRackSheet: View {
     }
 
     private var hasOuterDimensions: Bool {
-        intValue(outerWidth) != nil || intValue(outerHeight) != nil || intValue(outerDepth) != nil
+        [outerWidth, outerHeight, outerDepth].contains { Int($0.trimmed) != nil }
     }
 
-    private func optionalText(_ value: String) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+    private var hasWeights: Bool {
+        Double(weight.trimmed) != nil || Int(maxWeight.trimmed) != nil
+    }
+}
+
+/// One value a form can pick, with the name the operator reads. A name
+/// that repeats carries its value, so a completion resolves to one record.
+private struct ChoiceOption<Value: Hashable>: Identifiable {
+    let id: Value
+    let name: String
+}
+
+extension [ChoiceOption<String>] {
+    fileprivate static var faces: Self { .list([("front", "Front"), ("rear", "Rear")]) }
+}
+
+extension Array {
+    fileprivate static func list<Value>(_ entries: [(id: Value, name: String)]) -> Self
+    where Element == ChoiceOption<Value> {
+        let counts = Dictionary(entries.map { ($0.name.lowercased(), 1) }, uniquingKeysWith: +)
+        return entries.map { entry in
+            let repeated = counts[entry.name.lowercased(), default: 0] > 1
+            return ChoiceOption(id: entry.id, name: repeated ? "\(entry.name) (\(entry.id))" : entry.name)
+        }
+    }
+}
+
+/// Picks one value by typing or from the list. It is a text field, so Tab
+/// reaches it. The list shows every match and scrolls; macOS holds it to
+/// the height of the window the field is in.
+private struct ChoiceField<Value: Hashable>: View {
+    let title: String
+    let prompt: String
+    @Binding var selection: Value?
+    let options: [ChoiceOption<Value>]
+
+    @State private var text = ""
+
+    var body: some View {
+        TextField(title, text: $text, prompt: Text(prompt))
+            .textInputSuggestions {
+                ForEach(suggestions) { option in
+                    Text(option.name)
+                        .textInputCompletion(option.name)
+                }
+            }
+            .onChange(of: text) {
+                selection = option(named: text)?.id
+            }
+            .onChange(of: selection, initial: true) {
+                guard let selected = options.first(where: { $0.id == selection }),
+                      option(named: text)?.id != selected.id else { return }
+                text = selected.name
+            }
     }
 
-    private func intValue(_ value: String) -> Int? {
-        Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+    /// Every option while the field is empty or holds a complete choice,
+    /// so the list works as a menu. Otherwise the options that match.
+    private var suggestions: [ChoiceOption<Value>] {
+        guard let query = text.nonBlank, option(named: query) == nil else { return options }
+        return options.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
 
-    private func doubleValue(_ value: String) -> Double? {
-        Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
+    private func option(named name: String) -> ChoiceOption<Value>? {
+        options.first { $0.name.equalsIgnoringCase(name.trimmed) }
     }
 }
 #endif
