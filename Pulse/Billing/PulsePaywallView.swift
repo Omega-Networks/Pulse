@@ -30,6 +30,9 @@ import StoreKit
 
 struct PulsePaywallView: View {
     @Environment(EntitlementStore.self) private var entitlements
+    #if canImport(StoreKit)
+    @Environment(\.purchase) private var purchase
+    #endif
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
@@ -202,7 +205,7 @@ struct PulsePaywallView: View {
                     await entitlements.restore()
                 }
             }
-            Button("Unsubscribe") {
+            Button("Manage Subscription") {
                 Task { @MainActor in
                     await entitlements.openManageSubscriptions()
                 }
@@ -352,25 +355,25 @@ struct PulsePaywallView: View {
                 .opacity(payAnnually ? 1 : 0)
                 .contentTransition(.numericText())
                 .accessibilityHidden(!payAnnually)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if let monthly {
-                    Text(payAnnually ? monthly.formatted(monthly.price * 12) : monthly.displayPrice)
-                        .font(payAnnually ? .caption : .title3.weight(.semibold))
-                        .foregroundStyle(payAnnually ? Color.secondary : Color.primary)
-                        .modifier(DrawnStrikethrough(isOn: payAnnually))
-                        .contentTransition(.numericText())
-                }
-                Text(offered?.displayPrice ?? " ")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Self.savingsColor)
-                    .opacity(payAnnually ? 1 : 0)
-                    .accessibilityHidden(!payAnnually)
+            if payAnnually, let monthly {
+                Text(monthly.formatted(monthly.price * 12))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .modifier(DrawnStrikethrough(isOn: true))
                     .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
+            Text(payAnnually ? (offered?.displayPrice ?? " ") : (monthly?.displayPrice ?? " "))
+                .font(Self.priceFont)
+                .foregroundStyle(payAnnually ? Self.savingsColor : Color.primary)
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text(payAnnually ? "per year" : "per month")
-                .font(.caption)
+                .font(Self.periodFont)
                 .foregroundStyle(.secondary)
                 .contentTransition(.numericText())
         }
@@ -403,9 +406,27 @@ struct PulsePaywallView: View {
     }
 
     private static let savingsColor = Color(red: 0.12, green: 0.52, blue: 0.34)
-    /// Caption + title3 + caption, so monthly and annual cards are
-    /// the same height and the sheet does not jump on the toggle.
+    /// Save line, price, and period line, so monthly and annual cards
+    /// are the same height and the sheet does not jump on the toggle.
     private static let priceBlockMinHeight: CGFloat = 58
+
+    /// ADR 0002 puts the billed price and its period at 16pt or more.
+    /// macOS `.title3` is 15pt; iOS `.title3` is 20pt and `.callout` 16pt.
+    private static var priceFont: Font {
+        #if os(macOS)
+        .title2.weight(.semibold)
+        #else
+        .title3.weight(.semibold)
+        #endif
+    }
+
+    private static var periodFont: Font {
+        #if os(macOS)
+        .title2
+        #else
+        .callout
+        #endif
+    }
 
     private func product(for tier: SubscriptionTier, annual: Bool) -> StoreProduct? {
         productsByID[PulseDistribution.productID(tier.suffix(annual: annual))]
@@ -428,26 +449,32 @@ struct PulsePaywallView: View {
                 mapped[item.id] = StoreProduct(item)
             }
             productsByID = mapped
-            if mapped.isEmpty {
-                loadError = "No StoreKit products. In Xcode, set the Pulse scheme StoreKit Configuration to Products.storekit and run again."
-            } else {
-                loadError = nil
-            }
+            loadError = mapped.isEmpty ? Self.noProductsMessage : nil
         } catch {
             loadError = error.localizedDescription
         }
         #endif
     }
 
+    #if DEBUG
+    private static let noProductsMessage = "No StoreKit products. In Xcode, set the Pulse scheme StoreKit Configuration to Products.storekit and run again."
+    #else
+    private static let noProductsMessage = "Plans could not be loaded. Check the network connection and try again."
+    #endif
+
     private func buy(_ product: StoreProduct) async {
         #if canImport(StoreKit)
         isPurchasing = true
         defer { isPurchasing = false }
         do {
-            if try await entitlements.purchase(product.storeKit) {
+            let result = try await purchase(product.storeKit)
+            if await entitlements.completePurchase(result) {
                 onDismiss()
             }
+        } catch StoreKitError.userCancelled {
+            // The operator closed the purchase sheet. Not a failure.
         } catch {
+            entitlements.purchaseFailed(error)
             loadError = error.localizedDescription
         }
         #endif

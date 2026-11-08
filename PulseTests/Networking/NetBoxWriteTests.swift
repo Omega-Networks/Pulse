@@ -786,7 +786,7 @@ final class NetBoxWriteTests: XCTestCase {
     }
 
     func testEngineUsesInjectedEntitlementStoreTier() async throws {
-        let entitlements = EntitlementStore(previewTier: .growth)
+        let entitlements = await EntitlementStore(previewTier: .growth)
         let container = try makeContainer()
         let seed = ModelContext(container)
         seed.insert(Site(id: 4))
@@ -815,7 +815,7 @@ final class NetBoxWriteTests: XCTestCase {
         let engine = NetBoxSyncEngine(
             modelContainer: container,
             fetcher: fetcher,
-            subscriptionTier: { entitlements.tier },
+            subscriptionTier: { entitlements.currentTier },
             pendingWrites: pending
         )
         let state = await submitDevice(
@@ -920,48 +920,6 @@ final class NetBoxWriteTests: XCTestCase {
         XCTAssertNotNil(
             try ModelContext(container).fetch(FetchDescriptor<Device>()).first { $0.id == 81 }?.seatGrantedAt
         )
-    }
-
-    func testUserDefaultsTierDoesNotLiftEngineCap() async throws {
-        // Attack under test: the engine must ignore this key. Cap
-        // source is the injected closure (default Free), not storage.
-        UserDefaults.standard.set(SubscriptionTier.unlimited.rawValue, forKey: EntitlementStorage.key)
-        defer { UserDefaults.standard.removeObject(forKey: EntitlementStorage.key) }
-
-        let container = try makeContainer()
-        let seed = ModelContext(container)
-        seed.insert(Site(id: 4))
-        let role = DeviceRole(id: 1)
-        seed.insert(role)
-        seed.insert(DeviceType(id: 8))
-        let granted = Date(timeIntervalSince1970: 1_600_000_000)
-        for id in 1...50 {
-            let device = Device(id: Int64(id))
-            device.created = granted
-            device.seatGrantedAt = granted
-            device.deviceRole = role
-            seed.insert(device)
-        }
-        try seed.save()
-
-        let fetcher = WriteFetcher()
-        let pending = PendingWrites()
-        let engine = NetBoxSyncEngine(
-            modelContainer: container,
-            fetcher: fetcher,
-            pendingWrites: pending
-        )
-        let state = await submitDevice(
-            NetBoxWriteBody.DeviceCreate(
-                name: "over-cap", deviceType: 8, role: 1, site: 4, status: "active"
-            ),
-            on: engine,
-            pending: pending
-        )
-        let cap = BillingError.tierCapReached(.free).localizedDescription
-        XCTAssertEqual(state, .failed(WriteFailure(provider: .netbox, message: cap)), "spoofed defaults must not lift the engine cap")
-        await MainActor.run { OperatorNoticeCenter.shared.clear(source: .netbox) }
-        XCTAssertTrue(fetcher.sends.isEmpty)
     }
 
     func testCreateRackPostsWhenEnabled() async throws {

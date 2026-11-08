@@ -42,9 +42,9 @@ actor NetBoxSyncEngine {
     private let fetcher: any NetBoxFetching
     private let writePolicy: NetBoxWritePolicy
     /// Live StoreKit tier. Defaults fail closed (Free) so a missed
-    /// injection cannot read a spoofable UserDefaults cache.
-    /// PulseApp must pass `{ entitlementStore.tier }` — tests that
-    /// omit the argument are exercising Free, not production.
+    /// injection grants nothing. PulseApp passes
+    /// `{ entitlements.currentTier }`; tests that omit the argument are
+    /// exercising Free, not production.
     private let subscriptionTier: @Sendable () -> SubscriptionTier
     /// Asks recorded this session. Views read it on the main actor.
     /// This actor is the only mutator.

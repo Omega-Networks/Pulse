@@ -16,6 +16,7 @@
 | Pricing (2026-08-19) | Plus renamed Growth. Caps Free 50 / Growth 250 / Pro 1,500 / Unlimited none. List prices NZD 14.99 / 24.99 / 49.99 monthly; annual is 10 × monthly (two months free). | Owner ratification |
 | Pricing (2026-09-02) | Annual list prices snap to Apple `.99` points: NZD 149.99 / 249.99 / 499.99 (10 × monthly was 149.90 / 249.90 / 499.90). | App Store price-point grid |
 | Upgrade timing (2026-08-19) | A higher-rank auto-renew product is the live tier immediately. A lower-rank change stays pending until period end. | StoreKit Testing / App Store leave upgrades on `autoRenewPreference` until the next transaction |
+| Entitlement truth (2026-11-08) | The paywall is `PulsePaywallView`, not `SubscriptionStoreView`. §4 and the v1 list are superseded on that point, and Verification 7 is checked against `PulsePaywallView`. The tier is only `Transaction.currentEntitlements`: the UserDefaults tier cache is deleted, and the tier is Free until the first refresh publishes. The listener set in the seats amendment (`Transaction.updates`, `Transaction.unfinished`, become-active, `Product.SubscriptionInfo.Status.updates`) is unchanged. The Xcode Run action's StoreKit file is local, because the scheme is gitignored; a regenerated scheme drops it and Xcode runs fall back to the sandbox. | A paid plan vanished on Xcode runs: the Run action used the sandbox, and the App Store build with the same bundle ID overwrote the cached tier |
 | App Store encryption plist (2026-09-04) | `ITSAppUsesNonExemptEncryption` is **NO**. App Store Connect’s encryption questionnaire (standard algorithms, not France) requires no documentation upload; the plist must match or uploads fail with 90592. SSH/TLS/AES still exist; this flag means exempt from Apple-side docs, not “no crypto.” | App Store Connect App Encryption Documentation |
 
 ## Principle
@@ -79,7 +80,7 @@ Rationale: Pulse is a professional tool. Each operator has their own infrastruct
 
 ### 4. Annual default, monthly secondary
 
-The paywall renders annual first and larger, with the per-month equivalent and a "Save 17%" subtitle. Monthly is the secondary option. Standard SwiftUI `SubscriptionStoreView` plus explicit display ordering.
+The paywall renders annual first and larger, with the per-month equivalent and a "Save 17%" subtitle. Monthly is the secondary option. Standard SwiftUI `SubscriptionStoreView` plus explicit display ordering. Superseded 2026-11-08: the paywall is `PulsePaywallView`, and Verification 7 follows that view.
 
 Annual default optimises for Y1 revenue per converter. RevenueCat's 2026 data shows ~35% of annual subscribers cancel auto-renew in Month 1; that's expected and not a reason to default to monthly. Combined with App Store Small Business Program enrolment (15% commission), the unit economics favour annual capture.
 
@@ -209,7 +210,7 @@ When Enterprise ships, the Unlimited App Store tier's future is re-evaluated. De
 | 4 | No feature gating | `grep -rn "requiresProTier\|requiresUnlimited\|isPremium" Pulse/` returns empty. |
 | 5 | Single tier resolver | All tier reads route through one resolver fed by `Transaction.currentEntitlements`. Grep confirms. |
 | 6 | Family Sharing unreachable | `grep -rn "familyShared" Pulse/` returns only the defensive `assertionFailure` site in the transaction listener. |
-| 7 | Paywall compliance | `SubscriptionStoreView` renders TOS + Privacy Policy links inside the paywall, Restore Purchases button visible, price and period visible, no free-trial-toggle UI. Manual lab review against Guideline 3.1.2. |
+| 7 | Paywall compliance | `PulsePaywallView` renders TOS + Privacy Policy links inside the paywall, Restore Purchases button visible, price and period visible at 16pt or more, no free-trial-toggle UI. Manual lab review against Guideline 3.1.2. |
 | 8 | Listing matches in-app | App Store listing device caps and prices match in-app cap-reached language verbatim. Diff review pre-submission. |
 | 9 | SBP enrolment | App Store Connect shows program acceptance and 15% commission rate applied to all Pulse subscription proceeds. |
 | 10 | BIS filing archived | `docs/compliance/bis-filings/<year>.csv` exists; copy of submission email retained. |

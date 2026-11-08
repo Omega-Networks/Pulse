@@ -80,7 +80,7 @@ enum SubscriptionTier: String, Sendable, Equatable, CaseIterable {
 
     static let subscriptionGroupID = "pulse.device-capacity"
 
-    /// Product IDs for `SubscriptionStoreView`. Local StoreKit testing
+    /// Product IDs the paywall loads. Local StoreKit testing
     /// and App Store Connect both resolve these; a group-ID lookup hits
     /// the live storefront and fails when the group is not in ASC.
     static var storeProductIDs: [String] {
@@ -189,36 +189,34 @@ enum SubscriptionPricing {
     }
 }
 
-enum EntitlementStorage {
-    static let key = "pulse.subscriptionTier"
-    static let periodKey = "pulse.subscriptionPeriod"
-
-    static func load(from defaults: UserDefaults = .standard) -> (tier: SubscriptionTier, period: BillingPeriod?) {
-        let raw = defaults.string(forKey: key)
-        let tier: SubscriptionTier
-        if let raw, let parsed = SubscriptionTier(rawValue: raw) {
-            tier = parsed
-        } else if raw == "plus" {
-            tier = .growth
-        } else {
-            tier = .free
-        }
-        let period = defaults.string(forKey: periodKey).flatMap(BillingPeriod.init(rawValue:))
-        return (tier, tier == .free ? nil : period)
-    }
-
-    static func save(
+/// Settings line under the plan. Says Renews only when StoreKit says the
+/// plan will renew. A cancelled plan, or one whose renewal state could
+/// not be read, says Expires.
+enum PeriodCaption {
+    static func text(
         tier: SubscriptionTier,
-        period: BillingPeriod?,
-        to defaults: UserDefaults = .standard
-    ) {
-        defaults.set(tier.rawValue, forKey: key)
-        if let period, tier != .free {
-            defaults.set(period.rawValue, forKey: periodKey)
-        } else {
-            defaults.removeObject(forKey: periodKey)
+        periodEnd: Date?,
+        pending: SubscriptionTier?,
+        willAutoRenew: Bool?
+    ) -> String? {
+        guard tier != .free, let periodEnd else { return nil }
+        let when = periodEnd.formatted(localStyle)
+        guard willAutoRenew == true else { return "Expires \(when)" }
+        if let pending {
+            return "Changes to \(pending.displayName) on \(when)"
         }
+        return "Renews \(when)"
     }
+
+    /// StoreKit dates are absolute. Format in the operator's current
+    /// time zone (not UTC, not the storefront).
+    private static let localStyle = Date.FormatStyle(
+        date: .abbreviated,
+        time: .shortened,
+        locale: .autoupdatingCurrent,
+        calendar: .autoupdatingCurrent,
+        timeZone: .autoupdatingCurrent
+    )
 }
 
 enum BillingError: Error, Equatable, LocalizedError, Sendable {

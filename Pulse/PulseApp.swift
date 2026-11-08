@@ -116,8 +116,8 @@ struct PulseApp: App {
                 KnownHost.self
             )
 
-            // Load-bearing: engine write gates read this store, not
-            // UserDefaults. Capture the class before assigning stored
+            // Load-bearing: engine write gates read this store's
+            // `currentTier`. Capture the class before assigning stored
             // properties — App.init cannot close over self.entitlementStore
             // until every `let` is set. A missed injection fail-closes
             // at Free/50 and splits the UI (live StoreKit) from writes.
@@ -128,7 +128,7 @@ struct PulseApp: App {
             pendingWrites = writes
             netBoxSyncEngine = NetBoxSyncEngine(
                 modelContainer: modelContainer,
-                subscriptionTier: { entitlements.tier },
+                subscriptionTier: { entitlements.currentTier },
                 pendingWrites: writes
             )
             zabbixWriteService = ZabbixWriteService(
@@ -136,7 +136,7 @@ struct PulseApp: App {
                 problems: SiteDataService(modelContainer: modelContainer),
                 container: modelContainer,
                 seats: licenseSeatStore,
-                tier: { entitlements.tier },
+                tier: { entitlements.currentTier },
                 transport: URLSessionZabbixTransport()
             )
 

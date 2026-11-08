@@ -87,6 +87,7 @@ struct OperatorNotice: Identifiable, Sendable, Equatable {
         case netbox
         case zabbix
         case powersense
+        case billing
     }
 
     enum Severity: Sendable, Equatable {
@@ -103,6 +104,14 @@ struct OperatorNotice: Identifiable, Sendable, Equatable {
     /// Transport and status only. A refused write keeps its own id until
     /// Discard or a successful commit of that token.
     static let zabbixStatusID = "zabbix.status"
+
+    /// A purchase that failed or waits for approval. A verified
+    /// transaction clears it.
+    static let billingPurchaseID = "billing.purchase"
+    /// Restore Purchases that failed. A later successful restore clears it.
+    static let billingRestoreID = "billing.restore"
+    /// Manage Subscription that failed to open. A later open clears it.
+    static let billingManageID = "billing.manage"
 
     /// The same sentence the Zabbix toolbar already shows. Success and
     /// the in-flight marker are not notices.

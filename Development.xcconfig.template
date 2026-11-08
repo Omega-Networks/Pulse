@@ -17,3 +17,5 @@ MARKETING_HOST =
 
 // For Xcode StoreKit testing, copy Pulse/Products.storekit.template to
 // Pulse/Products.storekit and prefix every productID with BUNDLE_IDENTIFIER.
+// The Pulse scheme's Run action must reference that file (Edit Scheme >
+// Run > Options > StoreKit Configuration); regenerating the scheme clears it.

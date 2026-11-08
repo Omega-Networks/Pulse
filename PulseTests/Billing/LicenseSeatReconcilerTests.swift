@@ -311,6 +311,32 @@ final class LicenseSeatReconcilerTests: XCTestCase {
         XCTAssertNil(unchanged.pending)
     }
 
+    func testPeriodCaptionRenewsWhenAutoRenewIsOn() {
+        let caption = PeriodCaption.text(tier: .pro, periodEnd: now, pending: nil, willAutoRenew: true)
+        XCTAssertEqual(caption?.hasPrefix("Renews "), true)
+    }
+
+    func testPeriodCaptionExpiresWhenCancelled() {
+        let cancelled = PeriodCaption.text(tier: .pro, periodEnd: now, pending: nil, willAutoRenew: false)
+        XCTAssertEqual(cancelled?.hasPrefix("Expires "), true)
+        let cancelledAfterDowngrade = PeriodCaption.text(
+            tier: .pro, periodEnd: now, pending: .growth, willAutoRenew: false
+        )
+        XCTAssertEqual(cancelledAfterDowngrade?.hasPrefix("Expires "), true)
+    }
+
+    func testPeriodCaptionNamesPendingDowngrade() {
+        let caption = PeriodCaption.text(tier: .unlimited, periodEnd: now, pending: .growth, willAutoRenew: true)
+        XCTAssertEqual(caption?.hasPrefix("Changes to Growth on "), true)
+    }
+
+    func testPeriodCaptionExpiresWhenRenewalIsUnknown() {
+        let caption = PeriodCaption.text(tier: .growth, periodEnd: now, pending: nil, willAutoRenew: nil)
+        XCTAssertEqual(caption?.hasPrefix("Expires "), true)
+        XCTAssertNil(PeriodCaption.text(tier: .free, periodEnd: now, pending: nil, willAutoRenew: true))
+        XCTAssertNil(PeriodCaption.text(tier: .pro, periodEnd: nil, pending: nil, willAutoRenew: true))
+    }
+
     func testRestoreReenablesSurvivingGrantsThenFills() {
         let devices = [
             snap(id: 1, created: older, grant: older),
