@@ -51,7 +51,7 @@ The slug must be exactly `zabbix_id` (and `zabbix_instance` if you use it). Puls
 
 Without `zabbix_id`, the device still appears from NetBox. It has no monitoring colour, no item charts, and no problem feed.
 
-**Fetch Events** in the main toolbar polls Zabbix problems for devices with a `zabbix_id`: once when switched on, then every two minutes. The squares count problems that are still open and not suppressed. The Problems table lists the events stored for the open site, including resolved ones. The circular-arrow control imports event history. Fetch Events does not.
+**Fetch Events** in the main toolbar polls Zabbix problems for devices with a `zabbix_id`: once when switched on, then every two minutes. The squares count a problem that is open, not suppressed, and not a symptom ([ADR 0006](architecture/0006-zabbix-cause-and-symptom.md)). The Problems table lists the events stored for the open site, including resolved ones. The circular-arrow control imports event history. Fetch Events does not.
 
 ## Forced resync
 

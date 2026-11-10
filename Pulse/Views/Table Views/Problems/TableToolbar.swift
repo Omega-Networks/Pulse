@@ -28,7 +28,7 @@ import SwiftUI
 struct TableToolbar: View {
     @State private var isShowingSheet: Bool = false
     var selectedEvents: [Event]
-    var events: [Event]
+    var problemCount: Int
     
     var body: some View {
         HStack {
@@ -51,7 +51,7 @@ struct TableToolbar: View {
             
             Spacer()
             
-            Text("\(events.count) \(events.count == 1 ? "Event" : "Event")")// You need to pass `events` as a property or a binding
+            Text(problemCount == 1 ? "1 problem" : "\(problemCount) problems")
                 .padding(.horizontal, 10)
                 .padding(.bottom, 10)
         }.frame(height: 20)
@@ -59,5 +59,5 @@ struct TableToolbar: View {
 }
 
 #Preview {
-    TableToolbar(selectedEvents: [], events: [])
+    TableToolbar(selectedEvents: [], problemCount: 0)
 }

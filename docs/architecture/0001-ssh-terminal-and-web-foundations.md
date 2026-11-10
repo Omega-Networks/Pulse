@@ -603,6 +603,16 @@ These are decided non-goals for the current contract. They are not open design q
 - **`HostTrust.trustedCA` and `requireCertificateVerification`.** Reserved for v2 with FreeIPA enrolment. TOFU pin is the v1 trust model. Storage for the policy flag (site, tenant, or both) is chosen when that field is added, not before. See §5.
 - **`pulse-tunnel://` scheme handler (W3).** Not shipped. The Device Web window loads the appliance URL directly. Navigation containment and per-host TLS trust shipped without it.
 
+### Reference window (problem descriptions)
+
+A link in a Zabbix trigger description opens in a Reference window, not in Device Web. The two do not share a trust model.
+
+- **Own routing type.** `ReferenceWebWindowTarget` and `WindowGroup("Reference", id: "reference-web", for: ReferenceWebWindowTarget.self)`. A second scene may not reuse `DeviceWebWindowTarget` (section 9). iOS presents `ReferenceWebView` as a sheet and has no second scene.
+- **System certificates only.** `decideAuthenticationChallengeDisposition` returns default handling. The window never reads or writes `WebHostTrust` and never shows a trust prompt. A certificate the system rejects is a load failure, with the URL selectable and Open in Browser.
+- **No website data.** `WebPage.Configuration.websiteDataStore` is `WKWebsiteDataStore.nonPersistent()` (confirmed on the macOS 26 SDK). Cookies and storage do not outlive the window.
+- **Navigation.** Same origin stays. Before the first commit, a main-frame move to another http or https host is the address resolving. The window follows it and the origin becomes that host. After commit, another http or https host opens in the system browser, and that handoff is not a load failure. Any other scheme is cancelled. `target=_blank` does nothing, as in Device Web.
+- **Audit.** `Logger(subsystem: "pulse", category: "web.reference")`. The host is public. Path and query are private.
+
 ## Review
 
 This document is the contract. Changes require a new ADR or an amendment with explicit rationale. Implementation PRs touching SSH, Web, transport, credentials, or session logging must reference this ADR in their description.
@@ -615,3 +625,5 @@ This document is the contract. Changes require a new ADR or an amendment with ex
 | 2026-06-10 | PR14 pre-merge documentation-currency pass. Tightened the transient-context discipline language: the grep gate over `Pulse/`, `PulseTests/`, and operator docs is now stated as a merge blocker rather than a discipline left for "subsequent slices" to apply incrementally. Reconciled the Web companion W2b window-routing sentence to the post-hardening state (all three id-addressed scenes key on nominal target structs). |
 | 2026-06-11 | Fixed a first-connect "child channel inactive" regression introduced by the 2026-06-10 Device Web migration: keying the Device Web `WindowGroup` on the SSH terminal's `DeviceWindowTarget` made two scenes share one `WindowGroup(for:)` Swift type, which SwiftUI can resolve by mounting a second `SSHTerminalView` instance. The second instance's fresh `didAttemptAutoFire` `@State` defeated the per-instance auto-fire guard, so the terminal auto-fired twice and the first session was cancelled mid-handshake. Device Web now keys on its own `DeviceWebWindowTarget`; the structural rule is one distinct nominal type per id-addressed scene, never a shared type. |
 | 2026-08-19 | Replaced the per-feature verification questionnaire with a Deferred list of decided non-goals. |
+| 2026-11-08 | Reference window for trigger-description links. System certificate validation only, no `WebHostTrust` pins, non-persistent website data store. |
+| 2026-11-08 | Reference window follows a redirect before the first commit and adopts that host. A later handoff to the system browser is not a load failure. |

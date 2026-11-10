@@ -31,28 +31,38 @@ struct AcknowledgedCell: View {
     var acknowledgedString: String
     var acknowledgedColor: Color
     var allowsUpdate: Bool = true
-//    #if os(macOS)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering: Bool = false
-//    #endif
-    
+
+    private var hoverEase: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 0.35)
+    }
+
     var body: some View {
         Text(acknowledgedString)
             .foregroundColor(isHovering ? Color.blue : acknowledgedColor)
             .underline()
             .contentTransition(.opacity)
-            .animation(.easeInOut(duration: 0.35), value: acknowledgedString)
-            .animation(.easeInOut(duration: 0.35), value: acknowledgedColor)
+            .animation(hoverEase, value: acknowledgedString)
+            .animation(hoverEase, value: acknowledgedColor)
+            .animation(hoverEase, value: isHovering)
+            .fixedSize()
             .onTapGesture {
                 guard allowsUpdate else { return }
                 isShowingSheet = true
             }
             .help(allowsUpdate ? "Update event" : "Subscribe to resume")
-            .pointingHand(when: allowsUpdate)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    if !isHovering { isHovering = true }
+                case .ended:
+                    isHovering = false
+                }
+            }
+            .pointingHand(when: allowsUpdate && isHovering)
             .sheet(isPresented: $isShowingSheet) {
                 UpdateModal(events: selectedEvents)
-            }
-            .onHover { isHovered in
-                self.isHovering = isHovered
             }
     }
 }

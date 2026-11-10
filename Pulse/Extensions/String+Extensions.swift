@@ -45,4 +45,45 @@ extension String {
         let words = replacingOccurrences(of: "_", with: " ")
         return words.prefix(1).uppercased() + words.dropFirst()
     }
+
+    /// http and https runs become links. Trailing sentence punctuation stays
+    /// in the text and out of the link. A query string stays. Other schemes
+    /// stay plain text, so a trigger comment cannot open `file:` or `ssh:`.
+    func linkified() -> AttributedString {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return AttributedString(self)
+        }
+        let ns = self as NSString
+        let matches = detector.matches(
+            in: self,
+            options: [],
+            range: NSRange(location: 0, length: ns.length)
+        )
+        let trailing = CharacterSet(charactersIn: ".,;:!?)]}>\"'")
+        var result = AttributedString()
+        var cursor = startIndex
+        for match in matches {
+            var range = match.range
+            while range.length > 0 {
+                let unit = ns.character(at: range.location + range.length - 1)
+                guard let scalar = UnicodeScalar(unit), trailing.contains(scalar) else { break }
+                range.length -= 1
+            }
+            guard range.length > 0, let swiftRange = Range(range, in: self) else { continue }
+            guard swiftRange.lowerBound >= cursor else { continue }
+            let slice = String(self[swiftRange])
+            guard let url = URL(string: slice), WebOrigin.isBrowserOpenable(url) else { continue }
+            if cursor < swiftRange.lowerBound {
+                result += AttributedString(self[cursor..<swiftRange.lowerBound])
+            }
+            var linked = AttributedString(slice)
+            linked.link = url
+            result += linked
+            cursor = swiftRange.upperBound
+        }
+        if cursor < endIndex {
+            result += AttributedString(self[cursor..<endIndex])
+        }
+        return result
+    }
 }

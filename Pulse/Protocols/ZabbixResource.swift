@@ -476,6 +476,80 @@ func fetchHostProblems(hostIds: [String]? = nil, eventIds: [String]? = nil) asyn
     return decoded
 }
 
+/// One trigger comment. `comments` is the description with macros expanded
+/// when Zabbix honours `expandComment`. The text is not logged.
+struct TriggerComment: Decodable, Sendable {
+    let triggerId: String
+    let comments: String
+
+    private enum CodingKeys: String, CodingKey {
+        case triggerId = "triggerid"
+        case comments
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        guard let triggerId = ZabbixJSONRPC.flexibleString(values, .triggerId) else {
+            throw SwiftDataError.missingData
+        }
+        self.triggerId = triggerId
+        self.comments = ZabbixJSONRPC.flexibleString(values, .comments) ?? ""
+    }
+}
+
+/// `trigger.get` for the comments on these triggers. Sends trigger ids to
+/// the Zabbix host in Configuration. Nothing else.
+struct RetrieveTriggerDescriptionsResource: ZabbixResource {
+    typealias ModelType = TriggerComment
+
+    var methodPath: String
+    let method = "trigger.get"
+    let triggerIds: [String]
+
+    init(methodPath: String, triggerIds: [String]) {
+        self.methodPath = methodPath
+        self.triggerIds = triggerIds
+    }
+
+    var params: [String: Any]? {
+        [
+            "output": ["triggerid", "comments"],
+            "triggerids": triggerIds,
+            "expandComment": true
+        ]
+    }
+
+    var headers: [String: String]? = nil
+}
+
+/// Trigger id to comment. An empty id list makes no call: `trigger.get`
+/// with no ids would return every trigger. The comment text is not logged.
+func fetchTriggerDescriptions(triggerIds: [String]) async throws -> [String: String] {
+    let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")
+    guard !triggerIds.isEmpty else { return [:] }
+
+    logger.debug("Fetching trigger descriptions count=\(triggerIds.count, privacy: .public)")
+
+    let resource = RetrieveTriggerDescriptionsResource(methodPath: "", triggerIds: triggerIds)
+    let request = try await resource.request
+    let data: Data
+    do {
+        (data, _) = try await URLSession.shared.data(for: request)
+    } catch {
+        throw ZabbixError.fromTransport(error)
+    }
+
+    let jsonObject = try zabbixJSONObject(from: data)
+    let decoded = try ZabbixJSONRPC.decodeElements(TriggerComment.self, from: jsonObject)
+    var comments: [String: String] = [:]
+    comments.reserveCapacity(decoded.items.count)
+    for item in decoded.items {
+        comments[item.triggerId] = item.comments
+    }
+    logger.debug("Fetched trigger descriptions count=\(comments.count, privacy: .public)")
+    return comments
+}
+
 // Function to fetch Items
 func fetchItems(hostId: Int64) async throws -> [ItemProperties] {
     let logger = Logger(subsystem: "zabbix", category: "zabbixFetch")

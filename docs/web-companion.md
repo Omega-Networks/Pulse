@@ -91,7 +91,24 @@ End-to-end verification against a self-signed appliance:
 
 A self-signed appliance that serves a large RSA key (for example 4096-bit) completes its TLS handshake noticeably slower than a 2048-bit one, and a web UI that opens many connections at once multiplies that cost. This is a property of the appliance's certificate, not of Pulse: once trusted, the host loads fine, it just handshakes slower. After you accept a certificate, Pulse loads the page in a single navigation (it does not reload on top of the accepted load), so the handshake cost is paid once rather than twice.
 
+## Reference window
+
+A link in a problem's trigger description opens here, not in Device Web. The window title is the host of that link. Pulse sends a normal page load to that host and no Pulse identifier. It keeps no cookies or other website data after the window closes. The certificate check is the system's. There is no trust prompt and no pin. A certificate the system rejects is shown as a load failure, with the address selectable, and **Open in Browser** hands the same address to the system browser.
+
+Navigation stays on the host the link opened. A redirect before the page opens, such as a host sending `fortiguard.com` to `www.fortiguard.com`, stays in the window, and the title becomes that host. After the page has opened, a link to another http or https site opens in the system browser, and the window says it opened there. Anything else is dropped. A page that asks to open a new window does nothing, as in Device Web.
+
+The address in the description is the URL written in the Zabbix template. If that URL contains a device name, opening it sends that name to the site.
+
+On iPhone and iPad the same view is a sheet from the site's problems list.
+
+Audit events use the `pulse` subsystem, category `web.reference`. The host is public. The path and query are private.
+
+```bash
+log show --predicate 'subsystem == "pulse" AND category == "web.reference"' --last 1h
+```
+
 ## Related
 
 - [SSH and web foundations](architecture/0001-ssh-terminal-and-web-foundations.md): credential, trust, and session-recording model.
+- [Zabbix cause and symptom counting](architecture/0006-zabbix-cause-and-symptom.md): which problems count, and why a description link is not a device web page.
 - [credentials.md](credentials.md) for the SSH terminal and its host-key trust, which the Web companion mirrors.

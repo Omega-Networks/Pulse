@@ -299,6 +299,10 @@ struct PulseApp: App {
             roles: rolePresentationStore
         )
 
+        // Description links. Its own routing type, so it does not share
+        // Device Web's window group. System certificate checks only.
+        ReferenceWebScene()
+
         #if DEBUG
         WindowGroup("Debug SSH", id: DebugSSHWindow.windowID) {
             DebugSSHWindow()
