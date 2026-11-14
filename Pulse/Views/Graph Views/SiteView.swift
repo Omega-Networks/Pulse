@@ -37,6 +37,7 @@ struct SiteView: View {
     @Environment(RolePresentationStore.self) private var rolePresentation
     @Environment(LicenseSeatStore.self) private var seats
     @Environment(EntitlementStore.self) private var entitlements
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     // Query for the site and its devices
     @SceneStorage("selected-site-id") var storedSiteId: String = ""
@@ -47,6 +48,17 @@ struct SiteView: View {
     @State private var showLeft = false
     @State private var showRight = false ///Set to true when testing
     @State private var showBottom = false
+
+    /// Column header, three rows, and the toolbar under the table.
+    /// Header 32, a row 36, the stack gap 8, the toolbar's 20 plus
+    /// its 16-point padding on each side, and 20 so the last row
+    /// is not flush with the toolbar. This is the pane's ideal
+    /// height, not its minimum. A minimum stacks with the graph's
+    /// floor and the window grows to fit both.
+    private static let problemsPaneHeight: CGFloat = 32 + (36 * 3) + 8 + 52 + 20
+    /// The graph's floor. It does not drop while the problems pane
+    /// is open. Dropping it frees a band, and a flexible pane takes it.
+    private static let graphMinHeight: CGFloat = 400
     @State private var selectedDevice: Device?
     @State private var enableGestures = false
     @State private var labelsEnabled = false
@@ -145,16 +157,31 @@ struct SiteView: View {
                     }
                 }
             }
-            .frame(idealWidth: .infinity, maxWidth: .infinity, minHeight: 400, idealHeight: 800, maxHeight: .infinity)
-            
+            .frame(
+                idealWidth: .infinity,
+                maxWidth: .infinity,
+                minHeight: Self.graphMinHeight,
+                idealHeight: 800,
+                maxHeight: .infinity
+            )
+
             // MARK: Bottom
+            // The split's own divider is the drag. The pane asks for
+            // its ideal height and leaves the width to the split.
+            // A layout priority here is offered the graph's leftover
+            // width, and that ideal width is infinite, so the result
+            // is negative and the table is not drawn.
             if showBottom {
                 VStack {
                     if let site = sites.first {
                         EventTable(site: site)
                     }
                 }
-                .frame(maxWidth: .infinity, idealHeight: 200, maxHeight: .infinity)
+                .frame(
+                    maxWidth: .infinity,
+                    idealHeight: Self.problemsPaneHeight,
+                    maxHeight: .infinity
+                )
             }
         }
         .toolbar(content: toolbarContent)
@@ -208,6 +235,16 @@ extension SiteView {
     private func mountTarget(for ghost: DeviceGhost?) -> RackMountTarget? {
         guard let ghost, let rackID = ghost.rackID, let position = ghost.position else { return nil }
         return RackMountTarget(rackID: rackID, position: position, face: ghost.face ?? "front")
+    }
+
+    private func toggleProblemsPane() {
+        if showBottom {
+            withAnimation(reduceMotion ? nil : .default) {
+                showBottom = false
+            }
+        } else {
+            showBottom = true
+        }
     }
 }
 
@@ -276,11 +313,7 @@ extension SiteView {
             .buttonStyle(.plain)
             .padding(.all, 5.0)
             
-            Button {
-                withAnimation {
-                    showBottom.toggle()
-                }
-            } label: {
+            Button(action: toggleProblemsPane) {
                 Image(systemName: "menubar.dock.rectangle")
                     .fontWeight(.medium)
                     .font(.title2)

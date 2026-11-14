@@ -309,17 +309,14 @@ struct DeviceView: View {
         let squares = problemSquares
         return HStack(spacing: 0) {
             ForEach(squares) { square in
-                Image(systemName: square.symbol)
-                    .symbolRenderingMode(.palette)
-                    .contentTransition(.symbolEffect(.replace))
-                    .transition(.symbolEffect(.automatic))
-                    .font(.system(size: 16.5))
-                    .shadow(color: Color.black, radius: 1)
-                    .foregroundStyle(
-                        Color.primary,
-                        severitySquareColor(for: Int64(square.severity))
-                    )
-                    .frame(width: 15, height: 15)
+                ProblemCountGlyph(
+                    symbol: square.symbol,
+                    fill: severitySquareColor(for: Int64(square.severity)),
+                    fontSize: 18.5,
+                    numberTransition: .symbolEffect(.replace)
+                )
+                .transition(.symbolEffect(.automatic))
+                .frame(width: 17, height: 17)
             }
         }
         .animation(.spring(duration: 0.55, bounce: 0.32), value: squares)

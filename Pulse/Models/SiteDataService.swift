@@ -35,6 +35,31 @@ enum SiteDataError: Error {
     case networkError(Error)
 }
 
+/// Snapshot of `trigger.get` comments onto trigger problems.
+/// A trigger id that is absent from the response is stored as "", so the
+/// row is not asked again. Non-triggers are left nil. A failed fetch
+/// does not call `apply`.
+enum TriggerDescriptions {
+    static let pageSize = 200
+
+    /// Trigger problems whose comment has not been snapshotted.
+    /// A filled row leaves this set, so the next full pull is the next page.
+    static var awaiting: Predicate<Event> {
+        #Predicate<Event> { event in
+            event.triggerDescription == nil && event.object == "0"
+        }
+    }
+
+    static func apply(response: [String: String], to events: [Event]) {
+        for event in events where event.object == "0" {
+            let text = response[event.objectId] ?? ""
+            if event.triggerDescription != text {
+                event.triggerDescription = text
+            }
+        }
+    }
+}
+
 actor SiteDataService {
     let modelContainer: ModelContainer
 
@@ -280,6 +305,7 @@ actor SiteDataService {
                 if !inserted.isEmpty {
                     await getEvents(using: inserted)
                 }
+                await refreshTriggerDescriptions()
             }
 
             logger.debug("Problem sync process completed successfully")
@@ -288,6 +314,57 @@ actor SiteDataService {
         } catch {
             logger.error("Failed to get problems: \(error.localizedDescription)")
             await MainActor.run { Self.publishZabbixFailure(error) }
+        }
+    }
+
+    /// One page of trigger problems that have no comment yet, in event-id
+    /// order, so a failed fetch retries the same page. The full pull calls
+    /// this. A one-event acknowledge does not. Sends distinct trigger ids
+    /// to the configured Zabbix and stores the comment it returns. An empty
+    /// id list makes no call. A refused or failed `trigger.get` writes
+    /// nothing and does not fail the problem pull.
+    private func refreshTriggerDescriptions() async {
+        let logger = Logger(subsystem: "zabbix", category: "problemSync")
+        let pageIds: [String]
+        let triggerIds: [String]
+        do {
+            let context = makeContext()
+            var descriptor = FetchDescriptor<Event>(
+                predicate: TriggerDescriptions.awaiting,
+                sortBy: [SortDescriptor(\Event.eventId, order: .forward)]
+            )
+            descriptor.fetchLimit = TriggerDescriptions.pageSize
+            let page = try context.fetch(descriptor)
+            if page.isEmpty { return }
+            pageIds = page.map(\.eventId)
+            var seen = Set<String>()
+            triggerIds = page.compactMap { event in
+                let objectId = event.objectId
+                guard !objectId.isEmpty, seen.insert(objectId).inserted else { return nil }
+                return objectId
+            }
+        } catch {
+            logger.error("Trigger description page failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+
+        let response: [String: String]
+        do {
+            response = try await fetchTriggerDescriptions(triggerIds: triggerIds)
+        } catch {
+            logger.error("trigger.get failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+
+        do {
+            let context = makeContext()
+            let events = Array(try eventsById(pageIds, in: context).values)
+            TriggerDescriptions.apply(response: response, to: events)
+            if context.hasChanges {
+                try context.save()
+            }
+        } catch {
+            logger.error("Trigger description save failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -725,11 +802,8 @@ actor SiteDataService {
         try stampMissingHostIds(on: monitored, in: context)
         var tally: [Int64: ActiveSeverity] = [:]
         for batch in chunk(array: Array(Set(monitored.map(\.zabbixId))), size: 200) {
-            let ids = batch
             let descriptor = FetchDescriptor<Event>(
-                predicate: #Predicate<Event> { event in
-                    event.rClock == "0" && event.suppressed == "0" && ids.contains(event.hostId)
-                }
+                predicate: Event.counted(amongHostIds: batch)
             )
             for event in try context.fetch(descriptor) {
                 var next = tally[event.hostId] ?? ActiveSeverity()

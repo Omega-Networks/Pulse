@@ -145,8 +145,7 @@ final class Device {
     var highestSeverityStored: Int = -2
     var highestUnacknowledgedSeverityStored: Int = -1
     /// Active problem counts by severity index 0...5. A row counts when
-    /// it is still a problem (`rClock == "0"` and `suppressed == "0"`).
-    /// A suppressed row does not count.
+    /// it is open, not suppressed, and not a symptom.
     var activeCountsBySeverity: [Int] = [0, 0, 0, 0, 0, 0]
     
     // MARK: - Computed Properties
@@ -222,11 +221,10 @@ final class Device {
     
     // MARK: - Event States
     
-    /// Active problems on this device. A resolved row and a suppressed row are absent.
+    /// Active problems on this device. A resolved row, a suppressed row,
+    /// and a symptom are absent.
     private var activeEvents: [Event] {
-        events?.filter {
-            $0.isStoreBacked && $0.rClock == "0" && $0.suppressed == "0"
-        } ?? []
+        events?.filter { $0.isStoreBacked && $0.isCountedProblem } ?? []
     }
     
     /// Current highest severity level among active events.

@@ -36,9 +36,10 @@ import SwiftUI
 final class Event {
     /// One `#Index`. Each array is its own index: `siteId` for the
     /// problems table, `rClock` for the active-event query, `hostId`
-    /// for the count predicates. All three are defaulted, so the index
-    /// does not add a column.
-    #Index<Event>([\.siteId], [\.rClock], [\.hostId])
+    /// for the count predicates, and `object` with `triggerDescription`
+    /// for the nil-comment page. None of these add a column.
+    /// `causeEventId` is the correlation. It is not an index.
+    #Index<Event>([\.siteId], [\.rClock], [\.hostId], [\.object, \.triggerDescription])
 
     // TODO: Make into non-unique with error handling on import
     @Attribute(.unique) var eventId: String
@@ -50,6 +51,12 @@ final class Event {
     var objectId: String = ""
     var rClock: String = ""
     var opData: String = ""
+    /// Zabbix problem rank. "0" is a cause. Any other value is the cause's
+    /// event id, and this row is a symptom. Older Zabbix sends no rank.
+    var causeEventId: String = "0"
+    /// Trigger description (`trigger.get` comments, macros expanded).
+    /// nil until fetched. "" when the trigger has none or is gone.
+    var triggerDescription: String?
     var severity: String = ""
     var source: String = ""
     var suppressed: String = ""
@@ -68,6 +75,31 @@ final class Event {
     /// persisted property then traps in SwiftData; callers that walk
     /// `Device.events` / `@Query` after Delete All must skip these.
     var isStoreBacked: Bool { modelContext != nil }
+
+    /// In-memory form of `counted`. Call only after `isStoreBacked`.
+    var isCountedProblem: Bool {
+        rClock == "0" && suppressed == "0" && causeEventId == "0"
+    }
+
+    /// True when Zabbix ranks this row under a cause. A missing rank is a cause.
+    var isSymptom: Bool { causeEventId != "0" }
+
+    /// Open, not suppressed, and not a symptom. Zabbix counts maps the same way.
+    static var counted: Predicate<Event> {
+        #Predicate<Event> { event in
+            event.rClock == "0" && event.suppressed == "0" && event.causeEventId == "0"
+        }
+    }
+
+    /// `counted` limited to these Zabbix host ids. The host term cannot
+    /// live inside `counted`: a `#Predicate` does not call another one.
+    static func counted(amongHostIds hostIds: [Int64]) -> Predicate<Event> {
+        let ids = hostIds
+        return #Predicate<Event> { event in
+            event.rClock == "0" && event.suppressed == "0"
+                && event.causeEventId == "0" && ids.contains(event.hostId)
+        }
+    }
     
     /// Writes the payload onto this row. An equal value is left alone, so a
     /// quiet poll does not dirty the row. Returns whether anything changed.
@@ -85,6 +117,9 @@ final class Event {
         changed = assign(\.severity, properties.severity) || changed
         changed = assign(\.opData, properties.opData) || changed
         changed = assign(\.suppressed, properties.suppressed) || changed
+        if let causeEventId = properties.causeEventId {
+            changed = assign(\.causeEventId, causeEventId) || changed
+        }
         if let value = properties.value {
             changed = assign(\.value, value) || changed
         }
@@ -156,7 +191,7 @@ final class Event {
         default: return .purple
         }
     }
-    
+
     var acknowledgedString: String {
         switch Int(self.acknowledged) {
         case 0:
@@ -282,6 +317,7 @@ struct EventProperties: Decodable, Sendable {
         case objectId = "objectid"
         case rClock = "r_clock"
         case opData = "opdata"
+        case causeEventId = "cause_eventid"
         case hosts
     }
     
@@ -318,8 +354,10 @@ struct EventProperties: Decodable, Sendable {
     let severity: String
     let opData: String
     let suppressed: String
-    
-    
+    /// Nil when the payload omits `cause_eventid`. An update then leaves
+    /// the stored rank. A present value, including "0", is written.
+    let causeEventId: String?
+
     let rClock: String?
     let value: String?
     let hostIds: [String]
@@ -347,6 +385,7 @@ struct EventProperties: Decodable, Sendable {
         let rawSeverity = flex(.severity)
         let rawOpData = flex(.opData)
         let rawSuppressed = flex(.suppressed)
+        let rawCauseEventId = flex(.causeEventId)
         
         // Nested Hosts attributes
         var rawHostIds: [String] = []
@@ -406,21 +445,7 @@ struct EventProperties: Decodable, Sendable {
         self.severity = severity
         self.opData = opData
         self.suppressed = suppressed
+        self.causeEventId = rawCauseEventId
         self.hostIds = hostIds
-    }
-    
-    var dictionaryValue: [String: Any] {
-        [
-            "eventId": eventId,
-            "name": name,
-            "source": source,
-            "object": object,
-            "objectId": objectId,
-            "clock": clock,
-            "acknowledged": acknowledged,
-            "severity": severity,
-            "opData": opData,
-            "suppressed": suppressed
-        ]
     }
 }

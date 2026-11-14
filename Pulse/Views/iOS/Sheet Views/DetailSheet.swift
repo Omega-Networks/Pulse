@@ -30,18 +30,7 @@ import SwiftData
 import MapKit
 
 #if os (iOS)
-/**
- This SwiftUI view presents detailed information about a selected site, including its name, group, and a list of devices with their respective events. It's designed to be presented as a sheet, with functionality to refresh the content and dismiss the view dynamically.
- 
- - Requires:
- 
- - Important: This view relies on the presence of a selected site within the `ViewModel`. If no site is selected, default placeholder text is displayed.
- 
- - Note: Real-time updates and additional features such as a graph view for the site are planned but not yet implemented.
- 
- - TODO: Implement real-time updates to ensure the view reflects the latest data without needing manual refreshes.
- - TODO: Integrate a `SiteGraphView` to visually represent data related to the selected site.
- */
+/// The selected site: name, address, device count, topology, racks, and problems.
 struct DetailSheet: View {
     @Environment(\.dismiss) var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -149,7 +138,8 @@ struct DetailSheet: View {
                             .font(.caption)
                     }
                 }
-                
+
+                ProblemsSection(siteId: site.id)
             }
         }
         .environment(rackEdit)

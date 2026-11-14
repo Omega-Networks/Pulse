@@ -25,6 +25,7 @@
 		410A56102D0F898B00C722E3 /* SyncDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410A560F2D0F898B00C722E3 /* SyncDashboardView.swift */; };
 		410A5D512C1FD38D005A073C /* MainSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410A5D502C1FD38D005A073C /* MainSheet.swift */; };
 		410A5D532C1FD393005A073C /* DetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410A5D522C1FD393005A073C /* DetailSheet.swift */; };
+		D4E0A00700000000000000B1 /* ProblemsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E0A00700000000000000A1 /* ProblemsSection.swift */; };
 		410F37262CAB5938008236ED /* DeviceDetailsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410F37252CAB5938008236ED /* DeviceDetailsPanelView.swift */; };
 		410F372A2CABA58B008236ED /* Rack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410F37292CABA58B008236ED /* Rack.swift */; };
 		411226102C167CAF003C6C65 /* DeviceDetails.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4112260F2C167CAF003C6C65 /* DeviceDetails.swift */; };
@@ -192,6 +193,7 @@
 		B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051300000000000000A1 /* SiteTopologyEdges.swift */; };
 		B17E051400000000000000B1 /* Cable.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051400000000000000A1 /* Cable.swift */; };
 		B17E051500000000000000B1 /* CableVO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051500000000000000A1 /* CableVO.swift */; };
+		D4E0A00100000000000000B1 /* ProblemRowVO.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E0A00100000000000000A1 /* ProblemRowVO.swift */; };
 		B17E051600000000000000B1 /* RolePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051600000000000000A1 /* RolePresentation.swift */; };
 		B17E051700000000000000B1 /* RolePresentationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051700000000000000A1 /* RolePresentationSettings.swift */; };
 		B17E051800000000000000B1 /* RolePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051800000000000000A1 /* RolePresentationTests.swift */; };
@@ -217,6 +219,10 @@
 		B17E050300000000000000B3 /* DeviceWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A3 /* DeviceWebView.swift */; };
 		B17E050400000000000000B1 /* WebTrustSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050400000000000000A1 /* WebTrustSettingsView.swift */; };
 		B17E050300000000000000B4 /* DeviceWebWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A4 /* DeviceWebWindow.swift */; };
+		D4E0A00300000000000000B1 /* ReferenceWebWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E0A00300000000000000A1 /* ReferenceWebWindow.swift */; };
+		D4E0A00400000000000000B1 /* ReferenceWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E0A00400000000000000A1 /* ReferenceWebView.swift */; };
+		D4E0A00500000000000000B1 /* ReferenceWebNavigationDecider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E0A00500000000000000A1 /* ReferenceWebNavigationDecider.swift */; };
+		D4E0A00600000000000000B1 /* ReferenceWebTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E0A00600000000000000A1 /* ReferenceWebTests.swift */; };
 		B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050300000000000000A5 /* DeviceWebTests.swift */; };
 		B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A2 /* WebHostTrustStore.swift */; };
 		B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050200000000000000A3 /* TLSCertificateInspector.swift */; };
@@ -253,6 +259,7 @@
 		C96192032ACA5CF8000198DB /* AcknowledgedCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96192022ACA5CF8000198DB /* AcknowledgedCell.swift */; };
 		C96192052ACA5D00000198DB /* EventModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96192042ACA5D00000198DB /* EventModal.swift */; };
 		C96192072ACA5D0A000198DB /* EventTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96192062ACA5D0A000198DB /* EventTable.swift */; };
+		D4E0A00200000000000000B1 /* ProblemDetailPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E0A00200000000000000A1 /* ProblemDetailPopover.swift */; };
 		C96192092ACA5D13000198DB /* SeverityCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96192082ACA5D13000198DB /* SeverityCell.swift */; };
 		C961920B2ACA5D1D000198DB /* StatusCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961920A2ACA5D1D000198DB /* StatusCell.swift */; };
 		C961920D2ACA5D28000198DB /* TableToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961920C2ACA5D28000198DB /* TableToolbar.swift */; };
@@ -308,6 +315,7 @@
 		410A560F2D0F898B00C722E3 /* SyncDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncDashboardView.swift; sourceTree = "<group>"; };
 		410A5D502C1FD38D005A073C /* MainSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainSheet.swift; sourceTree = "<group>"; };
 		410A5D522C1FD393005A073C /* DetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailSheet.swift; sourceTree = "<group>"; };
+		D4E0A00700000000000000A1 /* ProblemsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProblemsSection.swift; sourceTree = "<group>"; };
 		410F37252CAB5938008236ED /* DeviceDetailsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDetailsPanelView.swift; sourceTree = "<group>"; };
 		410F37292CABA58B008236ED /* Rack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Rack.swift; sourceTree = "<group>"; };
 		4112260F2C167CAF003C6C65 /* DeviceDetails.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDetails.swift; sourceTree = "<group>"; };
@@ -435,6 +443,7 @@
 		B17E051300000000000000A1 /* SiteTopologyEdges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteTopologyEdges.swift; sourceTree = "<group>"; };
 		B17E051400000000000000A1 /* Cable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cable.swift; sourceTree = "<group>"; };
 		B17E051500000000000000A1 /* CableVO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CableVO.swift; sourceTree = "<group>"; };
+		D4E0A00100000000000000A1 /* ProblemRowVO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProblemRowVO.swift; sourceTree = "<group>"; };
 		B17E051600000000000000A1 /* RolePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RolePresentation.swift; sourceTree = "<group>"; };
 		B17E051700000000000000A1 /* RolePresentationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RolePresentationSettings.swift; sourceTree = "<group>"; };
 		B17E051800000000000000A1 /* RolePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RolePresentationTests.swift; sourceTree = "<group>"; };
@@ -461,6 +470,10 @@
 		B17E050300000000000000A3 /* DeviceWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebView.swift; sourceTree = "<group>"; };
 		B17E050400000000000000A1 /* WebTrustSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebTrustSettingsView.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A4 /* DeviceWebWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebWindow.swift; sourceTree = "<group>"; };
+		D4E0A00300000000000000A1 /* ReferenceWebWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceWebWindow.swift; sourceTree = "<group>"; };
+		D4E0A00400000000000000A1 /* ReferenceWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceWebView.swift; sourceTree = "<group>"; };
+		D4E0A00500000000000000A1 /* ReferenceWebNavigationDecider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceWebNavigationDecider.swift; sourceTree = "<group>"; };
+		D4E0A00600000000000000A1 /* ReferenceWebTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceWebTests.swift; sourceTree = "<group>"; };
 		B17E050300000000000000A5 /* DeviceWebTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceWebTests.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A2 /* WebHostTrustStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebHostTrustStore.swift; sourceTree = "<group>"; };
 		B17E050200000000000000A3 /* TLSCertificateInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSCertificateInspector.swift; sourceTree = "<group>"; };
@@ -497,6 +510,7 @@
 		C96192022ACA5CF8000198DB /* AcknowledgedCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcknowledgedCell.swift; sourceTree = "<group>"; };
 		C96192042ACA5D00000198DB /* EventModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventModal.swift; sourceTree = "<group>"; };
 		C96192062ACA5D0A000198DB /* EventTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventTable.swift; sourceTree = "<group>"; };
+		D4E0A00200000000000000A1 /* ProblemDetailPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProblemDetailPopover.swift; sourceTree = "<group>"; };
 		C96192082ACA5D13000198DB /* SeverityCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeverityCell.swift; sourceTree = "<group>"; };
 		C961920A2ACA5D1D000198DB /* StatusCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusCell.swift; sourceTree = "<group>"; };
 		C961920C2ACA5D28000198DB /* TableToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableToolbar.swift; sourceTree = "<group>"; };
@@ -645,6 +659,7 @@
 			children = (
 				410A5D502C1FD38D005A073C /* MainSheet.swift */,
 				410A5D522C1FD393005A073C /* DetailSheet.swift */,
+				D4E0A00700000000000000A1 /* ProblemsSection.swift */,
 				413BEA0D2CA3B48B0051DDD2 /* MapStyleSheet.swift */,
 			);
 			path = "Sheet Views";
@@ -656,6 +671,7 @@
 				C96192022ACA5CF8000198DB /* AcknowledgedCell.swift */,
 				C96192042ACA5D00000198DB /* EventModal.swift */,
 				C96192062ACA5D0A000198DB /* EventTable.swift */,
+				D4E0A00200000000000000A1 /* ProblemDetailPopover.swift */,
 				C96192082ACA5D13000198DB /* SeverityCell.swift */,
 				C961920A2ACA5D1D000198DB /* StatusCell.swift */,
 				C961920C2ACA5D28000198DB /* TableToolbar.swift */,
@@ -821,6 +837,9 @@
 				B17E050300000000000000A2 /* DeviceWebNavigationDecider.swift */,
 				B17E050300000000000000A3 /* DeviceWebView.swift */,
 				B17E050300000000000000A4 /* DeviceWebWindow.swift */,
+				D4E0A00300000000000000A1 /* ReferenceWebWindow.swift */,
+				D4E0A00400000000000000A1 /* ReferenceWebView.swift */,
+				D4E0A00500000000000000A1 /* ReferenceWebNavigationDecider.swift */,
 				B17E050400000000000000A1 /* WebTrustSettingsView.swift */,
 			);
 			path = Web;
@@ -840,6 +859,7 @@
 				B17E050200000000000000A6 /* WebTrustFoundationTests.swift */,
 				B17E050200000000000000A7 /* TLSTrustCoordinatorTests.swift */,
 				B17E050300000000000000A5 /* DeviceWebTests.swift */,
+				D4E0A00600000000000000A1 /* ReferenceWebTests.swift */,
 			);
 			path = Web;
 			sourceTree = "<group>";
@@ -1084,6 +1104,7 @@
 				C961919F2ACA5711000198DB /* Edge.swift */,
 				B17E051200000000000000A1 /* InterfaceVO.swift */,
 				B17E051500000000000000A1 /* CableVO.swift */,
+				D4E0A00100000000000000A1 /* ProblemRowVO.swift */,
 				B17E051300000000000000A1 /* SiteTopologyEdges.swift */,
 			);
 			path = "Graph Models";
@@ -1407,6 +1428,7 @@
 				067FD0902ECC6A2F00146D44 /* ConcaveHull.swift in Sources */,
 				C9951ED62E8BF2380025C136 /* ClusterDetailView.swift in Sources */,
 				C96192072ACA5D0A000198DB /* EventTable.swift in Sources */,
+				D4E0A00200000000000000B1 /* ProblemDetailPopover.swift in Sources */,
 				412BAF3F2C51B7A00026BC6D /* Layout.swift in Sources */,
 				C96192112ACA5D3D000198DB /* UpdateModal.swift in Sources */,
 				067FD0932ECC6A2F00146D44 /* CoordinateTransformer.swift in Sources */,
@@ -1417,10 +1439,12 @@
 				C96191A02ACA5711000198DB /* Edge.swift in Sources */,
 				B17E051200000000000000B1 /* InterfaceVO.swift in Sources */,
 				B17E051500000000000000B1 /* CableVO.swift in Sources */,
+				D4E0A00100000000000000B1 /* ProblemRowVO.swift in Sources */,
 				B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */,
 				C961919B2ACA56D4000198DB /* SearchBar.swift in Sources */,
 				411226102C167CAF003C6C65 /* DeviceDetails.swift in Sources */,
 				410A5D532C1FD393005A073C /* DetailSheet.swift in Sources */,
+				D4E0A00700000000000000B1 /* ProblemsSection.swift in Sources */,
 				C96192092ACA5D13000198DB /* SeverityCell.swift in Sources */,
 				C96191622ACA552F000198DB /* PulseApp.swift in Sources */,
 				4181FED72CBF643A00E4D035 /* DeviceInRackView.swift in Sources */,
@@ -1520,6 +1544,9 @@
 				B17E050300000000000000B3 /* DeviceWebView.swift in Sources */,
 				B17E050400000000000000B1 /* WebTrustSettingsView.swift in Sources */,
 				B17E050300000000000000B4 /* DeviceWebWindow.swift in Sources */,
+				D4E0A00300000000000000B1 /* ReferenceWebWindow.swift in Sources */,
+				D4E0A00400000000000000B1 /* ReferenceWebView.swift in Sources */,
+				D4E0A00500000000000000B1 /* ReferenceWebNavigationDecider.swift in Sources */,
 				B17E050200000000000000B2 /* WebHostTrustStore.swift in Sources */,
 				B17E050200000000000000B3 /* TLSCertificateInspector.swift in Sources */,
 				B17E050200000000000000B4 /* WebServiceResolver.swift in Sources */,
@@ -1599,6 +1626,7 @@
 				B17E050200000000000000B6 /* WebTrustFoundationTests.swift in Sources */,
 				B17E050200000000000000B7 /* TLSTrustCoordinatorTests.swift in Sources */,
 				B17E050300000000000000B5 /* DeviceWebTests.swift in Sources */,
+				D4E0A00600000000000000B1 /* ReferenceWebTests.swift in Sources */,
 				A11CAFE0000000000000B004 /* SSHCertificateManagerTests.swift in Sources */,
 				A11CAFE0000000000000B005 /* SSHHostKeyDelegateTests.swift in Sources */,
 				A11CAFE0000000000000B006 /* SecureEnclaveKeyManagerTests.swift in Sources */,

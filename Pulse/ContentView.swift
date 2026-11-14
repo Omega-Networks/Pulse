@@ -115,7 +115,14 @@ struct ContentView: View {
                 )
             }
             .sheet(isPresented: $mainSheetOpen) { //Main sheet containing list of sites and search bar
-                MainSheet(searchText: $searchText, selectedSiteGroups: selectedSiteGroups, cameraPosition: $cameraPosition, selectedSite: $selectedSite)
+                MainSheet(
+                    searchText: $searchText,
+                    selectedSiteGroups: selectedSiteGroups,
+                    cameraPosition: $cameraPosition,
+                    selectedSite: $selectedSite,
+                    fetchEvents: $isEventMonitoringEnabled,
+                    onFetchEvents: { await updateEventMonitoring() }
+                )
                     .id(sitesListIdentity)
                     .sheet(item: $selectedSite) { site in
                         DetailSheet(site: site)
@@ -185,12 +192,25 @@ struct ContentView: View {
                 }
             }
         }
-        .onChange(of: scenePhase) { ///Clears notification badge
+        .onChange(of: scenePhase) {
             if scenePhase == .active {
                 Task {
                     await NotificationHandler.instance.resetBadgeCount()
                 }
+                #if os(iOS)
+                // One pull on return to the foreground, then the 120s timer.
+                // The timer does not run while Pulse is not active.
+                if isEventMonitoringEnabled {
+                    Task { await updateEventMonitoring() }
+                }
+                #endif
             }
+            #if os(iOS)
+            if scenePhase != .active {
+                eventMonitoringTimer?.invalidate()
+                eventMonitoringTimer = nil
+            }
+            #endif
         }
     }
     

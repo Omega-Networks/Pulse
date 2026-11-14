@@ -1,5 +1,5 @@
 //
-//  ProblemTable.swift
+//  EventTable.swift
 //  Pulse
 //
 //  Copyright © 2025–present Omega Networks Limited.
@@ -38,20 +38,12 @@ struct EventTable: View {
 
     /// `clock` is a unix-seconds string of fixed width, so string order is
     /// time order. The cell still draws `formattedClock`.
-    @State private var sortOrder = [KeyPathComparator(\Event.clock, order: .reverse)]
+    @State private var sortOrder = [KeyPathComparator(\ProblemRowVO.clock, order: .reverse)]
     @State private var selection = Set<Event.ID>()
-    
-#if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    private var isCompact: Bool {
-        horizontalSizeClass == .compact
-    }
-#else
-    private let isCompact = false
-#endif
-    
-    /// Delete All invalidates rows this query still holds. A persisted
-    /// property read on those rows traps, so every column reads this list.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Delete All invalidates rows this query still holds. The tree is
+    /// built from this list, so a column never reads a deleted row.
     private var storedEvents: [Event] {
         events.filter(\.isStoreBacked)
     }
@@ -74,114 +66,72 @@ struct EventTable: View {
     
     var body: some View {
         let pending = pendingByEvent
+        let rows = ProblemRowVO.tree(from: storedEvents, sortedBy: sortOrder)
+        let eventsByID = Dictionary(
+            storedEvents.map { ($0.persistentModelID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         VStack {
-            //TODO: Determine how to enable multi-selection in iOS
-            Table(storedEvents.sorted(using: sortOrder), selection: seatedSelection, sortOrder: $sortOrder) {
-                TableColumn("Time", value: \.clock) { value in
-                    Group {
-                    if isCompact {
-                        HStack {
-                            VStack (alignment: .leading) {
-                                Text(value.device?.name ?? "Unknown")
-                                    .foregroundColor(.primary)
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                Text(value.name)
-                                    .foregroundColor(.primary)
-                                    .font(.caption)
-                            }
-                            Spacer()
-                            
-                            VStack (alignment: .trailing) {
-                                Text(value.severityString)
-                                    .font(.caption)
-                                    .foregroundColor(value.severityColor)
-                                
-                                Text(value.formattedClock)
-                                    .font(.caption)
-                            }
-                        }
-                    } else {
-                    #if os(macOS)
-                        TimeCell(event: value)
-                    #elseif os(iOS)
-                        HStack {
-                            VStack (alignment: .leading) {
-                                Text(value.device?.name ?? "Unknown")
-                                    .foregroundColor(.primary)
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                Text(value.name)
-                                    .foregroundColor(.primary)
-                                    .font(.caption)
-                            }
-                            Spacer()
-                            
-                            VStack (alignment: .trailing) {
-                                Text(value.severityString)
-                                    .font(.caption)
-                                    .foregroundColor(value.severityColor)
-                                
-                                Text(value.formattedClock)
-                                    .font(.caption)
-                            }
-                        }
-                    #endif
-                    }
-                    }
-                    .problemAsk(pending[value.eventId]?.state)
+            Table(rows, children: \.symptoms, selection: seatedSelection, sortOrder: $sortOrder) {
+                TableColumn("Time", value: \.clock) { row in
+                    ProblemTimeCell(row: row, event: eventsByID[row.id], reduceMotion: reduceMotion)
+                        .problemAsk(pending[row.eventId]?.state)
                 }
-                .width(isCompact ? nil: 135)
-                
-                TableColumn("Severity", value: \.severityString) { value in
-                    severityCell(value, pending: pending)
+                .width(135)
+
+                TableColumn("Severity", value: \.severityString) { row in
+                    severityCell(row, pending: pending)
                 }.width(105)
-                
-                TableColumn("Status", value: \.state) { value in
-                    StatusCell(state: value.state, stateColor: value.stateColor)
-                        .problemAsk(pending[value.eventId]?.state)
+
+                TableColumn("Status", value: \.state) { row in
+                    StatusCell(state: row.state, stateColor: row.stateColor)
+                        .problemAsk(pending[row.eventId]?.state)
                 }.width(100)
-                
-                TableColumn("Device") { value in
+
+                TableColumn("Device", value: \.deviceName) { row in
                     Group {
-                        if isSeated(value) {
-                            Text(value.device?.name ?? "Unknown")
+                        if isSeated(row) {
+                            Text(row.deviceName)
                         } else {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(value.device?.name ?? "Unknown")
+                                Text(row.deviceName)
                                     .foregroundStyle(.secondary)
                                 SubscribeToResumeLabel()
                                     .font(.caption)
                             }
                         }
                     }
-                    .problemAsk(pending[value.eventId]?.state)
+                    .problemAsk(pending[row.eventId]?.state)
                 }
                 .width(min: 80, ideal: 100, max: 200)
-                
-                TableColumn("Description", value: \.name) { value in
-                    Text(value.name)
-                        .problemAsk(pending[value.eventId]?.state)
+
+                TableColumn("Description", value: \.name) { row in
+                    ProblemDetailButton(
+                        name: row.name,
+                        opData: row.opData,
+                        descriptionText: row.triggerDescription
+                    )
+                    .problemAsk(pending[row.eventId]?.state)
                 }
-                .width(min:150, ideal: 300, max: .infinity)
-                
-                TableColumn("Duration", value: \.timeTillResolvedOrNow) { value in
-                    Text(value.timeTillResolvedOrNow)
-                        .problemAsk(pending[value.eventId]?.state)
+                .width(min: 150, ideal: 300, max: .infinity)
+
+                TableColumn("Duration", value: \.duration) { row in
+                    Text(row.duration)
+                        .problemAsk(pending[row.eventId]?.state)
                 }
                 .width(90)
-                
-                TableColumn("Ack", value: \.acknowledgedString) { value in
-                    ackCell(value, pending: pending)
+
+                TableColumn("Ack", value: \.acknowledgedString) { row in
+                    ackCell(row, event: eventsByID[row.id], pending: pending)
                 }.width(25)
             }
-            TableToolbar(selectedEvents: selectedEvents, events: storedEvents)
+            TableToolbar(selectedEvents: selectedEvents, problemCount: rows.count)
                 .padding()
         }
     }
 
-    private func isSeated(_ event: Event) -> Bool {
-        guard let deviceID = event.device?.id else { return false }
+    private func isSeated(_ row: ProblemRowVO) -> Bool {
+        guard let deviceID = row.deviceID else { return false }
         return seats.allowsActions(deviceID: deviceID)
     }
 
@@ -204,7 +154,7 @@ struct EventTable: View {
     }
 
     private func ackPresentation(
-        _ event: Event,
+        _ row: ProblemRowVO,
         item: PendingGhost<ProblemUpdateGhost>?
     ) -> (text: String, color: Color) {
         if item?.ghost.acknowledges == true {
@@ -213,42 +163,44 @@ struct EventTable: View {
         if item?.ghost.unacknowledges == true {
             return ("No", .red)
         }
-        return (event.acknowledgedString, event.acknowledgedColor)
+        return (row.acknowledgedString, row.acknowledgedColor)
     }
 
     @ViewBuilder
     private func ackCell(
-        _ event: Event,
+        _ row: ProblemRowVO,
+        event: Event?,
         pending: [String: PendingGhost<ProblemUpdateGhost>]
     ) -> some View {
-        let item = pending[event.eventId]
-        let shown = ackPresentation(event, item: item)
+        let item = pending[row.eventId]
+        let shown = ackPresentation(row, item: item)
+        let seated = isSeated(row) && event != nil
         shaded(
             AcknowledgedCell(
-                selectedEvents: [event],
+                selectedEvents: event.map { [$0] } ?? [],
                 acknowledgedString: shown.text,
                 acknowledgedColor: shown.color,
-                allowsUpdate: isSeated(event)
+                allowsUpdate: seated
             ),
             item: item,
-            fallbackHelp: isSeated(event) ? "Update event" : "Subscribe to resume"
+            fallbackHelp: seated ? "Update event" : "Subscribe to resume"
         )
     }
 
     @ViewBuilder
     private func severityCell(
-        _ event: Event,
+        _ row: ProblemRowVO,
         pending: [String: PendingGhost<ProblemUpdateGhost>]
     ) -> some View {
-        let item = pending[event.eventId]
+        let item = pending[row.eventId]
         let severity = item?.ghost.severity
-        let name = severity.map(Event.severityName) ?? event.severityString
-        let color = severity.map { Event.severityColor(for: $0) } ?? event.severityColor
+        let name = severity.map(Event.severityName) ?? row.severityString
+        let color = severity.map { Event.severityColor(for: $0) } ?? row.severityColor
         shaded(
             SeverityCell(
                 severityString: name,
                 severityColor: color,
-                state: event.state
+                state: row.state
             ),
             item: item,
             fallbackHelp: name
@@ -301,11 +253,46 @@ struct EventTable: View {
         Binding(
             get: { selection },
             set: { newValue in
-                selection = Set(
-                    storedEvents.filter { newValue.contains($0.id) && isSeated($0) }.map(\.id)
-                )
+                let seated = Set(storedEvents.compactMap { event -> Event.ID? in
+                    guard let deviceID = event.device?.id, seats.allowsActions(deviceID: deviceID) else {
+                        return nil
+                    }
+                    return event.id
+                })
+                selection = newValue.intersection(seated)
             }
         )
+    }
+}
+
+/// Clock, the symptom glyph, and the cause's symptom count. The table's
+/// own disclosure is the only expander. `TimeCell` stays for the later
+/// problem-detail view.
+private struct ProblemTimeCell: View {
+    var row: ProblemRowVO
+    var event: Event?
+    var reduceMotion: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if row.isSymptom {
+                Image(systemName: "arrow.turn.down.right")
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Symptom")
+            }
+            if let event {
+                TimeCell(event: event)
+            } else {
+                Text(row.formattedClock)
+            }
+            if row.symptomCount > 0 {
+                Text(row.symptomCount, format: .number)
+                    .monospacedDigit()
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("\(row.symptomCount) symptoms")
+            }
+        }
     }
 }
 

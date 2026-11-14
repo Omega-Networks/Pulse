@@ -27,10 +27,10 @@ import SwiftUI
 import SwiftData
 
 /// Squares for active problems. Severity is the index, 0...5.
-/// The store answers: still open, and not suppressed.
+/// The store answers: open, not suppressed, and not a symptom.
 struct EventCounter: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query(filter: #Predicate<Event> { $0.rClock == "0" && $0.suppressed == "0" })
+    @Query(filter: Event.counted)
     private var activeEvents: [Event]
     @State private var openDevicesPopover: Bool = false
 
@@ -57,22 +57,14 @@ struct EventCounter: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(squares) { square in
-                Image(systemName: square.symbol)
-                    .symbolRenderingMode(.palette)
-#if os(macOS)
-                    .font(.system(size: 26))
-#else
-                    .font(.system(size: 20))
-#endif
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .transition(.scale(0.86).combined(with: .opacity))
-                    .foregroundStyle(Color.primary, severityColor(for: Int64(square.severity)))
-#if os(macOS)
-                    .frame(width: 23.5, height: 23.5)
-#else
-                    .frame(width: 17, height: 17)
-#endif
+                ProblemCountGlyph(
+                    symbol: square.symbol,
+                    fill: Event.severityColor(for: square.severity),
+                    fontSize: squareFont,
+                    numberTransition: .numericText()
+                )
+                .transition(.scale(0.86).combined(with: .opacity))
+                .frame(width: squareSide, height: squareSide)
             }
         }
         .animation(squareMotion, value: squares)
@@ -86,30 +78,21 @@ struct EventCounter: View {
             #endif
         }
     }
-    
-    private func severityColor(for value: Int64?) -> Color {
-        guard let value = value else {
-            return .indigo
-        }
-        
-        switch value {
-        case 0:
-            return .gray
-        case 1:
-            return .blue
-        case 2:
-            return .yellow
-        case 3:
-            return .orange
-        case 4:
-            return .red
-        case 5:
-            return .black
-        case -1:
-            return .white
-        default:
-            return .indigo
-        }
+
+    private var squareSide: CGFloat {
+        #if os(macOS)
+        23.5
+        #else
+        17
+        #endif
+    }
+
+    private var squareFont: CGFloat {
+        #if os(macOS)
+        26
+        #else
+        20
+        #endif
     }
 }
 
@@ -124,10 +107,48 @@ private struct Square: Equatable, Identifiable {
     }
 }
 
+/// Numbered square. One digit, `Color.primary`. The shadow is centred,
+/// so it spreads evenly. Its colour is the system text background:
+/// white in the light appearance, black in the dark one.
+struct ProblemCountGlyph: View {
+    var symbol: String
+    var fill: Color
+    var fontSize: CGFloat
+    var numberTransition: ContentTransition
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "square.fill")
+                .font(.system(size: fontSize))
+                .foregroundStyle(fill)
+                .accessibilityHidden(true)
+            digit
+                .shadow(color: outline, radius: 1)
+        }
+    }
+
+    private var digit: some View {
+        Image(systemName: symbol)
+            .symbolRenderingMode(.palette)
+            .font(.system(size: fontSize))
+            .monospacedDigit()
+            .contentTransition(numberTransition)
+            .foregroundStyle(Color.primary, Color.clear)
+    }
+
+    private var outline: Color {
+        #if os(macOS)
+        Color(nsColor: .textBackgroundColor)
+        #else
+        Color(uiColor: .systemBackground)
+        #endif
+    }
+}
+
 /// Devices that currently have an active problem. Same rule as the toolbar
 /// squares, so a resolved row is not listed under that count.
 struct DevicePopoverView: View {
-    @Query(filter: #Predicate<Event> { $0.rClock == "0" && $0.suppressed == "0" })
+    @Query(filter: Event.counted)
     private var activeEvents: [Event]
 
     var body: some View {

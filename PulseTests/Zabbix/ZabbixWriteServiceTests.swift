@@ -833,11 +833,8 @@ final class ActiveProblemCountTests: XCTestCase {
         context.insert(open)
         context.insert(resolved)
 
-        let ids = [Int64(9)]
         let descriptor = FetchDescriptor<Event>(
-            predicate: #Predicate<Event> { event in
-                event.rClock == "0" && event.suppressed == "0" && ids.contains(event.hostId)
-            }
+            predicate: Event.counted(amongHostIds: [9])
         )
         let rows = try context.fetch(descriptor)
         XCTAssertEqual(rows.map(\.eventId).sorted(), ["open"])
@@ -849,6 +846,134 @@ final class ActiveProblemCountTests: XCTestCase {
         XCTAssertEqual(tally.counts, [0, 0, 0, 0, 1, 0])
         XCTAssertEqual(tally.highest, 4)
         XCTAssertEqual(tally.unacknowledged, -1)
+    }
+
+    func testSymptomsDoNotCount() throws {
+        let context = try makeContext()
+        let device = Device(id: 21)
+        device.zabbixId = 9
+        context.insert(device)
+        let cause = event("cause", severity: "4", rClock: "0", suppressed: "0", acknowledged: "0", device: device)
+        cause.hostId = 9
+        cause.causeEventId = "0"
+        for index in 1...10 {
+            let symptom = event("symptom-\(index)", severity: "4", rClock: "0", suppressed: "0", acknowledged: "0", device: device)
+            symptom.hostId = 9
+            symptom.causeEventId = "cause"
+            context.insert(symptom)
+        }
+        context.insert(cause)
+        try context.save()
+
+        device.refreshSeverityFromEvents()
+        XCTAssertEqual(device.activeCountsBySeverity, [0, 0, 0, 0, 1, 0])
+
+        let estate = try context.fetch(FetchDescriptor<Event>(predicate: Event.counted))
+        let batched = try context.fetch(FetchDescriptor<Event>(predicate: Event.counted(amongHostIds: [9])))
+        XCTAssertEqual(estate.map(\.eventId), ["cause"])
+        XCTAssertEqual(batched.map(\.eventId), ["cause"])
+        XCTAssertTrue(cause.isCountedProblem)
+        let symptom = try XCTUnwrap(device.events?.first { $0.eventId == "symptom-1" })
+        XCTAssertFalse(symptom.isCountedProblem)
+    }
+
+    func testCauseEventIdDecodesAndLeavesAMissingKey() throws {
+        let asString = try JSONDecoder().decode(EventProperties.self, from: Data("""
+        {"eventid":"1","name":"n","source":"0","object":"0","objectid":"9","clock":"1","acknowledged":"0","severity":"4","opdata":"","suppressed":"0","cause_eventid":"77"}
+        """.utf8))
+        XCTAssertEqual(asString.causeEventId, "77")
+
+        let asInteger = try JSONDecoder().decode(EventProperties.self, from: Data("""
+        {"eventid":"1","name":"n","source":"0","object":"0","objectid":"9","clock":"1","acknowledged":"0","severity":"4","opdata":"","suppressed":"0","cause_eventid":77}
+        """.utf8))
+        XCTAssertEqual(asInteger.causeEventId, "77")
+
+        let missing = try JSONDecoder().decode(EventProperties.self, from: Data("""
+        {"eventid":"1","name":"n","source":"0","object":"0","objectid":"9","clock":"1","acknowledged":"0","severity":"4","opdata":"","suppressed":"0"}
+        """.utf8))
+        XCTAssertNil(missing.causeEventId)
+
+        let stored = Event(eventId: "1")
+        XCTAssertTrue(stored.update(with: asString))
+        XCTAssertEqual(stored.causeEventId, "77")
+        XCTAssertFalse(stored.update(with: missing))
+        XCTAssertEqual(stored.causeEventId, "77")
+
+        let cleared = try JSONDecoder().decode(EventProperties.self, from: Data("""
+        {"eventid":"1","name":"n","source":"0","object":"0","objectid":"9","clock":"1","acknowledged":"0","severity":"4","opdata":"","suppressed":"0","cause_eventid":"0"}
+        """.utf8))
+        XCTAssertTrue(stored.update(with: cleared))
+        XCTAssertEqual(stored.causeEventId, "0")
+
+        let inserted = Event(eventId: "2")
+        inserted.update(with: missing)
+        XCTAssertEqual(inserted.causeEventId, "0")
+    }
+
+    func testTreeNestsACauseAndKeepsAnOrphanSymptom() throws {
+        let context = try makeContext()
+        let cause = Event(eventId: "cause")
+        cause.clock = "200"
+        cause.name = "cause"
+        cause.causeEventId = "0"
+        let older = Event(eventId: "older")
+        older.clock = "100"
+        older.name = "older"
+        older.causeEventId = "cause"
+        let newer = Event(eventId: "newer")
+        newer.clock = "150"
+        newer.name = "newer"
+        newer.causeEventId = "cause"
+        let orphan = Event(eventId: "orphan")
+        orphan.clock = "300"
+        orphan.name = "orphan"
+        orphan.causeEventId = "missing"
+        let dropped = Event(eventId: "unsaved")
+        dropped.causeEventId = "0"
+        for event in [cause, older, newer, orphan] {
+            context.insert(event)
+        }
+
+        let rows = ProblemRowVO.tree(
+            from: [cause, older, newer, orphan, dropped],
+            sortedBy: [KeyPathComparator(\.clock, order: .reverse)]
+        )
+
+        XCTAssertEqual(rows.map(\.eventId), ["orphan", "cause"])
+        XCTAssertTrue(rows[0].isSymptom)
+        XCTAssertNil(rows[0].symptoms)
+        XCTAssertEqual(rows[1].symptomCount, 2)
+        XCTAssertEqual(rows[1].symptoms?.map(\.eventId), ["newer", "older"])
+        XCTAssertFalse(rows[1].isSymptom)
+    }
+
+    func testTreeKeepsSymptomsUnderAResolvedCauseAndStopsAtTwoLevels() throws {
+        let context = try makeContext()
+        let cause = Event(eventId: "cause")
+        cause.clock = "3"
+        cause.rClock = "9"
+        cause.causeEventId = "0"
+        let symptom = Event(eventId: "symptom")
+        symptom.clock = "2"
+        symptom.rClock = "0"
+        symptom.causeEventId = "cause"
+        let nested = Event(eventId: "nested")
+        nested.clock = "1"
+        nested.causeEventId = "symptom"
+        for event in [cause, symptom, nested] {
+            context.insert(event)
+        }
+
+        let rows = ProblemRowVO.tree(
+            from: [cause, symptom, nested],
+            sortedBy: [KeyPathComparator(\.clock, order: .reverse)]
+        )
+
+        XCTAssertEqual(rows.map(\.eventId), ["cause", "nested"])
+        XCTAssertEqual(rows[0].state, "RESOLVED")
+        XCTAssertEqual(rows[0].symptoms?.map(\.eventId), ["symptom"])
+        XCTAssertTrue(rows[1].isSymptom)
+        XCTAssertNil(rows[1].symptoms)
     }
 
     func testStampHostIdFillsZeroAndLeavesASetValue() {
@@ -880,6 +1005,76 @@ final class ActiveProblemCountTests: XCTestCase {
         untouched.hostId = 11
         untouched.update(with: withoutHost)
         XCTAssertEqual(untouched.hostId, 11)
+    }
+
+    func testLinkifiedKeepsAQueryAndDropsTrailingPunctuation() {
+        let text = "See https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2024-1234."
+        let linked = text.linkified()
+        XCTAssertEqual(String(linked.characters), text)
+        let runs = linked.runs.filter { $0.link != nil }
+        XCTAssertEqual(runs.count, 1)
+        XCTAssertEqual(
+            runs.first?.link,
+            URL(string: "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2024-1234")
+        )
+        XCTAssertFalse(String(linked[runs[0].range].characters).hasSuffix("."))
+    }
+
+    func testLinkifiedKeepsLineBreaksAndIgnoresNonWebURLs() {
+        let text = "Line one\nfile:///etc/passwd ssh://10.0.0.1\nhttps://example.com/a."
+        let linked = text.linkified()
+        XCTAssertEqual(String(linked.characters), text)
+        let urls = linked.runs.compactMap(\.link)
+        XCTAssertEqual(urls, [URL(string: "https://example.com/a")!])
+    }
+
+    func testApplyWritesACommentAndBlanksAMissingTrigger() {
+        let withComment = Event(eventId: "1")
+        withComment.object = "0"
+        withComment.objectId = "10"
+        let missing = Event(eventId: "2")
+        missing.object = "0"
+        missing.objectId = "11"
+        let item = Event(eventId: "3")
+        item.object = "4"
+        item.objectId = "10"
+
+        TriggerDescriptions.apply(
+            response: ["10": "See https://example.com/kev?id=1\nsecond line"],
+            to: [withComment, missing, item]
+        )
+
+        XCTAssertEqual(withComment.triggerDescription, "See https://example.com/kev?id=1\nsecond line")
+        XCTAssertEqual(missing.triggerDescription, "")
+        XCTAssertNil(item.triggerDescription)
+    }
+
+    func testAwaitingDescriptionSkipsFilledRowsAndNonTriggers() throws {
+        let context = try makeContext()
+        let earlier = Event(eventId: "1")
+        earlier.object = "0"
+        earlier.objectId = "8"
+        let pending = Event(eventId: "2")
+        pending.object = "0"
+        pending.objectId = "9"
+        let filled = Event(eventId: "3")
+        filled.object = "0"
+        filled.triggerDescription = ""
+        let written = Event(eventId: "4")
+        written.object = "0"
+        written.triggerDescription = "already"
+        let item = Event(eventId: "5")
+        item.object = "3"
+        for event in [earlier, pending, filled, written, item] {
+            context.insert(event)
+        }
+        try context.save()
+
+        let page = try context.fetch(FetchDescriptor<Event>(
+            predicate: TriggerDescriptions.awaiting,
+            sortBy: [SortDescriptor(\Event.eventId, order: .forward)]
+        ))
+        XCTAssertEqual(page.map(\.eventId), ["1", "2"])
     }
 
     private func problem(

@@ -58,6 +58,8 @@ struct MainSheet: View {
     var selectedSiteGroups: Set<Int64>
     @Binding var cameraPosition: MapCameraPosition
     @Binding var selectedSite: Site?
+    @Binding var fetchEvents: Bool
+    var onFetchEvents: () async -> Void
     //Boolean variable for opening settings sheet
     @State private var showSettingsSheet: Bool = false
     
@@ -65,12 +67,16 @@ struct MainSheet: View {
         searchText: Binding<String>,
         selectedSiteGroups: Set<Int64>,
         cameraPosition: Binding<MapCameraPosition>,
-        selectedSite: Binding<Site?>
+        selectedSite: Binding<Site?>,
+        fetchEvents: Binding<Bool>,
+        onFetchEvents: @escaping () async -> Void
     ) {
         self._searchText = searchText
         self.selectedSiteGroups = selectedSiteGroups
         self._cameraPosition = cameraPosition
         self._selectedSite = selectedSite
+        self._fetchEvents = fetchEvents
+        self.onFetchEvents = onFetchEvents
         
         // Predicate for filtering sites by search text and selected site groups.
         // Captured at init, the same way SitesList does.
@@ -99,6 +105,14 @@ struct MainSheet: View {
 
                 ZabbixToolbarWarning()
                     .padding(.top, 20)
+
+                Toggle("Fetch Events", isOn: $fetchEvents)
+                    .font(.caption)
+                    .toggleStyle(.switch)
+                    .padding(.top, 20)
+                    .onChange(of: fetchEvents) {
+                        Task { await onFetchEvents() }
+                    }
 
                 //Settings icon for inputting NetBox, Zabbix API and URL
                 Image(systemName: "gear")
