@@ -26,10 +26,12 @@ import XCTest
 @testable import Pulse
 
 final class NetBoxInterfaceSchemaMigrationTests: XCTestCase {
-    /// Types shipped by P1. Adding `Interface.self` is the P2 schema change.
+    /// Current models except `Interface`. The second container adds it.
+    /// Cluster and VirtualMachine are included because Device and Service reference them.
     private static let p1Types: [any PersistentModel.Type] = [
         TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
-        Rack.self, SiteGroup.self, Site.self, Device.self, Service.self, WebHostTrust.self,
+        Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self,
+        Device.self, Service.self, WebHostTrust.self,
         Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
         SSHCredential.self, KnownHost.self
     ]

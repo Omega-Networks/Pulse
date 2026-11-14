@@ -55,9 +55,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         XCTAssertEqual(service.display, "SSH (TCP/22)")
         XCTAssertEqual(service.url, "https://netbox.example.com/api/ipam/services/7/")
         XCTAssertEqual(service.serviceDescription, "Secure shell access")
-        XCTAssertEqual(service.protocolValue, "tcp")
-        XCTAssertEqual(service.protocolLabel, "TCP")
-        XCTAssertEqual(service.ports, [22])
+        XCTAssertEqual(service.portMappings, ["tcp/22"])
         XCTAssertEqual(service.ipAddresses, ["192.0.2.10/24"])
         XCTAssertEqual(service.parentObjectType, "dcim.device")
         XCTAssertEqual(service.parentObjectID, 6023)
@@ -90,11 +88,11 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         XCTAssertEqual(service.parentObjectType, "virtualization.virtualmachine")
         XCTAssertEqual(service.parentObjectID, 4410)
         XCTAssertEqual(service.parentName, "web-frontend-01")
-        XCTAssertEqual(service.ports, [443, 8443])
+        XCTAssertEqual(service.portMappings, ["tcp/443", "tcp/8443"])
 
         let model = Service(id: service.id)
         model.name = service.name
-        model.ports = service.ports
+        model.portMappings = service.portMappings
         model.ipAddresses = service.ipAddresses
         model.parentObjectType = service.parentObjectType
         model.parentObjectId = service.parentObjectID
@@ -119,7 +117,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
 
         let page = try NetBoxListDecoder.decodePage(NetBoxRecord.Service.self, from: json)
         XCTAssertEqual(page.results.count, 1)
-        XCTAssertEqual(page.results.first?.ports, [22])
+        XCTAssertEqual(page.results.first?.portMappings, ["tcp/22"])
         XCTAssertEqual(page.results.first?.ipAddresses, ["192.0.2.10/24"])
         XCTAssertNil(page.next)
     }
@@ -155,7 +153,7 @@ final class ServicePropertiesDecodingTests: XCTestCase {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
             SiteLocation.self, RackRole.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
+            Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
@@ -170,14 +168,14 @@ final class ServicePropertiesDecodingTests: XCTestCase {
             [
                 NetBoxRecord.Service(
                     id: 7, name: "HTTPS", display: "HTTPS (TCP/8006)", url: "u",
-                    serviceDescription: "", protocolValue: "tcp", protocolLabel: "TCP",
-                    ports: [8006], ipAddresses: ["10.0.0.1/24"],
+                    serviceDescription: "", portMappings: ["tcp/8006"],
+                    ipAddresses: ["10.0.0.1/24"],
                     parentObjectType: "dcim.device", parentObjectID: 6023, parentName: "PVE"
                 ),
                 NetBoxRecord.Service(
                     id: 91, name: "HTTPS", display: "HTTPS (TCP/443)", url: "u",
-                    serviceDescription: "", protocolValue: "tcp", protocolLabel: "TCP",
-                    ports: [443], ipAddresses: ["10.0.0.2/24"],
+                    serviceDescription: "", portMappings: ["tcp/443"],
+                    ipAddresses: ["10.0.0.2/24"],
                     parentObjectType: "virtualization.virtualmachine",
                     parentObjectID: 4410, parentName: "vm"
                 )

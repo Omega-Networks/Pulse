@@ -36,9 +36,11 @@ enum NetBoxChangeKind: String, Sendable, CaseIterable, Comparable {
     case siteGroup = "dcim.sitegroup"
     case site = "dcim.site"
     case location = "dcim.location"
+    case cluster = "virtualization.cluster"
     case rackRole = "dcim.rackrole"
     case rack = "dcim.rack"
     case device = "dcim.device"
+    case virtualMachine = "virtualization.virtualmachine"
     case deviceBay = "dcim.devicebay"
     case frontPort = "dcim.frontport"
     case interface = "dcim.interface"
@@ -55,14 +57,16 @@ enum NetBoxChangeKind: String, Sendable, CaseIterable, Comparable {
         case .siteGroup: return 5
         case .site: return 6
         case .location: return 7
-        case .rackRole: return 8
-        case .rack: return 9
-        case .device: return 10
-        case .deviceBay: return 11
-        case .frontPort: return 12
-        case .interface: return 13
-        case .service: return 14
-        case .cable: return 15
+        case .cluster: return 8
+        case .rackRole: return 9
+        case .rack: return 10
+        case .device: return 11
+        case .virtualMachine: return 12
+        case .deviceBay: return 13
+        case .frontPort: return 14
+        case .interface: return 15
+        case .service: return 16
+        case .cable: return 17
         }
     }
 
@@ -83,6 +87,7 @@ enum NetBoxChangeKind: String, Sendable, CaseIterable, Comparable {
         case "dcim.device_bay", "dcim.devicebay": self = .deviceBay
         case "dcim.front_port", "dcim.frontport": self = .frontPort
         case "dcim.rack_role", "dcim.rackrole": self = .rackRole
+        case "virtualization.virtual_machine": self = .virtualMachine
         default: return nil
         }
     }
@@ -97,9 +102,11 @@ enum NetBoxChangeKind: String, Sendable, CaseIterable, Comparable {
         case .siteGroup: return "/api/dcim/site-groups/"
         case .site: return "/api/dcim/sites/"
         case .location: return "/api/dcim/locations/"
+        case .cluster: return "/api/virtualization/clusters/"
         case .rackRole: return "/api/dcim/rack-roles/"
         case .rack: return "/api/dcim/racks/"
         case .device: return "/api/dcim/devices/"
+        case .virtualMachine: return "/api/virtualization/virtual-machines/"
         case .deviceBay: return "/api/dcim/device-bays/"
         case .frontPort: return "/api/dcim/front-ports/"
         case .interface: return "/api/dcim/interfaces/"

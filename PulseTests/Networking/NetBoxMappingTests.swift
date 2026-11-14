@@ -31,7 +31,7 @@ final class NetBoxMappingTests: XCTestCase {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
             SiteLocation.self, RackRole.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
+            Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
@@ -1055,7 +1055,7 @@ final class NetBoxMappingTests: XCTestCase {
         XCTAssertEqual(page.results.first?.parentObjectType, "dcim.device")
         XCTAssertEqual(page.results.first?.parentObjectID, 6023)
         XCTAssertEqual(page.results.first?.parentName, "core-switch-01")
-        XCTAssertEqual(page.results.first?.protocolValue, "tcp")
+        XCTAssertEqual(page.results.first?.portMappings, ["tcp/22"])
     }
 
     func testServiceWiresDeviceParentAndRetainsVMParent() throws {
@@ -1067,13 +1067,13 @@ final class NetBoxMappingTests: XCTestCase {
             [
                 NetBoxRecord.Service(
                     id: 7, name: "SSH", display: "SSH", url: "u", serviceDescription: "",
-                    protocolValue: "tcp", protocolLabel: "TCP", ports: [22],
+                    portMappings: ["tcp/22"],
                     ipAddresses: ["10.0.0.1/24"], parentObjectType: "dcim.device",
                     parentObjectID: 6023, parentName: nil
                 ),
                 NetBoxRecord.Service(
                     id: 91, name: "HTTPS", display: "HTTPS", url: "u", serviceDescription: "",
-                    protocolValue: "tcp", protocolLabel: "TCP", ports: [443],
+                    portMappings: ["tcp/443"],
                     ipAddresses: ["10.0.0.2/24"], parentObjectType: "virtualization.virtualmachine",
                     parentObjectID: 4410, parentName: nil
                 )

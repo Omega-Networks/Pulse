@@ -81,9 +81,8 @@ enum WebServiceResolver {
     /// Returns nil for non-TCP services, services whose name does not announce
     /// http/https, services without a declared port, or services without an IP.
     static func target(from service: Service) -> WebTarget? {
-        guard service.protocolValue?.lowercased() == "tcp",
-              let scheme = scheme(forServiceNamed: service.name),
-              let port = service.ports.first,
+        guard let scheme = scheme(forServiceNamed: service.name),
+              let port = service.ports(for: "tcp").first,
               let host = service.primaryIPAddress, !host.isEmpty,
               let url = URL(string: "\(scheme)://\(host):\(port)/")
         else {

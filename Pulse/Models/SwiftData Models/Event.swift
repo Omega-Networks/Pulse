@@ -61,7 +61,18 @@ final class Event {
     var source: String = ""
     var suppressed: String = ""
     var device: Device?
-    
+    var virtualMachine: VirtualMachine?
+    var cluster: Cluster?
+
+    /// The owner that is set. A device wins when more than one is set,
+    /// which is a data error and not a normal row.
+    var owner: NetBoxObjectRef? {
+        if let id = device?.id { return .device(id) }
+        if let id = virtualMachine?.id { return .virtualMachine(id) }
+        if let id = cluster?.id { return .cluster(id) }
+        return nil
+    }
+
     /// Added for Preview, might move to prod
     /// Preview value (Int64) over String
     var hostId: Int64 = 0

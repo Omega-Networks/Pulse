@@ -43,8 +43,9 @@ final class WebTrustFoundationTests: XCTestCase {
     ) -> Service {
         let service = Service(id: id)
         service.name = name
-        service.protocolValue = proto
-        service.ports = ports
+        if let proto {
+            service.portMappings = ports.map { "\(proto)/\($0)" }
+        }
         service.ipAddresses = ip.map { [$0] } ?? []
         return service
     }

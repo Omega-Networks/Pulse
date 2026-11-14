@@ -46,9 +46,8 @@ class InitializationState: ObservableObject {
     @Published var contentViewReady = false
     @Published var startExitAnimation = false
     @Published var isConfigured = false
-    /// Sixteen NetBox stages plus TipKit. Matches the last
-    /// `updateProgress` step inside `verifyContainer`.
-    let totalSteps = 16.0
+    /// One step per NetBox mirror stage. TipKit uses that count.
+    let totalSteps = Double(NetBoxSyncEngine.mirrorStageCount)
     
     /**
       Updates the initialization progress and step description.
@@ -101,6 +100,8 @@ struct PulseApp: App {
                 Rack.self,
                 SiteGroup.self,
                 Site.self,
+                Cluster.self,
+                VirtualMachine.self,
                 Device.self,
                 Interface.self,
                 Cable.self,
@@ -359,11 +360,12 @@ struct PulseApp: App {
                     initState.updateProgress(step, label)
                 }
             }
-            initState.updateProgress(16, "Setting up Tips...")
+            let ready = NetBoxSyncEngine.mirrorStageCount
+            initState.updateProgress(ready, "Setting up Tips...")
             tipManager.configure()
             await SiteDataService(modelContainer: modelContainer).refreshSeverities()
 
-            initState.updateProgress(16, "Ready")
+            initState.updateProgress(ready, "Ready")
         } catch {
             logger.error("NetBox sync failed: \(error.localizedDescription)")
             if let netboxError = error as? NetBoxSyncError {

@@ -30,7 +30,7 @@ final class NetBoxSyncEngineTests: XCTestCase {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
             SiteLocation.self, RackRole.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
+            Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self, WebHostTrust.self,
             Event.self, SyncProvider.self, PowerSenseDevice.self, PowerSenseEvent.self,
             SSHCredential.self, KnownHost.self
         ])
@@ -56,6 +56,9 @@ final class NetBoxSyncEngineTests: XCTestCase {
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/cables/"))
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/locations/"))
         XCTAssertTrue(fetcher.paths.contains("/api/dcim/rack-roles/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/virtualization/clusters/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/virtualization/virtual-machines/"))
+        XCTAssertEqual(try XCTUnwrap(providers.first).mirrorShape, NetBoxSyncEngine.mirrorShape)
     }
 
     func testFailureDoesNotStampAndDoesNotDelete() async throws {
@@ -83,8 +86,12 @@ final class NetBoxSyncEngineTests: XCTestCase {
         let context = ModelContext(container)
         let groups = try context.fetch(FetchDescriptor<TenantGroup>())
         XCTAssertEqual(groups.map(\.id), [1])
-        let stamped = try context.fetch(FetchDescriptor<SyncProvider>()).first?.lastNetBoxUpdate
-        XCTAssertEqual(stamped?.timeIntervalSince1970, originalStamp.timeIntervalSince1970)
+        let stored = try XCTUnwrap(try context.fetch(FetchDescriptor<SyncProvider>()).first)
+        XCTAssertEqual(
+            stored.lastNetBoxUpdate?.timeIntervalSince1970 ?? -1,
+            originalStamp.timeIntervalSince1970
+        )
+        XCTAssertEqual(stored.mirrorShape, 0)
     }
 
     func testOverlappingFullSyncCoalesces() async throws {
@@ -165,8 +172,16 @@ final class NetBoxSyncEngineTests: XCTestCase {
         try await engine.fullSync()
         let deviceQueries = fetcher.queryLog.filter { $0.path == "/api/dcim/devices/" }.map(\.query)
         XCTAssertFalse(deviceQueries.isEmpty)
+        XCTAssertTrue(deviceQueries.allSatisfy { query in
+            query.contains { $0.name == "omit" && $0.value == "config_context" }
+        })
         XCTAssertFalse(deviceQueries.contains { query in
             query.contains { $0.name == "manufacturer_id__n" || $0.name == "role_id__n" || $0.name == "role_id" }
+        })
+        let vmQueries = fetcher.queryLog.filter { $0.path == "/api/virtualization/virtual-machines/" }.map(\.query)
+        XCTAssertFalse(vmQueries.isEmpty)
+        XCTAssertTrue(vmQueries.allSatisfy { query in
+            query.contains { $0.name == "omit" && $0.value == "config_context" }
         })
         let typeQueries = fetcher.queryLog.filter { $0.path == "/api/dcim/device-types/" }.map(\.query)
         XCTAssertFalse(typeQueries.contains { query in

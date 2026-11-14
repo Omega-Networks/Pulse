@@ -458,6 +458,176 @@ enum NetBoxStore {
         )
     }
 
+    // MARK: - Clusters
+
+    static func applyClusters(
+        _ records: [NetBoxRecord.Cluster],
+        fetchComplete: Bool,
+        skipped: Int,
+        in context: ModelContext
+    ) throws -> ApplyResult {
+        let tenants = try fetchByIDs(Tenant.self, ids: records.compactMap(\.tenantID), in: context)
+        let locationIDs = records.compactMap { record -> Int64? in
+            record.scopeType == "dcim.location" ? record.scopeID : nil
+        }
+        let locations = try fetchByIDs(SiteLocation.self, ids: locationIDs, in: context)
+        try upsert(records, in: context) { record, model in
+            model.name = record.name
+            model.typeName = record.typeName
+            model.groupName = record.groupName
+            model.status = record.status
+            model.scopeType = record.scopeType
+            model.scopeId = record.scopeID
+            model.scopeName = record.scopeName
+            model.zabbixId = record.zabbixID
+            model.zabbixInstance = record.zabbixInstance
+            if let tenantID = record.tenantID {
+                if let tenant = tenants[tenantID] {
+                    model.tenant = tenant
+                } else {
+                    logger.error("Cluster \(record.id) tenant \(tenantID) missing; leaving nil")
+                    model.tenant = nil
+                }
+            } else {
+                model.tenant = nil
+            }
+            model.siteId = resolvedClusterSiteID(record, locations: locations)
+        } create: {
+            Cluster(id: $0.id)
+        }
+        let deleted = try deleteStale(
+            Cluster.self,
+            keeping: Set(records.map(\.id)),
+            allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            in: context
+        )
+        try context.save()
+        return ApplyResult(
+            upserted: records.count,
+            deleted: max(0, deleted),
+            didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped)
+        )
+    }
+
+    /// Scope site: that site. Scope location: the location's site.
+    /// A region, a site group, or a missing location stays 0.
+    private static func resolvedClusterSiteID(
+        _ record: NetBoxRecord.Cluster,
+        locations: [Int64: SiteLocation]
+    ) -> Int64 {
+        switch record.scopeType {
+        case "dcim.site":
+            return record.scopeID ?? 0
+        case "dcim.location":
+            guard let scopeID = record.scopeID else { return 0 }
+            if let siteID = locations[scopeID]?.siteId, siteID != 0 {
+                return siteID
+            }
+            logger.error("Cluster \(record.id) location \(scopeID) missing; site left unset")
+            return 0
+        default:
+            return 0
+        }
+    }
+
+    // MARK: - Virtual machines
+
+    static func applyVirtualMachines(
+        _ records: [NetBoxRecord.VirtualMachine],
+        fetchComplete: Bool,
+        skipped: Int,
+        in context: ModelContext
+    ) throws -> ApplyResult {
+        try applyVirtualMachines(
+            records, fetchComplete: fetchComplete, skipped: skipped, keeping: nil, in: context
+        )
+    }
+
+    static func applyVirtualMachines(
+        _ records: [NetBoxRecord.VirtualMachine],
+        fetchComplete: Bool,
+        skipped: Int,
+        keeping: Set<Int64>?,
+        in context: ModelContext
+    ) throws -> ApplyResult {
+        let sites = try fetchByIDs(Site.self, ids: records.compactMap(\.siteID), in: context)
+        let clusters = try fetchByIDs(Cluster.self, ids: records.compactMap(\.clusterID), in: context)
+        let devices = try fetchByIDs(Device.self, ids: records.compactMap(\.deviceID), in: context)
+        let roles = try fetchByIDs(DeviceRole.self, ids: records.compactMap(\.roleID), in: context)
+        try upsert(records, in: context) { record, model in
+            model.name = record.name
+            model.display = record.display
+            model.url = record.url
+            model.created = record.created
+            model.lastUpdated = record.lastUpdated
+            model.status = record.status
+            model.serial = record.serial
+            model.vcpus = record.vcpus
+            model.memoryMB = record.memoryMB
+            model.diskMB = record.diskMB
+            model.primaryIP = record.primaryIP
+            model.zabbixId = record.zabbixID
+            model.zabbixInstance = record.zabbixInstance
+            model.siteId = record.siteID ?? 0
+            model.clusterId = record.clusterID ?? 0
+            model.hostDeviceId = record.deviceID ?? 0
+            if let siteID = record.siteID {
+                if let site = sites[siteID] {
+                    model.site = site
+                } else {
+                    logger.error("Virtual machine \(record.id) site \(siteID) missing; leaving nil")
+                    model.site = nil
+                }
+            } else {
+                model.site = nil
+            }
+            if let clusterID = record.clusterID {
+                if let cluster = clusters[clusterID] {
+                    model.cluster = cluster
+                } else {
+                    logger.error("Virtual machine \(record.id) cluster \(clusterID) missing; leaving nil")
+                    model.cluster = nil
+                }
+            } else {
+                model.cluster = nil
+            }
+            if let deviceID = record.deviceID {
+                if let device = devices[deviceID] {
+                    model.hostDevice = device
+                } else {
+                    logger.error("Virtual machine \(record.id) host \(deviceID) missing; leaving nil")
+                    model.hostDevice = nil
+                }
+            } else {
+                model.hostDevice = nil
+            }
+            if let roleID = record.roleID {
+                if let role = roles[roleID] {
+                    model.role = role
+                } else {
+                    logger.error("Virtual machine \(record.id) role \(roleID) missing; leaving nil")
+                    model.role = nil
+                }
+            } else {
+                model.role = nil
+            }
+        } create: {
+            VirtualMachine(id: $0.id)
+        }
+        let deleted = try deleteStale(
+            VirtualMachine.self,
+            keeping: keeping ?? Set(records.map(\.id)),
+            allowed: shouldDelete(fetchComplete: fetchComplete, skipped: skipped),
+            in: context
+        )
+        try context.save()
+        return ApplyResult(
+            upserted: records.count,
+            deleted: max(0, deleted),
+            didDelete: shouldDelete(fetchComplete: fetchComplete, skipped: skipped)
+        )
+    }
+
     // MARK: - Devices
 
     static func applyDevices(
@@ -482,6 +652,7 @@ enum NetBoxStore {
         let roles = try fetchByIDs(DeviceRole.self, ids: records.map(\.roleID), in: context)
         let types = try fetchByIDs(DeviceType.self, ids: records.map(\.typeID), in: context)
         let racks = try fetchByIDs(Rack.self, ids: records.compactMap(\.rackID), in: context)
+        let clusters = try fetchByIDs(Cluster.self, ids: records.compactMap(\.clusterID), in: context)
         try upsert(records, in: context) { record, model in
             model.name = record.name
             model.display = record.display
@@ -529,6 +700,18 @@ enum NetBoxStore {
             } else {
                 model.rack = nil
             }
+            if let clusterID = record.clusterID {
+                model.clusterId = clusterID
+                if let cluster = clusters[clusterID] {
+                    model.cluster = cluster
+                } else {
+                    logger.error("Device \(record.id) cluster \(clusterID) missing; leaving nil")
+                    model.cluster = nil
+                }
+            } else {
+                model.clusterId = 0
+                model.cluster = nil
+            }
         } create: {
             Device(id: $0.id)
         }
@@ -570,22 +753,34 @@ enum NetBoxStore {
             .filter { $0.parentObjectType == "dcim.device" }
             .map(\.parentObjectID)
         let devices = try fetchByIDs(Device.self, ids: deviceIDs, in: context)
+        let virtualMachineIDs = records
+            .filter { $0.parentObjectType == "virtualization.virtualmachine" }
+            .map(\.parentObjectID)
+        let virtualMachines = try fetchByIDs(VirtualMachine.self, ids: virtualMachineIDs, in: context)
         try upsert(records, in: context) { record, model in
             model.name = record.name
             model.display = record.display
             model.url = record.url
             model.serviceDescription = record.serviceDescription
-            model.protocolValue = record.protocolValue
-            model.protocolLabel = record.protocolLabel
-            model.ports = record.ports
+            model.portMappings = record.portMappings
             model.ipAddresses = record.ipAddresses
             model.parentObjectType = record.parentObjectType
             model.parentObjectId = record.parentObjectID
             model.parentName = record.parentName
             if record.parentObjectType == "dcim.device" {
                 model.device = devices[record.parentObjectID]
+                model.virtualMachine = nil
+            } else if record.parentObjectType == "virtualization.virtualmachine" {
+                model.device = nil
+                if let virtualMachine = virtualMachines[record.parentObjectID] {
+                    model.virtualMachine = virtualMachine
+                } else {
+                    logger.error("Service \(record.id) virtual machine \(record.parentObjectID) missing; leaving nil")
+                    model.virtualMachine = nil
+                }
             } else {
                 model.device = nil
+                model.virtualMachine = nil
             }
         } create: {
             Service(id: $0.id)
@@ -1011,6 +1206,8 @@ extension NetBoxRecord.Location: NetBoxRecordID {}
 extension NetBoxRecord.RackRole: NetBoxRecordID {}
 extension NetBoxRecord.Rack: NetBoxRecordID {}
 extension NetBoxRecord.Device: NetBoxRecordID {}
+extension NetBoxRecord.Cluster: NetBoxRecordID {}
+extension NetBoxRecord.VirtualMachine: NetBoxRecordID {}
 extension NetBoxRecord.Service: NetBoxRecordID {}
 extension NetBoxRecord.Interface: NetBoxRecordID {}
 extension NetBoxRecord.Cable: NetBoxRecordID {}
@@ -1086,6 +1283,26 @@ extension RackRole: NetBoxStorable {
 extension Rack: NetBoxStorable {
     static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Rack] {
         try NetBoxStore.fetchAllMatching(ids: ids, in: context)
+    }
+}
+
+extension Cluster: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [Cluster] {
+        let unique = Array(Set(ids))
+        return try NetBoxStore.fetchIdentified(
+            predicate: #Predicate<Cluster> { unique.contains($0.id) },
+            in: context
+        )
+    }
+}
+
+extension VirtualMachine: NetBoxStorable {
+    static func fetchMatchingIDs(_ ids: [Int64], in context: ModelContext) throws -> [VirtualMachine] {
+        let unique = Array(Set(ids))
+        return try NetBoxStore.fetchIdentified(
+            predicate: #Predicate<VirtualMachine> { unique.contains($0.id) },
+            in: context
+        )
     }
 }
 

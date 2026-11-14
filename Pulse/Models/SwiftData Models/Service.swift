@@ -39,29 +39,17 @@ final class Service {
     var url: String?
     var serviceDescription: String?
 
-    // `protocol` is a Swift keyword, so the nested protocol object's `value`
-    // and `label` are stored under prefixed names.
-    var protocolValue: String?
-    var protocolLabel: String?
-
-    // NetBox returns `ports` as a top-level array and `ipaddresses` as an
-    // array of objects. SwiftData persists `[Int]` / `[String]` directly as
-    // Codable attributes, so no child models or transformers are needed for
-    // data that is only ever read as "the ports / IPs of this service".
-    var ports: [Int] = []
+    /// NetBox `port_mappings`, such as `tcp/22`. A 4.3 to 4.6 payload
+    /// with only `protocol` and `ports` is stored in the same shape.
+    var portMappings: [String] = []
     var ipAddresses: [String] = []
 
     // MARK: - Parent linkage (migration-proof)
     //
     // A NetBox service is attached to a parent that is either a `dcim.device`
-    // or a `virtualization.virtualmachine`. The parent is stored generically
-    // (`parentObjectType` / `parentObjectId` / `parentName`) so VM-parented
-    // services are retained at full fidelity today, and a real `device`
-    // relationship is wired only for device parents. When a VirtualMachine
-    // model later arrives, adding a `virtualMachine` relationship alongside is
-    // an additive SwiftData change that needs no VersionedSchema / MigrationPlan,
-    // and the generic fields mean no backfill is ever required. See ADR 0001
-    // (see ADR 0001).
+    // or a `virtualization.virtualmachine`. The generic parent fields stay
+    // so a service whose parent is missing locally still keeps its name.
+    // The typed relationship is wired for whichever parent is in the store.
 
     /// NetBox `parent_object_type`, e.g. `"dcim.device"` or
     /// `"virtualization.virtualmachine"`. Drives which typed relationship is
@@ -69,22 +57,36 @@ final class Service {
     var parentObjectType: String?
     /// NetBox `parent_object_id` (the parent device or VM id).
     var parentObjectId: Int64 = 0
-    /// Parent display name, carried verbatim so VM-parented services (which
-    /// have no `device` relationship yet) still surface a name.
+    /// Parent display name, carried so a service whose parent is not in
+    /// the store still has a name.
     var parentName: String?
 
     // MARK: Service Model Relationships
 
-    // Many-To-One. Wired only when `parentObjectType == "dcim.device"`; nil for
-    // VM parents by design, not by data loss. Inverse declared on
-    // `Device.services`.
+    /// Wired when `parentObjectType == "dcim.device"`. Inverse on
+    /// `Device.services`.
     var device: Device?
+
+    /// Wired when `parentObjectType == "virtualization.virtualmachine"`.
+    /// Inverse on `VirtualMachine.services`.
+    var virtualMachine: VirtualMachine?
 
     init(id: Int64) {
         self.id = id
     }
 
     // MARK: - Computed Properties
+
+    /// Ports declared for one transport, lowest first as stored.
+    /// `tcp` matches `tcp/22` and ignores `udp/161`.
+    func ports(for transport: String) -> [Int] {
+        let wanted = transport.lowercased()
+        return portMappings.compactMap { mapping in
+            let parts = mapping.split(separator: "/", maxSplits: 1)
+            guard parts.count == 2, parts[0].lowercased() == wanted else { return nil }
+            return Int(parts[1])
+        }
+    }
 
     /// The bare IP address of the first associated IP, with any trailing CIDR
     /// prefix stripped. Mirrors `Device.primaryIPAddress`: NetBox's IPAM stores

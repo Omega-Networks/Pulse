@@ -188,6 +188,10 @@
 		C96191A02ACA5711000198DB /* Edge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C961919F2ACA5711000198DB /* Edge.swift */; };
 		C96191A22ACA5721000198DB /* Device.swift in Sources */ = {isa = PBXBuildFile; fileRef = C96191A12ACA5721000198DB /* Device.swift */; };
 		B17E050100000000000000B1 /* Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E050100000000000000A1 /* Service.swift */; };
+		A11C1A5700000000000000C2 /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C1A5700000000000000C1 /* Cluster.swift */; };
+		A11C1A5700000000000000D2 /* VirtualMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C1A5700000000000000D1 /* VirtualMachine.swift */; };
+		A11C1A5700000000000000E2 /* NetBoxObjectRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C1A5700000000000000E1 /* NetBoxObjectRef.swift */; };
+		A11C1A5700000000000000F2 /* ClusterVirtualMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C1A5700000000000000F1 /* ClusterVirtualMachineTests.swift */; };
 		B17E051100000000000000B1 /* Interface.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051100000000000000A1 /* Interface.swift */; };
 		B17E051200000000000000B1 /* InterfaceVO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051200000000000000A1 /* InterfaceVO.swift */; };
 		B17E051300000000000000B1 /* SiteTopologyEdges.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17E051300000000000000A1 /* SiteTopologyEdges.swift */; };
@@ -438,6 +442,10 @@
 		C961919F2ACA5711000198DB /* Edge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Edge.swift; sourceTree = "<group>"; };
 		C96191A12ACA5721000198DB /* Device.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Device.swift; sourceTree = "<group>"; };
 		B17E050100000000000000A1 /* Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Service.swift; sourceTree = "<group>"; };
+		A11C1A5700000000000000C1 /* Cluster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cluster.swift; sourceTree = "<group>"; };
+		A11C1A5700000000000000D1 /* VirtualMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualMachine.swift; sourceTree = "<group>"; };
+		A11C1A5700000000000000E1 /* NetBoxObjectRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetBoxObjectRef.swift; sourceTree = "<group>"; };
+		A11C1A5700000000000000F1 /* ClusterVirtualMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterVirtualMachineTests.swift; sourceTree = "<group>"; };
 		B17E051100000000000000A1 /* Interface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interface.swift; sourceTree = "<group>"; };
 		B17E051200000000000000A1 /* InterfaceVO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceVO.swift; sourceTree = "<group>"; };
 		B17E051300000000000000A1 /* SiteTopologyEdges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteTopologyEdges.swift; sourceTree = "<group>"; };
@@ -875,6 +883,7 @@
 				B17E051A00000000000000A1 /* RackDraftTests.swift */,
 				A11CAFE0000000000000NB0A /* NetBoxPageIteratorTests.swift */,
 				A11CAFE0000000000000NB0F /* NetBoxMappingTests.swift */,
+				A11C1A5700000000000000F1 /* ClusterVirtualMachineTests.swift */,
 				A11CAFE0000000000000NB70 /* NetBoxInterfaceSchemaMigrationTests.swift */,
 				A11CAFE0000000000000NB72 /* SiteTopologyEdgesTests.swift */,
 				A11CAFE0000000000000NB52 /* NetBoxSyncEngineTests.swift */,
@@ -992,6 +1001,7 @@
 			isa = PBXGroup;
 			children = (
 				06E9CC452EE03377008DE369 /* PowerSenseDataService.swift */,
+				A11C1A5700000000000000E1 /* NetBoxObjectRef.swift */,
 				C9EF519B2D3083F400D49DEA /* SwiftData Models */,
 				C961919E2ACA56FB000198DB /* Graph Models */,
 				4183714D2AD64877006E6E61 /* Item.swift */,
@@ -1205,6 +1215,8 @@
 				C96191AD2ACA578C000198DB /* Region.swift */,
 				C9951ECA2E87A05E0025C136 /* SpatialClusteringActor.swift */,
 				C96191A12ACA5721000198DB /* Device.swift */,
+				A11C1A5700000000000000C1 /* Cluster.swift */,
+				A11C1A5700000000000000D1 /* VirtualMachine.swift */,
 				B17E051100000000000000A1 /* Interface.swift */,
 				B17E051400000000000000A1 /* Cable.swift */,
 				B17E050100000000000000A1 /* Service.swift */,
@@ -1535,6 +1547,9 @@
 				C97136DF2E7966DA0017CBF7 /* PowerSenseZabbixResource.swift in Sources */,
 				C9613E802BDBA5A800873053 /* DeviceOverviewView.swift in Sources */,
 				C96191A22ACA5721000198DB /* Device.swift in Sources */,
+				A11C1A5700000000000000C2 /* Cluster.swift in Sources */,
+				A11C1A5700000000000000D2 /* VirtualMachine.swift in Sources */,
+				A11C1A5700000000000000E2 /* NetBoxObjectRef.swift in Sources */,
 				B17E051100000000000000B1 /* Interface.swift in Sources */,
 				B17E051400000000000000B1 /* Cable.swift in Sources */,
 				B17E050100000000000000B1 /* Service.swift in Sources */,
@@ -1613,6 +1628,7 @@
 				B17E051A00000000000000B1 /* RackDraftTests.swift in Sources */,
 				A11CAFE0000000000000NB19 /* NetBoxPageIteratorTests.swift in Sources */,
 				A11CAFE0000000000000NB1E /* NetBoxMappingTests.swift in Sources */,
+				A11C1A5700000000000000F2 /* ClusterVirtualMachineTests.swift in Sources */,
 				A11CAFE0000000000000NB71 /* NetBoxInterfaceSchemaMigrationTests.swift in Sources */,
 				A11CAFE0000000000000NB73 /* SiteTopologyEdgesTests.swift in Sources */,
 				A11CAFE0000000000000NB55 /* NetBoxSyncEngineTests.swift in Sources */,

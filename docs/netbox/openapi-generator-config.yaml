@@ -39,6 +39,10 @@ filter:
     - dcim_racks_retrieve
     - dcim_devices_list
     - dcim_devices_retrieve
+    - virtualization_clusters_list
+    - virtualization_clusters_retrieve
+    - virtualization_virtual_machines_list
+    - virtualization_virtual_machines_retrieve
     - dcim_device_bays_list
     - dcim_device_bays_retrieve
     - dcim_interfaces_list

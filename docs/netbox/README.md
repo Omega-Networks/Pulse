@@ -22,6 +22,8 @@ Recorded 2026-08-13 from `GET /api/status/`:
 - `netbox-full-version`: **4.6.2-Docker-5.0.1**
 - OpenAPI: **3.0.3** (generator emits 3.1.0 via OpenAPIKit compat)
 
+The generator filter now lists `virtualization_clusters_list`, `virtualization_clusters_retrieve`, `virtualization_virtual_machines_list`, and `virtualization_virtual_machines_retrieve`. This tree was not regenerated for that filter. `NETBOX_URL` and `NETBOX_TOKEN` were not set for the change, so the vendored client stays the 4.6.2 generation. Runtime cluster and virtual machine ingest uses `NetBoxRecord`, not the generated client. Do not read this file as a 4.7.4 client.
+
 ## Regenerate
 
 ```sh

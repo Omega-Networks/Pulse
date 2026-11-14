@@ -122,6 +122,19 @@ actor NetBoxSyncEngine {
     /// Weekly safety full mirror. Changelog misses out-of-request-context edits.
     static let safetyMirrorInterval: TimeInterval = 7 * 24 * 60 * 60
 
+    /// Bumped when a full mirror must run once so new object types arrive.
+    /// A delta never fetches a type whose rows have no changelog entry.
+    static let mirrorShape = 2
+
+    /// Device and virtual machine reads drop `config_context`. It can
+    /// hold secrets and Pulse does not store it.
+    static let omitConfigContextQuery = [
+        URLQueryItem(name: "omit", value: "config_context")
+    ]
+
+    /// Launch progress steps. One per mirror stage.
+    static var mirrorStageCount: Int { MirrorModel.allCases.count }
+
     /// While Pulse is open, apply the changelog this often. Same cadence
     /// as the Zabbix problem timer, so the twin is not busier than monitoring.
     static let idleChangelogInterval: Duration = .seconds(120)
@@ -270,9 +283,11 @@ actor NetBoxSyncEngine {
         case siteGroups
         case sites
         case locations
+        case clusters
         case rackRoles
         case racks
         case devices
+        case virtualMachines
         case deviceBays
         case frontPorts
         case services
@@ -289,9 +304,11 @@ actor NetBoxSyncEngine {
             case .siteGroups: return "Synchronising Site Groups..."
             case .sites: return "Synchronising Sites..."
             case .locations: return "Synchronising Locations..."
+            case .clusters: return "Synchronising Clusters..."
             case .rackRoles: return "Synchronising Rack Roles..."
             case .racks: return "Synchronising Racks..."
             case .devices: return "Synchronising Devices..."
+            case .virtualMachines: return "Synchronising Virtual Machines..."
             case .deviceBays: return "Synchronising Device Bays..."
             case .frontPorts: return "Synchronising Front Ports..."
             case .services: return "Synchronising Services..."
@@ -310,9 +327,11 @@ actor NetBoxSyncEngine {
             case .siteGroups: return "/api/dcim/site-groups/"
             case .sites: return "/api/dcim/sites/"
             case .locations: return "/api/dcim/locations/"
+            case .clusters: return "/api/virtualization/clusters/"
             case .rackRoles: return "/api/dcim/rack-roles/"
             case .racks: return "/api/dcim/racks/"
             case .devices: return "/api/dcim/devices/"
+            case .virtualMachines: return "/api/virtualization/virtual-machines/"
             case .deviceBays: return "/api/dcim/device-bays/"
             case .frontPorts: return "/api/dcim/front-ports/"
             case .services: return "/api/ipam/services/"
@@ -348,9 +367,11 @@ actor NetBoxSyncEngine {
         case .siteGroups: try await syncSiteGroups()
         case .sites: try await syncSites()
         case .locations: try await syncLocations()
+        case .clusters: try await syncClusters()
         case .rackRoles: try await syncRackRoles()
         case .racks: try await syncRacks()
         case .devices: try await syncDevices()
+        case .virtualMachines: try await syncVirtualMachines()
         case .deviceBays: try await syncDeviceBays()
         case .frontPorts: try await syncFrontPorts()
         case .services: try await syncServices()
@@ -479,6 +500,9 @@ actor NetBoxSyncEngine {
         }
         guard let watermark = provider?.lastObjectChangeId else {
             return .full("no watermark")
+        }
+        if provider?.mirrorShape != mirrorShape {
+            return .full("mirror shape changed")
         }
         if let lastFull = provider?.lastFullMirrorAt,
            Date().timeIntervalSince(lastFull) >= safetyMirrorInterval {
@@ -1227,11 +1251,24 @@ actor NetBoxSyncEngine {
         }
     }
 
+    private func syncClusters() async throws {
+        let (rows, skipped) = try await fetchAll(
+            path: "/api/virtualization/clusters/",
+            extraQuery: [],
+            as: NetBoxRecord.Cluster.self
+        )
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyClusters(
+                rows, fetchComplete: true, skipped: skipped, in: context
+            )
+        }
+    }
+
     private func syncDevices() async throws {
         let keeping = AcceptedInterfaceIDs()
         let walk = try await NetBoxPageIterator.streamDecoded(
             path: "/api/dcim/devices/",
-            extraQuery: [],
+            extraQuery: Self.omitConfigContextQuery,
             as: NetBoxRecord.Device.self,
             using: fetcher,
             maxPages: NetBoxPageIterator.interfaceMaxPages
@@ -1246,6 +1283,34 @@ actor NetBoxSyncEngine {
         let seen = await keeping.ids
         _ = try await applyOnStore { context in
             try NetBoxStore.applyDevices(
+                [],
+                fetchComplete: true,
+                skipped: walk.skipped,
+                keeping: seen,
+                in: context
+            )
+        }
+    }
+
+    private func syncVirtualMachines() async throws {
+        let keeping = AcceptedInterfaceIDs()
+        let walk = try await NetBoxPageIterator.streamDecoded(
+            path: "/api/virtualization/virtual-machines/",
+            extraQuery: Self.omitConfigContextQuery,
+            as: NetBoxRecord.VirtualMachine.self,
+            using: fetcher,
+            maxPages: NetBoxPageIterator.interfaceMaxPages
+        ) { page, _ in
+            _ = try await self.applyOnStore { context in
+                try NetBoxStore.applyVirtualMachines(
+                    page, fetchComplete: false, skipped: 0, in: context
+                )
+            }
+            await keeping.formUnion(Set(page.map(\.id)))
+        }
+        let seen = await keeping.ids
+        _ = try await applyOnStore { context in
+            try NetBoxStore.applyVirtualMachines(
                 [],
                 fetchComplete: true,
                 skipped: walk.skipped,
@@ -1381,7 +1446,9 @@ actor NetBoxSyncEngine {
     /// yet. Fetch by id and store so the children can attach.
     private func fetchAndApplyDevices(ids: Set<Int64>) async throws {
         guard !ids.isEmpty else { return }
-        let extra = ids.sorted().map { URLQueryItem(name: "id", value: String($0)) }
+        let extra = Self.omitConfigContextQuery + ids.sorted().map {
+            URLQueryItem(name: "id", value: String($0))
+        }
         let (rows, _) = try await fetchAll(
             path: "/api/dcim/devices/",
             extraQuery: extra,
@@ -1753,9 +1820,16 @@ actor NetBoxSyncEngine {
             return true
         }
         do {
+            let query: [URLQueryItem]
+            switch item.kind {
+            case .device, .virtualMachine:
+                query = Self.omitConfigContextQuery
+            default:
+                query = []
+            }
             let data = try await fetcher.get(
                 path: "\(item.kind.retrievePath)\(item.objectID)/",
-                query: []
+                query: query
             )
             try await upsertRetrieved(kind: item.kind, data: data)
             await clearPermission(path: item.kind.retrievePath)
@@ -1906,6 +1980,11 @@ actor NetBoxSyncEngine {
             _ = try await applyOnStore {
                 try NetBoxStore.applyLocations([row], fetchComplete: false, skipped: 0, in: $0)
             }
+        case .cluster:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Cluster.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyClusters([row], fetchComplete: false, skipped: 0, in: $0)
+            }
         case .rackRole:
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.RackRole.self, from: data)
             _ = try await applyOnStore {
@@ -1920,6 +1999,11 @@ actor NetBoxSyncEngine {
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.Device.self, from: data)
             _ = try await applyOnStore {
                 try NetBoxStore.applyDevices([row], fetchComplete: false, skipped: 0, in: $0)
+            }
+        case .virtualMachine:
+            let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.VirtualMachine.self, from: data)
+            _ = try await applyOnStore {
+                try NetBoxStore.applyVirtualMachines([row], fetchComplete: false, skipped: 0, in: $0)
             }
         case .deviceBay:
             let row = try NetBoxListDecoder.decodeObject(NetBoxRecord.DeviceBay.self, from: data)
@@ -1968,9 +2052,11 @@ actor NetBoxSyncEngine {
             case .siteGroup: return try NetBoxStore.deleteIDs(SiteGroup.self, ids: [id], in: context)
             case .site: return try NetBoxStore.deleteIDs(Site.self, ids: [id], in: context)
             case .location: return try NetBoxStore.deleteIDs(SiteLocation.self, ids: [id], in: context)
+            case .cluster: return try NetBoxStore.deleteIDs(Cluster.self, ids: [id], in: context)
             case .rackRole: return try NetBoxStore.deleteIDs(RackRole.self, ids: [id], in: context)
             case .rack: return try NetBoxStore.deleteIDs(Rack.self, ids: [id], in: context)
             case .device: return try NetBoxStore.deleteIDs(Device.self, ids: [id], in: context)
+            case .virtualMachine: return try NetBoxStore.deleteIDs(VirtualMachine.self, ids: [id], in: context)
             case .deviceBay: return try NetBoxStore.deleteIDs(DeviceBay.self, ids: [id], in: context)
             case .frontPort: return try NetBoxStore.deleteIDs(FrontPort.self, ids: [id], in: context)
             case .interface: return try NetBoxStore.deleteIDs(Interface.self, ids: [id], in: context)
@@ -2008,6 +2094,7 @@ actor NetBoxSyncEngine {
                 provider.lastObjectChangeId = 0
             }
             provider.lastDeltaSummary = "full mirror"
+            provider.mirrorShape = Self.mirrorShape
             try context.save()
             return true
         }

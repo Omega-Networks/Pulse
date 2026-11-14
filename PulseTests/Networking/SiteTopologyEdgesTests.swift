@@ -55,7 +55,7 @@ final class SiteTopologyEdgesTests: XCTestCase {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
             SiteLocation.self, RackRole.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
+            Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
             WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
             PowerSenseEvent.self, SSHCredential.self, KnownHost.self
         ])
@@ -101,7 +101,7 @@ final class SiteTopologyEdgesTests: XCTestCase {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
             SiteLocation.self, RackRole.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
+            Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
             WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
             PowerSenseEvent.self, SSHCredential.self, KnownHost.self
         ])
@@ -130,7 +130,7 @@ final class SiteTopologyEdgesTests: XCTestCase {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
             SiteLocation.self, RackRole.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
+            Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
             WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
             PowerSenseEvent.self, SSHCredential.self, KnownHost.self
         ])
@@ -178,7 +178,7 @@ final class SiteTopologyEdgesTests: XCTestCase {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
             SiteLocation.self, RackRole.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
+            Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
             WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
             PowerSenseEvent.self, SSHCredential.self, KnownHost.self
         ])

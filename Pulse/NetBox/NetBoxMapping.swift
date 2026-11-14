@@ -156,6 +156,7 @@ enum NetBoxRecord {
         var rearPortCount: Int64 = 0
         var deviceBayCount: Int64 = 0
         var face: String?
+        var clusterID: Int64?
     }
 
     struct Service: Sendable, Equatable {
@@ -164,13 +165,46 @@ enum NetBoxRecord {
         var display: String?
         var url: String?
         var serviceDescription: String?
-        var protocolValue: String?
-        var protocolLabel: String?
-        var ports: [Int]
+        var portMappings: [String]
         var ipAddresses: [String]
         var parentObjectType: String
         var parentObjectID: Int64
         var parentName: String?
+    }
+
+    struct Cluster: Sendable, Equatable {
+        var id: Int64
+        var name: String
+        var typeName: String
+        var groupName: String?
+        var status: String
+        var tenantID: Int64?
+        var scopeType: String?
+        var scopeID: Int64?
+        var scopeName: String?
+        var zabbixID: Int64
+        var zabbixInstance: Int64
+    }
+
+    struct VirtualMachine: Sendable, Equatable {
+        var id: Int64
+        var name: String?
+        var display: String?
+        var url: String?
+        var created: Date?
+        var lastUpdated: Date?
+        var status: String
+        var serial: String
+        var vcpus: Double?
+        var memoryMB: Int64?
+        var diskMB: Int64?
+        var primaryIP: String?
+        var siteID: Int64?
+        var clusterID: Int64?
+        var deviceID: Int64?
+        var roleID: Int64?
+        var zabbixID: Int64
+        var zabbixInstance: Int64
     }
 
     struct Interface: Sendable, Equatable {
@@ -434,6 +468,16 @@ enum NetBoxIngest {
         if let value = try? container.decode(String.self, forKey: key) { return Int64(value) }
         return nil
     }
+
+    /// `port_mappings` when the key is present, including an empty array.
+    /// Otherwise `protocol` plus `ports`, as `tcp/22`. A null protocol
+    /// with no mappings stores nothing.
+    static func portMappings(explicit: [String]?, protocolValue: String?, ports: [Int]) -> [String] {
+        if let explicit { return explicit }
+        guard let protocolValue, !protocolValue.isEmpty else { return [] }
+        let transport = protocolValue.lowercased()
+        return ports.map { "\(transport)/\($0)" }
+    }
 }
 
 extension NetBoxRecord.Tenant: Decodable {
@@ -554,6 +598,7 @@ extension NetBoxRecord.Device: Decodable {
         case frontPortCount = "front_port_count"
         case rearPortCount = "rear_port_count"
         case deviceBayCount = "device_bay_count"
+        case cluster
     }
 
     init(from decoder: Decoder) throws {
@@ -605,6 +650,7 @@ extension NetBoxRecord.Device: Decodable {
         } else {
             manufacturerID = nil
         }
+        clusterID = try NetBoxIngest.nestedID(container, .cluster)
     }
 
     private enum ManufacturerKey: String, CodingKey { case manufacturer }
@@ -616,6 +662,7 @@ extension NetBoxRecord.Service: Decodable {
         case parentObjectType = "parent_object_type"
         case parentObjectID = "parent_object_id"
         case proto = "protocol"
+        case portMappings = "port_mappings"
     }
 
     enum ProtocolKeys: String, CodingKey { case value, label }
@@ -639,15 +686,26 @@ extension NetBoxRecord.Service: Decodable {
         display = try container.decodeIfPresent(String.self, forKey: .display)
         url = try container.decodeIfPresent(String.self, forKey: .url)
         serviceDescription = try container.decodeIfPresent(String.self, forKey: .description)
-        if container.contains(.proto), try container.decodeNil(forKey: .proto) == false {
-            let proto = try container.nestedContainer(keyedBy: ProtocolKeys.self, forKey: .proto)
-            protocolValue = try proto.decodeIfPresent(String.self, forKey: .value)
-            protocolLabel = try proto.decodeIfPresent(String.self, forKey: .label)
+        let explicit: [String]?
+        if container.contains(.portMappings), try container.decodeNil(forKey: .portMappings) == false {
+            explicit = try container.decode([String].self, forKey: .portMappings)
         } else {
-            protocolValue = nil
-            protocolLabel = nil
+            explicit = nil
         }
-        ports = try container.decodeIfPresent([Int].self, forKey: .ports) ?? []
+        var legacyProtocol: String?
+        var legacyPorts: [Int] = []
+        if explicit == nil {
+            if container.contains(.proto), try container.decodeNil(forKey: .proto) == false {
+                let proto = try container.nestedContainer(keyedBy: ProtocolKeys.self, forKey: .proto)
+                legacyProtocol = try proto.decodeIfPresent(String.self, forKey: .value)
+            }
+            legacyPorts = try container.decodeIfPresent([Int].self, forKey: .ports) ?? []
+        }
+        portMappings = NetBoxIngest.portMappings(
+            explicit: explicit,
+            protocolValue: legacyProtocol,
+            ports: legacyPorts
+        )
         let ips = (try? container.decode([Failable<IPEntry>].self, forKey: .ipaddresses)) ?? []
         ipAddresses = ips.compactMap(\.value?.address)
         parentObjectType = try container.decode(String.self, forKey: .parentObjectType)
@@ -658,6 +716,79 @@ extension NetBoxRecord.Service: Decodable {
         } else {
             parentName = nil
         }
+    }
+}
+
+extension NetBoxRecord.Cluster: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, group, status, tenant, scope
+        case scopeType = "scope_type"
+        case scopeID = "scope_id"
+        case customFields = "custom_fields"
+    }
+
+    enum ScopeKeys: String, CodingKey { case name, display }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        let type = try NetBoxIngest.nestedNamed(container, .type)
+        guard let typeName = type.name, !typeName.isEmpty else {
+            throw DecodingError.valueNotFound(
+                String.self,
+                .init(codingPath: container.codingPath + [CodingKeys.type], debugDescription: "type.name")
+            )
+        }
+        self.typeName = typeName
+        groupName = try NetBoxIngest.nestedNamed(container, .group).name
+        status = try NetBoxIngest.choiceValue(container, .status) ?? ""
+        tenantID = try NetBoxIngest.nestedID(container, .tenant)
+        scopeType = try container.decodeIfPresent(String.self, forKey: .scopeType)
+        scopeID = NetBoxIngest.flexibleInt64(container, .scopeID)
+        if container.contains(.scope), try container.decodeNil(forKey: .scope) == false {
+            let scope = try container.nestedContainer(keyedBy: ScopeKeys.self, forKey: .scope)
+            let display = try scope.decodeIfPresent(String.self, forKey: .display)
+            let scopeName = try scope.decodeIfPresent(String.self, forKey: .name)
+            self.scopeName = (display?.isEmpty == false) ? display : scopeName
+        } else {
+            scopeName = nil
+        }
+        let fields = try NetBoxIngest.pulseFields(container, .customFields)
+        zabbixID = fields.zabbixID
+        zabbixInstance = fields.zabbixInstance
+    }
+}
+
+extension NetBoxRecord.VirtualMachine: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, name, display, url, created, status, serial, site, cluster, device, role, vcpus, memory, disk
+        case lastUpdated = "last_updated"
+        case primaryIP = "primary_ip"
+        case customFields = "custom_fields"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        display = try container.decodeIfPresent(String.self, forKey: .display)
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        created = try container.decodeIfPresent(Date.self, forKey: .created)
+        lastUpdated = try container.decodeIfPresent(Date.self, forKey: .lastUpdated)
+        status = try NetBoxIngest.choiceValue(container, .status) ?? ""
+        serial = try container.decodeIfPresent(String.self, forKey: .serial) ?? ""
+        vcpus = NetBoxIngest.flexibleDouble(container, .vcpus)
+        memoryMB = NetBoxIngest.flexibleInt64(container, .memory)
+        diskMB = NetBoxIngest.flexibleInt64(container, .disk)
+        primaryIP = try NetBoxIngest.address(container, .primaryIP)
+        siteID = try NetBoxIngest.nestedID(container, .site)
+        clusterID = try NetBoxIngest.nestedID(container, .cluster)
+        deviceID = try NetBoxIngest.nestedID(container, .device)
+        roleID = try NetBoxIngest.nestedID(container, .role)
+        let fields = try NetBoxIngest.pulseFields(container, .customFields)
+        zabbixID = fields.zabbixID
+        zabbixInstance = fields.zabbixInstance
     }
 }
 
@@ -1059,7 +1190,8 @@ enum NetBoxMapping {
             frontPortCount: Int64(value.front_port_count),
             rearPortCount: Int64(value.rear_port_count),
             deviceBayCount: Int64(value.device_bay_count),
-            face: value.face?.value?.rawValue
+            face: value.face?.value?.rawValue,
+            clusterID: value.cluster.map { Int64($0.value1.id) }
         )
     }
 
@@ -1070,9 +1202,11 @@ enum NetBoxMapping {
             display: value.display,
             url: value.url,
             serviceDescription: value.description,
-            protocolValue: value._protocol?.value?.rawValue,
-            protocolLabel: value._protocol?.label?.rawValue,
-            ports: value.ports,
+            portMappings: NetBoxIngest.portMappings(
+                explicit: nil,
+                protocolValue: value._protocol?.value?.rawValue,
+                ports: value.ports
+            ),
             ipAddresses: (value.ipaddresses ?? []).map(\.address),
             parentObjectType: value.parent_object_type,
             parentObjectID: value.parent_object_id,

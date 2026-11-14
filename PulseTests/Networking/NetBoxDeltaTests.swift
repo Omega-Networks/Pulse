@@ -103,6 +103,35 @@ final class NetBoxDeltaTests: XCTestCase {
         let provider = try XCTUnwrap(try context.fetch(FetchDescriptor<SyncProvider>()).first)
         XCTAssertNotNil(provider.lastFullMirrorAt)
         XCTAssertEqual(provider.lastObjectChangeId, 0)
+        XCTAssertEqual(provider.mirrorShape, NetBoxSyncEngine.mirrorShape)
+    }
+
+    func testStaleMirrorShapeForcesFullMirror() async throws {
+        let container = try makeContainer()
+        let seed = ModelContext(container)
+        seed.insert(Site(id: 1))
+        seed.insert(Device(id: 10))
+        let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
+        provider.lastObjectChangeId = 50
+        provider.lastFullMirrorAt = Date()
+        provider.mirrorShape = 0
+        seed.insert(provider)
+        try seed.save()
+
+        let fetcher = DeltaFetcher()
+        fetcher.emptySuccess = true
+        fetcher.bodies["/api/core/object-changes/50/"] = Data(#"{"id":50}"#.utf8)
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.sync()
+
+        XCTAssertTrue(fetcher.paths.contains("/api/dcim/devices/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/virtualization/clusters/"))
+        XCTAssertTrue(fetcher.paths.contains("/api/virtualization/virtual-machines/"))
+        let after = try XCTUnwrap(
+            try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first
+        )
+        XCTAssertEqual(after.mirrorShape, NetBoxSyncEngine.mirrorShape)
+        XCTAssertEqual(after.lastDeltaSummary, "full mirror")
     }
 
     func testWarmWatermarkDoesNotFullPull() async throws {
@@ -113,6 +142,7 @@ final class NetBoxDeltaTests: XCTestCase {
         let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
         provider.lastObjectChangeId = 50
         provider.lastFullMirrorAt = Date()
+        provider.mirrorShape = NetBoxSyncEngine.mirrorShape
         seed.insert(provider)
         try seed.save()
 
@@ -135,6 +165,7 @@ final class NetBoxDeltaTests: XCTestCase {
         let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
         provider.lastObjectChangeId = 0
         provider.lastFullMirrorAt = Date()
+        provider.mirrorShape = NetBoxSyncEngine.mirrorShape
         seed.insert(provider)
         try seed.save()
 
@@ -165,6 +196,7 @@ final class NetBoxDeltaTests: XCTestCase {
         let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
         provider.lastObjectChangeId = 99
         provider.lastFullMirrorAt = Date()
+        provider.mirrorShape = NetBoxSyncEngine.mirrorShape
         let seed2 = ModelContext(container)
         seed2.insert(Site(id: 1))
         seed2.insert(provider)
@@ -204,6 +236,7 @@ final class NetBoxDeltaTests: XCTestCase {
         let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
         provider.lastObjectChangeId = 10
         provider.lastFullMirrorAt = Date()
+        provider.mirrorShape = NetBoxSyncEngine.mirrorShape
         seed.insert(provider)
         try seed.save()
 
@@ -228,6 +261,35 @@ final class NetBoxDeltaTests: XCTestCase {
             try ModelContext(container).fetch(FetchDescriptor<SyncProvider>()).first?.lastObjectChangeId,
             11
         )
+        let retrieve = fetcher.queryLog.filter { $0.path == "/api/dcim/devices/20/" }
+        XCTAssertTrue(retrieve.contains { entry in
+            entry.query.contains { $0.name == "omit" && $0.value == "config_context" }
+        })
+    }
+
+    func testDeltaRetrieveOmitsConfigContextOnVirtualMachine() async throws {
+        let container = try makeContainer()
+        try seedWatermark(container, id: 10)
+        let fetcher = DeltaFetcher()
+        fetcher.bodies["/api/core/object-changes/10/"] = Data(#"{"id":10}"#.utf8)
+        fetcher.bodies["/api/core/object-changes/"] = Data("""
+        {"count":1,"next":null,"results":[
+          {"id":11,"action":{"value":"create"},
+           "changed_object_type":"virtualization.virtualmachine","changed_object_id":8}
+        ]}
+        """.utf8)
+        fetcher.bodies["/api/virtualization/virtual-machines/8/"] = Data("""
+        {"id":8,"name":"web","status":{"value":"active","label":"Active"},"site":{"id":1}}
+        """.utf8)
+        let engine = NetBoxSyncEngine(modelContainer: container, fetcher: fetcher)
+        try await engine.sync()
+        let machines = try ModelContext(container).fetch(FetchDescriptor<VirtualMachine>())
+        XCTAssertEqual(machines.map(\.id), [8])
+        XCTAssertEqual(machines.first?.name, "web")
+        let retrieve = fetcher.queryLog.filter { $0.path == "/api/virtualization/virtual-machines/8/" }
+        XCTAssertTrue(retrieve.contains { entry in
+            entry.query.contains { $0.name == "omit" && $0.value == "config_context" }
+        })
     }
 
     func testMidDeltaFailureDoesNotAdvanceWatermark() async throws {
@@ -238,6 +300,7 @@ final class NetBoxDeltaTests: XCTestCase {
         let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
         provider.lastObjectChangeId = 10
         provider.lastFullMirrorAt = Date()
+        provider.mirrorShape = NetBoxSyncEngine.mirrorShape
         seed.insert(provider)
         try seed.save()
 
@@ -272,6 +335,7 @@ final class NetBoxDeltaTests: XCTestCase {
         let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
         provider.lastObjectChangeId = 1
         provider.lastFullMirrorAt = Date()
+        provider.mirrorShape = NetBoxSyncEngine.mirrorShape
         seed.insert(provider)
         try seed.save()
 
@@ -924,6 +988,7 @@ final class NetBoxDeltaTests: XCTestCase {
         let provider = SyncProvider(lastNetBoxUpdate: Date(), lastZabbixUpdate: Date.distantPast)
         provider.lastObjectChangeId = id
         provider.lastFullMirrorAt = lastFull
+        provider.mirrorShape = NetBoxSyncEngine.mirrorShape
         seed.insert(provider)
         try seed.save()
     }
@@ -945,7 +1010,7 @@ final class NetBoxDeltaTests: XCTestCase {
         let schema = Schema([
             TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self,
             SiteLocation.self, RackRole.self,
-            Rack.self, SiteGroup.self, Site.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
+            Rack.self, SiteGroup.self, Site.self, Cluster.self, VirtualMachine.self, Device.self, Interface.self, Cable.self, DeviceBay.self, FrontPort.self, Service.self,
             WebHostTrust.self, Event.self, SyncProvider.self, PowerSenseDevice.self,
             PowerSenseEvent.self, SSHCredential.self, KnownHost.self
         ])
@@ -1113,6 +1178,7 @@ private final class ListHold: @unchecked Sendable {
 
 private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     var paths: [String] = []
+    var queryLog: [(path: String, query: [URLQueryItem])] = []
     var bodies: [String: Data] = [:]
     var fail404: Set<String> = []
     var forbiddenPaths: Set<String> = []
@@ -1145,6 +1211,7 @@ private final class DeltaFetcher: NetBoxFetching, @unchecked Sendable {
     func get(path: String, query: [URLQueryItem]) async throws -> Data {
         lock.lock()
         paths.append(path)
+        queryLog.append((path, query))
         let refused = forbiddenPaths.contains(path)
         if path == "/api/core/object-changes/",
            let gt = query.first(where: { $0.name == "id__gt" })?.value {

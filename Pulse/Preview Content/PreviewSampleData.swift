@@ -39,7 +39,10 @@ actor PreviewSampleData {
     }()
 
     @MainActor static var inMemoryContainer: () throws -> ModelContainer = {
-        let schema = Schema([DeviceRole.self, DeviceType.self, Site.self, Device.self, Event.self])
+        let schema = Schema([
+            DeviceRole.self, DeviceType.self, Site.self, Cluster.self, VirtualMachine.self,
+            Device.self, Service.self, Event.self
+        ])
 //        let schema = Schema([TenantGroup.self, Tenant.self, Region.self, DeviceRole.self, DeviceType.self, SiteGroup.self, Site.self, Device.self, Interface.self, Problem.self])
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try! ModelContainer(for: schema, configurations: [configuration])

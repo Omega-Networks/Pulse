@@ -19,7 +19,7 @@ The previous read path was `APIRequest` + `NetboxResource` + hand-written `*Prop
 ## Non-negotiables
 
 1. **AOT generation.** `docs/netbox/openapi-filtered.yaml` is vendored. `NetBoxAPI` is never hand-edited. Regeneration is `Scripts/regenerate-netbox-client.sh` with `NETBOX_URL` / `NETBOX_TOKEN` from the environment. The script fails if the instance host survives into outputs. `servers` in the vendored document is `url: ''`.
-2. **Single owner.** `NetBoxSyncEngine` is the only full-sync entry. Boot and Apply changes call `sync()` (delta, or a full mirror when the watermark is missing, gone, or past the safety interval). Full Resync calls `fullSync()`. Overlapping user callers join the in-flight pass. `lastNetBoxUpdate` is stamped only after a full mirror finishes every type, or after a changelog page has fully applied. A page that fails is not stamped. An idle delta runs while the app is open and never starts a full mirror.
+2. **Single owner.** `NetBoxSyncEngine` is the only full-sync entry. Boot and Apply changes call `sync()` (delta, or a full mirror when the store is empty, the watermark is missing or gone, `mirrorShape` does not match, or the last full mirror is past the safety interval). Full Resync calls `fullSync()`. Overlapping user callers join the in-flight pass. `lastNetBoxUpdate` is stamped only after a full mirror finishes every type, or after a changelog page has fully applied. A page that fails is not stamped. An idle delta runs while the app is open and never starts a full mirror.
 3. **Ingest DTOs, not generated list types.** Generated `Tenant` / `Site` / `Rack` / `Device` / `Service` / `Interface` types require unused counts and nested `display_url` that lab JSON omits. `NetBoxRecord.*` decodes the stored fields only. A skipped element is logged with the missing key; `skipped > 0` blocks that type's delete pass.
 4. **Full instance, role presentation.** Sync stores every device, type, and role. Fetch and delete share that scope (the whole instance). Visibility, monitoring, and rack drawing are `RolePresentation` (Settings → Roles). The future billable-device count is derived from those surfaces (graph, list, or named-in-rack); it is not a user toggle. Do not put manufacturer or role excludes back on the pull.
 5. **No writes in P1.** Add Site is disabled with an honest message. Site create is P4.
@@ -130,6 +130,7 @@ Do not “fix” this by deleting Events later in the type list or by hoping `@Q
 - 2026-10-19 - A problem ask supersedes an earlier problem ask whose events it covers. Asks are ordered by a stage sequence, and a row draws the latest.
 - 2026-11-07 - Only a failed problem ask is superseded. An ask that is still posting runs to completion, and its failure is still shown. A committed ask stays until the re-fetch retires it. An idle delta refreshes severity for the devices that pass applied. The boot walk stays, paged. The stale scan is paged. A problem pull writes each batch as it returns. A timeout means Pulse did not see the response.
 - 2026-11-09 - A row no longer counts on `rClock == "0"` and `suppressed == "0"` alone. It counts when it is open, not suppressed, and not a symptom. `Event.counted` in ADR 0006 is that rule. The same `#Index` gains `[\.object, \.triggerDescription]` for the nil-comment page. `causeEventId` is the correlation and is not an index.
+- 2026-11-14 - Clusters and virtual machines join the mirror (18 stages). `mirrorShape` forces one full mirror after an upgrade. Device and virtual machine reads omit `config_context`. See ADR 0007.
 
 ## Changelog pages and seats
 
@@ -146,6 +147,10 @@ A 401, a missing token, or a transport failure fails the sync and does not stamp
 A 403 while re-fetching one changelog object skips that object and does not delete the local row. The page's high water still stamps when it is ahead. The model's list path joins the same refused set.
 
 A 403 on `/api/core/object-changes/` is reported once and latched. Idle does not re-download it and does not full-mirror. Launch and Apply changes clear the latch and try the changelog again.
+
+## Clusters and virtual machines
+
+The mirror has 18 stages. Clusters and virtual machines are not required: a 403 skips that model, keeps its stored rows, and the rest of the mirror finishes. Device and virtual machine list and retrieve send `omit=config_context`. `SyncProvider.mirrorShape` is stamped only when a full mirror finishes. A stored shape other than the engine constant forces one full mirror on the next boot or Apply changes, before the weekly safety interval. Idle never full-mirrors. The object record is ADR 0007. Zabbix owners, site sections, seats, SSH, Web window targets, and the Clusters browser are not part of that data mirror.
 
 Each refusal posts an `OperatorNotice` on `OperatorNoticeCenter` (in memory, replaced when the same id is posted again, cleared when that fetch later succeeds). Zabbix failures post there too, using the sentence already shown for that failure. The toolbar warning reads the list. A later event log is a view of the same list. Writes are unchanged: a 403 on a POST or PATCH still shows NetBox's message and does not change local data.
 

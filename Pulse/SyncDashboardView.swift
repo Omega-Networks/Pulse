@@ -115,9 +115,11 @@ struct SyncDashboardView: View {
                 LabeledContent("Site Groups:", value: String(objectCounts.siteGroups))
                 LabeledContent("Sites:", value: String(objectCounts.sites))
                 LabeledContent("Locations:", value: String(objectCounts.locations))
+                LabeledContent("Clusters:", value: String(objectCounts.clusters))
                 LabeledContent("Rack Roles:", value: String(objectCounts.rackRoles))
                 LabeledContent("Racks:", value: String(objectCounts.racks))
                 LabeledContent("Devices:", value: String(objectCounts.devices))
+                LabeledContent("Virtual Machines:", value: String(objectCounts.virtualMachines))
                 LabeledContent("Interfaces:", value: String(objectCounts.interfaces))
                 LabeledContent("Cables:", value: String(objectCounts.cables))
                 LabeledContent("Device Bays:", value: String(objectCounts.deviceBays))
@@ -318,7 +320,9 @@ struct SyncDashboardView: View {
             Interface.self,
             DeviceBay.self,
             FrontPort.self,
+            VirtualMachine.self,
             Device.self,
+            Cluster.self,
             Rack.self,
             SiteLocation.self,
             RackRole.self,
@@ -565,9 +569,11 @@ private struct SyncObjectCounts {
     var siteGroups = 0
     var sites = 0
     var locations = 0
+    var clusters = 0
     var rackRoles = 0
     var racks = 0
     var devices = 0
+    var virtualMachines = 0
     var interfaces = 0
     var cables = 0
     var deviceBays = 0
@@ -583,9 +589,11 @@ private struct SyncObjectCounts {
             siteGroups: try context.fetchCount(FetchDescriptor<SiteGroup>()),
             sites: try context.fetchCount(FetchDescriptor<Site>()),
             locations: try context.fetchCount(FetchDescriptor<SiteLocation>()),
+            clusters: try context.fetchCount(FetchDescriptor<Cluster>()),
             rackRoles: try context.fetchCount(FetchDescriptor<RackRole>()),
             racks: try context.fetchCount(FetchDescriptor<Rack>()),
             devices: try context.fetchCount(FetchDescriptor<Device>()),
+            virtualMachines: try context.fetchCount(FetchDescriptor<VirtualMachine>()),
             interfaces: try context.fetchCount(FetchDescriptor<Interface>()),
             cables: try context.fetchCount(FetchDescriptor<Cable>()),
             deviceBays: try context.fetchCount(FetchDescriptor<DeviceBay>()),

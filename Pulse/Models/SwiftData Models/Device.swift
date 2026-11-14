@@ -36,7 +36,7 @@ final class Device {
     // Secondary index on `defaultCredentialID` so the credential-delete
     // cleanup fetch resolves via the index rather than a full-table scan at
     // 1M+ devices. See the `defaultCredentialID` declaration below.
-    #Index<Device>([\.defaultCredentialID], [\.siteId])
+    #Index<Device>([\.defaultCredentialID], [\.siteId], [\.zabbixId], [\.clusterId])
 
     @Attribute(.unique) var id: Int64
     var created: Date?
@@ -114,6 +114,11 @@ final class Device {
     /// front-port apply, and Connect, read this instead of hoping
     /// `site` is still faulted.
     var siteId: Int64 = 0
+
+    /// NetBox cluster this device hosts. 0 when the device is not a
+    /// cluster member. The relationship is declared on `Cluster`.
+    var clusterId: Int64 = 0
+    var cluster: Cluster?
 
     /// When Pulse last granted this row a license seat. Nil on
     /// hardware and on billable devices that have never received a

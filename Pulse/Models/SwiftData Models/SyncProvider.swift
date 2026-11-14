@@ -42,6 +42,10 @@ final class SyncProvider {
     /// the weekly safety interval, not as a changelog cursor.
     var lastFullMirrorAt: Date?
     var lastDeltaSummary: String?
+    /// Layout of the last finished full mirror. 0 is a store filled
+    /// before clusters and virtual machines. A mismatch forces one
+    /// full mirror. Stamped only when that mirror finishes.
+    var mirrorShape: Int = 0
 
     init(lastNetBoxUpdate: Date, lastZabbixUpdate: Date) {
         self.lastNetBoxUpdate = lastNetBoxUpdate

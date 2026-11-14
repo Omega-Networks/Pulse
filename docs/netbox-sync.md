@@ -1,6 +1,10 @@
 # NetBox sync (operator)
 
-Pulse mirrors a subset of NetBox into local SwiftData. The **first** launch (and any launch with no changelog watermark) does a full pull, including interfaces, cables, rack fillers, device bays, and front ports. After that, boot applies `/api/core/object-changes/` since the last applied change id. Settings → Database → **Full Resync** still does a complete mirror.
+Pulse mirrors a subset of NetBox into local SwiftData. The **first** launch (and any launch with no changelog watermark) does a full pull, including interfaces, cables, rack fillers, device bays, front ports, clusters, and virtual machines. After that, boot applies `/api/core/object-changes/` since the last applied change id. Settings → Database → **Full Resync** still does a complete mirror.
+
+The first launch after an upgrade that changes what a full mirror stores is also a full pull. Pulse logs that as `mirror shape changed`. That is how clusters and virtual machines arrive on a Mac that already has a watermark. The next launches go back to the changelog. Device and virtual machine requests send `omit=config_context`. Pulse does not store config context.
+
+Settings → Database shows cluster and virtual machine counts. A token that cannot read those models leaves the counts at whatever was already stored and still finishes the rest of the sync.
 
 A watermark older than NetBox’s retained changelog (default 90 days - `CHANGELOG_RETENTION` must exceed the longest expected offline gap) or a wiped store with a leftover watermark forces a full mirror. A weekly safety mirror covers edits made without request context (shell, migrations).
 
